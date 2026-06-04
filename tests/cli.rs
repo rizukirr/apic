@@ -184,6 +184,22 @@ fn open_missing_contract_fails() {
 }
 
 #[test]
+fn list_defaults_to_relative_paths() {
+    let dir = init_project("list_rel");
+    apic(&dir)
+        .args(["create", "-f", "auth/login.json"])
+        .assert()
+        .success();
+    // Default output is relative: the contract path, not the absolute prefix.
+    apic(&dir)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("auth/login.json"))
+        .stdout(predicate::str::contains(dir.to_string_lossy().to_string()).not());
+}
+
+#[test]
 fn config_set_dir_rejects_missing_directory() {
     let dir = init_project("setdir");
     apic(&dir)

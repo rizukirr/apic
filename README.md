@@ -97,8 +97,8 @@ Lists discovered `.json` contract files under the working directory.
 
 - `--depth <n>` — truncate reported paths to `n` components below the root
   (`0`, the default, shows full paths).
-- `--absolute <true|false>` — print absolute paths (default `true`) or paths
-  relative to the working directory.
+- `--absolute <true|false>` — print absolute paths or paths relative to the
+  working directory (`false`, the default).
 
 ### `apic read -f <filename> [-s <status>]`
 Renders a contract as formatted tables. `-s <status>` filters the response

@@ -61,8 +61,8 @@ enum Commands {
         depth: Option<usize>,
 
         /// Print absolute paths (`true`) or paths relative to the working
-        /// directory (`false`).
-        #[arg(long, value_name = "BOOL", default_value_t = true, action = clap::ArgAction::Set)]
+        /// directory (`false`, the default).
+        #[arg(long, value_name = "BOOL", default_value_t = false, action = clap::ArgAction::Set)]
         absolute: bool,
     },
     /// Render a contract as formatted, colorized tables.
