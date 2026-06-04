@@ -69,43 +69,43 @@ enum Commands {
 
 /// Updates the configured root working directory.
 ///
-/// A `None` value is a no-op; on success or failure a message is printed to
-/// stdout/stderr respectively.
-pub fn update_working_dir(working_dir: Option<&str>) {
-    if let Some(dir) = working_dir {
-        let result = read_config_file().and_then(|mut conf| conf.update_root_dir(dir));
-        match result {
-            Ok(_) => println!("Successfully updated"),
-            Err(err) => eprintln!("{}", err),
+/// A `None` value is a no-op. Prints a success message on change; returns the
+/// error message on failure so the caller can set a non-zero exit code.
+pub fn update_working_dir(working_dir: Option<&str>) -> Result<(), String> {
+    match working_dir {
+        Some(dir) => {
+            read_config_file().and_then(|mut conf| conf.update_root_dir(dir))?;
+            println!("Successfully updated");
+            Ok(())
         }
+        None => Ok(()),
     }
 }
 
 /// Updates the configured editor.
 ///
-/// A `None` value is a no-op; on success or failure a message is printed to
-/// stdout/stderr respectively.
-pub fn update_editor(editor: Option<&str>) {
-    if let Some(editor) = editor {
-        let result = read_config_file().and_then(|mut conf| conf.update_editor(editor));
-        match result {
-            Ok(_) => println!("Successfully updated"),
-            Err(err) => eprintln!("{}", err),
+/// A `None` value is a no-op. Prints a success message on change; returns the
+/// error message on failure so the caller can set a non-zero exit code.
+pub fn update_editor(editor: Option<&str>) -> Result<(), String> {
+    match editor {
+        Some(editor) => {
+            read_config_file().and_then(|mut conf| conf.update_editor(editor))?;
+            println!("Successfully updated");
+            Ok(())
         }
+        None => Ok(()),
     }
 }
 
 /// Initializes a new `.apic` project, optionally pointing at `working_dir`.
 ///
-/// Prints a success or error message; the directory creation and config write
-/// are delegated to [`Config::init`].
+/// The directory creation and config write are delegated to [`Config::init`].
 // TODO: scan json files and store them in a cache
 // TODO: for example call read function then store it
-pub fn init(working_dir: Option<&str>) {
-    match Config::init(working_dir) {
-        Ok(_) => println!("Successfully initialized"),
-        Err(err) => eprintln!("{}", err),
-    }
+pub fn init(working_dir: Option<&str>) -> Result<(), String> {
+    Config::init(working_dir)?;
+    println!("Successfully initialized");
+    Ok(())
 }
 
 /// Lists JSON contract files under the configured root directory.
@@ -168,7 +168,7 @@ pub fn read_filename(filename: &str) -> Option<String> {
 /// Parse errors are printed rather than returned. When a `status` filter
 /// matches no response, a note is printed so the empty output is not mistaken
 /// for a contract without responses.
-fn read(content: &str, status: Option<u16>) {
+fn read(content: &str, status: Option<u16>) -> Result<(), String> {
     match json_get(content, status) {
         Ok(contract) => {
             render(&contract);
@@ -177,11 +177,10 @@ fn read(content: &str, status: Option<u16>) {
             {
                 println!("\n No response with status {status}");
             }
+            Ok(())
         }
-        Err(err) => {
-            eprintln!("Error: {}", err);
-        }
-    };
+        Err(err) => Err(err.to_string()),
+    }
 }
 
 /// Validates contracts under the working directory, printing one line per file.
@@ -313,41 +312,43 @@ fn open_in_editor(path: &Path) -> std::io::Result<()> {
 /// This is the CLI entry point invoked from `main`.
 pub fn run() {
     let cli = Cli::parse();
-    match cli.command {
+    let result: Result<(), String> = match cli.command {
         Commands::Config {
             set_dir,
             set_editor,
-        } => {
-            update_working_dir(set_dir.as_deref());
-            update_editor(set_editor.as_deref());
-        }
+        } => update_working_dir(set_dir.as_deref())
+            .and_then(|_| update_editor(set_editor.as_deref())),
         Commands::Create { filename } => match filename {
-            Some(filename) => {
-                if let Err(err) = create(&filename) {
-                    eprintln!("Error: {}", err);
-                }
-            }
-            None => println!("Error: no filename provided, use 'apic create -f <filename>'"),
+            Some(filename) => create(&filename),
+            None => Err("no filename provided, use 'apic create -f <filename>'".to_string()),
         },
         Commands::Init { set_dir } => init(set_dir.as_deref()),
         Commands::List { depth, absolute } => {
-            let files = list(depth, absolute);
-            if let Some(files) = files {
+            if let Some(files) = list(depth, absolute) {
                 for file in files {
                     // File names come from the filesystem and may carry control
                     // characters; strip them before printing to the terminal.
                     println!("{}", sanitize(&file.to_string_lossy()));
                 }
             }
+            Ok(())
         }
         Commands::Read { filename, status } => match read_filename(&filename) {
-            Some(content) => {
-                read(content.as_str(), status);
-            }
+            Some(content) => read(content.as_str(), status),
             None => {
                 println!("No contract found");
+                Ok(())
             }
         },
-        Commands::Validate { filename } => validate(filename.as_deref()),
+        // `validate` exits the process itself on failure (per-file reporting).
+        Commands::Validate { filename } => {
+            validate(filename.as_deref());
+            Ok(())
+        }
+    };
+
+    if let Err(err) = result {
+        eprintln!("Error: {err}");
+        std::process::exit(1);
     }
 }
