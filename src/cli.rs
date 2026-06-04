@@ -2,8 +2,8 @@
 
 use crate::config::{Config, configured_editor, read_config_file};
 use crate::file::{confine_to_dir, read_file};
-use crate::fuzzy::fuzzy_find;
-use crate::json::{JsonScanFileErr, json_get, scan_json_file, validate as validate_contract};
+use crate::fuzzy::{fuzzy_find, fuzzy_score};
+use crate::json::{json_get, scan_json_file, validate as validate_contract};
 use crate::render::{render, sanitize};
 use clap::{Parser, Subcommand};
 use std::fs;
@@ -55,10 +55,10 @@ enum Commands {
     },
     /// List discovered contract files under the working directory.
     List {
-        /// Truncate reported paths to N components below the working directory.
-        /// `0` (the default) prints full paths.
-        #[arg(long, value_name = "N")]
-        depth: Option<usize>,
+        /// Show only contracts whose path fuzzy-matches this query, best match
+        /// first (e.g. `--filter user` matches `user/user.json`).
+        #[arg(long, value_name = "QUERY")]
+        filter: Option<String>,
 
         /// Print absolute paths (`true`) or paths relative to the working
         /// directory (`false`, the default).
@@ -156,13 +156,9 @@ pub fn init(working_dir: Option<&str>) -> Result<(), String> {
 
 /// Lists JSON contract files under the configured root directory.
 ///
-/// `depth` limits how deep paths are reported (`None` means unlimited / `0`).
-/// Returns `None` when no files are found. If the project is not initialized
-/// or the requested depth exceeds the deepest available file, an error is
-/// printed and the process exits.
-pub fn list(depth: Option<usize>, is_absolute: bool) -> Option<Vec<PathBuf>> {
-    let depth = depth.unwrap_or(0);
-
+/// Returns `None` when no files are found. If the project is not initialized,
+/// an error is printed and the process exits.
+pub fn list(is_absolute: bool) -> Option<Vec<PathBuf>> {
     let root = match read_config_file().and_then(|conf| conf.get_root_dir()) {
         Ok(root) => root,
         Err(err) => {
@@ -171,14 +167,7 @@ pub fn list(depth: Option<usize>, is_absolute: bool) -> Option<Vec<PathBuf>> {
         }
     };
 
-    match scan_json_file(&root, depth, is_absolute) {
-        Ok(files) => Some(files),
-        Err(JsonScanFileErr::NotFound) => None,
-        Err(JsonScanFileErr::DepthTooLarge { requested, max }) => {
-            eprintln!("Error: depth={} exceeds max depth of {}", requested, max);
-            std::process::exit(1);
-        }
-    }
+    scan_json_file(&root, is_absolute)
 }
 
 /// Resolves a contract reference to an existing file path under the working dir.
@@ -191,7 +180,7 @@ pub fn list(depth: Option<usize>, is_absolute: bool) -> Option<Vec<PathBuf>> {
 /// Exact matches always win over fuzzy ones, so a precise path is never
 /// mis-ranked. Returns `None` when nothing resolves or no contracts exist.
 pub fn resolve_contract(filename: &str) -> Option<PathBuf> {
-    let files = list(None, true)?;
+    let files = list(true)?;
 
     // 1 & 2: exact file under the working directory, with or without `.json`.
     if let Ok(root) = read_config_file().and_then(|c| c.get_root_dir()) {
@@ -260,7 +249,7 @@ fn read(content: &str, status: Option<u16>) -> Result<(), String> {
 /// against the contract schema. Prints `ok`/`FAIL` per file and a summary, and
 /// exits the process non-zero if any contract is invalid so it can gate CI.
 fn validate(filename: Option<&str>) {
-    let files = match list(None, true) {
+    let files = match list(true) {
         Some(files) => files,
         None => {
             println!("No contracts found");
@@ -401,12 +390,34 @@ pub fn run() {
             None => Err("no filename provided, use 'apic create -f <filename>'".to_string()),
         },
         Commands::Init { set_dir } => init(set_dir.as_deref()),
-        Commands::List { depth, absolute } => {
-            if let Some(files) = list(depth, absolute) {
-                for file in files {
-                    // File names come from the filesystem and may carry control
-                    // characters; strip them before printing to the terminal.
-                    println!("{}", sanitize(&file.to_string_lossy()));
+        Commands::List { filter, absolute } => {
+            if let Some(files) = list(absolute) {
+                // Fuzzy-match the filter against the working-dir-relative form
+                // so an absolute prefix can't skew scores; display in the
+                // requested form. File names come from the filesystem and may
+                // carry control characters, so they are sanitized.
+                let root = read_config_file().and_then(|c| c.get_root_dir()).ok();
+                let mut rows: Vec<(String, i32)> = files
+                    .iter()
+                    .filter_map(|file| {
+                        let rel = root
+                            .as_ref()
+                            .and_then(|r| file.strip_prefix(r).ok())
+                            .unwrap_or(file);
+                        let score = match &filter {
+                            Some(query) => fuzzy_score(query, &rel.to_string_lossy())?,
+                            None => 0,
+                        };
+                        Some((sanitize(&file.to_string_lossy()), score))
+                    })
+                    .collect();
+
+                // With a filter, print the best match first.
+                if filter.is_some() {
+                    rows.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
+                }
+                for (path, _) in rows {
+                    println!("{path}");
                 }
             }
             Ok(())

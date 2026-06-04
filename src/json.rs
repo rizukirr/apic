@@ -67,74 +67,31 @@ pub struct Schema {
     pub(crate) properties: Option<Vec<Schema>>,
 }
 
-/// Errors returned by [`scan_json_file`].
-#[derive(Debug)]
-pub enum JsonScanFileErr {
-    /// No JSON files were found under the root.
-    NotFound,
-    /// The requested depth exceeds the deepest available file.
-    DepthTooLarge { requested: usize, max: usize },
-}
-
-/// Finds `.json` files under `root` and truncates their paths to `depth`.
+/// Finds `.json` files under `root`.
 ///
-/// `depth` counts path components below the root. A depth of `0` returns the
-/// full file paths; a larger depth truncates each path to that many components
-/// past the root, which can yield directory prefixes rather than full files.
-///
-/// # Errors
-///
-/// Returns [`JsonScanFileErr::NotFound`] when no JSON files exist, or
-/// [`JsonScanFileErr::DepthTooLarge`] when `depth` exceeds the deepest match.
-pub fn scan_json_file(
-    root: &Path,
-    depth: usize,
-    is_absolute: bool,
-) -> Result<Vec<PathBuf>, JsonScanFileErr> {
+/// Paths are returned absolute when `is_absolute` is `true`, otherwise
+/// relative to `root`. Returns `None` when no JSON files exist.
+pub fn scan_json_file(root: &Path, is_absolute: bool) -> Option<Vec<PathBuf>> {
     let json_file = match find_file_by_ext_downward(root.to_path_buf(), &["json"]) {
         FindFileResult::Found(files) => files,
-        FindFileResult::NotFound => return Err(JsonScanFileErr::NotFound),
+        FindFileResult::NotFound => return None,
     };
 
-    let min_depth = root.iter().count();
-    let max_depth = json_file
-        .iter()
-        .map(|p| p.iter().count() - min_depth)
-        .max()
-        .unwrap_or(0);
-
-    if depth > max_depth {
-        return Err(JsonScanFileErr::DepthTooLarge {
-            requested: depth,
-            max: max_depth,
-        });
-    }
-
-    let mut stripped_json_files: Vec<PathBuf> = Vec::new();
-    for rel in json_file {
-        let p: PathBuf = if depth == 0 {
-            rel
-        } else {
-            rel.iter().take(depth + min_depth).collect()
-        };
-
-        let p = if is_absolute {
-            p
-        } else {
-            match p.strip_prefix(root) {
-                Ok(p) => p.to_path_buf(),
-                Err(_) => p,
+    let files = json_file
+        .into_iter()
+        .map(|p| {
+            if is_absolute {
+                p
+            } else {
+                match p.strip_prefix(root) {
+                    Ok(rel) => rel.to_path_buf(),
+                    Err(_) => p,
+                }
             }
-        };
+        })
+        .collect();
 
-        // Truncation can map several files to the same directory prefix;
-        // keep each result only once.
-        if !stripped_json_files.contains(&p) {
-            stripped_json_files.push(p);
-        }
-    }
-
-    Ok(stripped_json_files)
+    Some(files)
 }
 
 /// Validates that `json` parses as a well-formed contract.
@@ -227,50 +184,35 @@ mod tests {
     }
 
     #[test]
-    fn scan_returns_full_paths_at_depth_zero() {
-        let root = temp_dir("scan_depth0");
+    fn scan_returns_absolute_paths() {
+        let root = temp_dir("scan_abs");
         fs::create_dir_all(root.join("a")).unwrap();
         fs::write(root.join("a/x.json"), "{}").unwrap();
         fs::write(root.join("a/y.json"), "{}").unwrap();
 
-        let files = scan_json_file(&root, 0, true).unwrap();
+        let files = scan_json_file(&root, true).unwrap();
         assert_eq!(files.len(), 2);
+        assert!(files.iter().all(|f| f.is_absolute()));
 
         fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
-    fn scan_dedups_directory_prefixes_at_depth_one() {
-        let root = temp_dir("scan_depth1");
+    fn scan_returns_relative_paths_when_not_absolute() {
+        let root = temp_dir("scan_rel");
         fs::create_dir_all(root.join("a")).unwrap();
         fs::write(root.join("a/x.json"), "{}").unwrap();
-        fs::write(root.join("a/y.json"), "{}").unwrap();
 
-        // Two files under `a/` truncate to the same prefix; expect one entry.
-        let files = scan_json_file(&root, 1, false).unwrap();
-        assert_eq!(files, vec![PathBuf::from("a")]);
+        let files = scan_json_file(&root, false).unwrap();
+        assert_eq!(files, vec![PathBuf::from("a/x.json")]);
 
         fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
-    fn scan_reports_not_found_when_empty() {
+    fn scan_reports_none_when_empty() {
         let root = temp_dir("scan_empty");
-        assert!(matches!(
-            scan_json_file(&root, 0, true),
-            Err(JsonScanFileErr::NotFound)
-        ));
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
-    fn scan_reports_depth_too_large() {
-        let root = temp_dir("scan_toodeep");
-        fs::write(root.join("x.json"), "{}").unwrap();
-        assert!(matches!(
-            scan_json_file(&root, 99, true),
-            Err(JsonScanFileErr::DepthTooLarge { .. })
-        ));
+        assert!(scan_json_file(&root, true).is_none());
         fs::remove_dir_all(&root).unwrap();
     }
 }

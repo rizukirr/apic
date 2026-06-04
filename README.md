@@ -93,11 +93,11 @@ so a shared (committed) config can set a team default without overriding your
 own editor. GUI editors need their wait flag (`code --wait`, `subl -w`) so
 `apic` waits for the file to be saved.
 
-### `apic list [--depth <n>] [--absolute <true|false>]`
+### `apic list [--filter <query>] [--absolute <true|false>]`
 Lists discovered `.json` contract files under the working directory.
 
-- `--depth <n>` — truncate reported paths to `n` components below the root
-  (`0`, the default, shows full paths).
+- `--filter <query>` — show only contracts whose path fuzzy-matches the query,
+  best match first (e.g. `apic list --filter user`).
 - `--absolute <true|false>` — print absolute paths or paths relative to the
   working directory (`false`, the default).
 

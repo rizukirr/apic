@@ -25,7 +25,7 @@ use std::cmp::Reverse;
 /// `Some(score)` if every query character was matched in order (an empty query
 /// matches everything with a score of `0`); `None` if the query is not a
 /// subsequence of `candidate`.
-fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
+pub(crate) fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
     if query.is_empty() {
         return Some(0);
     }

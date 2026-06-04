@@ -200,6 +200,34 @@ fn list_defaults_to_relative_paths() {
 }
 
 #[test]
+fn list_filter_fuzzy_matches_contracts() {
+    let dir = init_project("list_filter");
+    apic(&dir)
+        .args(["create", "-f", "user/user.json"])
+        .assert()
+        .success();
+    apic(&dir)
+        .args(["create", "-f", "auth/login.json"])
+        .assert()
+        .success();
+
+    // Matching contracts are shown, non-matching ones are not.
+    apic(&dir)
+        .args(["list", "--filter", "user"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("user/user.json"))
+        .stdout(predicate::str::contains("login").not());
+
+    // A filter matching nothing prints nothing and still exits 0.
+    apic(&dir)
+        .args(["list", "--filter", "zzz_no_match"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
 fn config_set_dir_rejects_missing_directory() {
     let dir = init_project("setdir");
     apic(&dir)
