@@ -3,7 +3,7 @@
 use crate::config::{Config, configured_editor, read_config_file};
 use crate::file::{confine_to_dir, read_file};
 use crate::fuzzy::fuzzy_find;
-use crate::json::{JsonScanFileErr, json_get, scan_json_file};
+use crate::json::{JsonScanFileErr, json_get, scan_json_file, validate as validate_contract};
 use crate::render::{render, sanitize};
 use clap::{Parser, Subcommand};
 use std::fs;
@@ -54,6 +54,14 @@ enum Commands {
     },
     /// Scaffold a new contract from a template and open it in your editor.
     Create {
+        #[arg(long, short = 'f')]
+        filename: Option<String>,
+    },
+    /// Check that contracts parse and conform to the schema.
+    ///
+    /// With no filename, every contract under the working directory is checked.
+    /// Exits non-zero if any contract is invalid, for use in CI.
+    Validate {
         #[arg(long, short = 'f')]
         filename: Option<String>,
     },
@@ -176,6 +184,68 @@ fn read(content: &str, status: Option<u16>) {
     };
 }
 
+/// Validates contracts under the working directory, printing one line per file.
+///
+/// With `filename`, only the best fuzzy match is checked; otherwise every
+/// contract is checked. Each file is read (subject to the size cap) and parsed
+/// against the contract schema. Prints `ok`/`FAIL` per file and a summary, and
+/// exits the process non-zero if any contract is invalid so it can gate CI.
+fn validate(filename: Option<&str>) {
+    let files = match list(None, true) {
+        Some(files) => files,
+        None => {
+            println!("No contracts found");
+            return;
+        }
+    };
+
+    let root = read_config_file().and_then(|c| c.get_root_dir()).ok();
+
+    // Narrow to a single fuzzy match when a filename is given.
+    let targets: Vec<PathBuf> = match filename {
+        Some(name) => {
+            let strs: Vec<String> = files
+                .iter()
+                .map(|f| f.to_string_lossy().to_string())
+                .collect();
+            match fuzzy_find(name, &strs) {
+                Some(hits) => vec![PathBuf::from(&hits[0].0)],
+                None => {
+                    eprintln!("No contract matches {name}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        None => files,
+    };
+
+    let mut failed = 0usize;
+    for path in &targets {
+        let shown = root
+            .as_ref()
+            .and_then(|r| path.strip_prefix(r).ok())
+            .unwrap_or(path);
+        let shown = sanitize(&shown.to_string_lossy());
+
+        let result = read_file(path)
+            .map_err(|err| err.to_string())
+            .and_then(|content| validate_contract(&content).map_err(|err| err.to_string()));
+
+        match result {
+            Ok(()) => println!("ok   {shown}"),
+            Err(err) => {
+                println!("FAIL {shown}: {}", sanitize(&err));
+                failed += 1;
+            }
+        }
+    }
+
+    println!("\n{} passed, {} failed", targets.len() - failed, failed);
+    if failed > 0 {
+        std::process::exit(1);
+    }
+}
+
 /// Default contract template written by `apic create`.
 ///
 /// Embedded at compile time; mirrors the shape of [`crate::json::JsonContent`].
@@ -278,5 +348,6 @@ pub fn run() {
                 println!("No contract found");
             }
         },
+        Commands::Validate { filename } => validate(filename.as_deref()),
     }
 }

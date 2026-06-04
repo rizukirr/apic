@@ -137,6 +137,16 @@ pub fn scan_json_file(
     Ok(stripped_json_files)
 }
 
+/// Validates that `json` parses as a well-formed contract.
+///
+/// # Errors
+///
+/// Returns the parse error (with line/column) when the document does not
+/// conform to the contract schema.
+pub fn validate(json: &str) -> Result<(), serde_json::Error> {
+    serde_json::from_str::<JsonContent>(json).map(|_| ())
+}
+
 /// Parses a JSON contract, keeping only the responses whose code matches
 /// `status` (all responses when `status` is `None`).
 pub fn json_get(json: &str, status: Option<u16>) -> Result<JsonContent, serde_json::Error> {
@@ -181,6 +191,17 @@ mod tests {
     fn json_get_returns_empty_when_status_matches_nothing() {
         let c = json_get(CONTRACT, Some(500)).unwrap();
         assert!(c.responses.is_empty());
+    }
+
+    #[test]
+    fn validate_accepts_well_formed_contract() {
+        assert!(validate(CONTRACT).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_missing_required_field() {
+        // Missing `method`, `path`, `headers`, `responses`.
+        assert!(validate(r#"{ "name": "x" }"#).is_err());
     }
 
     #[test]

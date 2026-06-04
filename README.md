@@ -104,6 +104,37 @@ Output is colorized when stdout is a terminal and plain when piped, so it stays
 clean in scripts. Contract strings are sanitized before display, so a file from
 an untrusted source cannot inject terminal escape sequences.
 
+### `apic validate [-f <filename>]`
+Checks that contracts parse and conform to the schema. With no `-f`, every
+contract under the working directory is checked; with `-f <name>` only the best
+fuzzy match is. Prints `ok`/`FAIL` per file with the parse error (line and
+column) for failures, and **exits non-zero if any contract is invalid** — so it
+drops straight into a CI step or pre-commit hook.
+
+```bash
+apic validate               # check every contract
+apic validate -f login      # check one
+```
+
+```text
+ok   auth/login.json
+FAIL user/user.json: EOF while parsing an object at line 12 column 1
+
+2 passed, 1 failed
+```
+
+## Security
+
+`apic` treats contract files and paths as untrusted, so it is safe to run
+against contracts from any source:
+
+- **Terminal-escape safe** — all file-derived strings (contract fields, file
+  names) are stripped of control characters before printing.
+- **Path-confined** — `apic create` refuses paths that escape the working
+  directory via `..` or an absolute path elsewhere.
+- **Bounded** — contract files larger than 5 MiB are rejected before reading,
+  and pathologically nested JSON is rejected rather than overflowing the stack.
+
 ## Contract format
 
 A contract is a single JSON object describing one endpoint. See
