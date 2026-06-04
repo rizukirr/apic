@@ -4,4 +4,4 @@ author = "rizukirr"
 editor = "nvim"
 
 [root]
-working_dir = "api-contract"
+working_dir = "example"
