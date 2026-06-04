@@ -7,23 +7,29 @@
         { "name": "Content-Type", "value": "multipart/form-data" },
         { "name": "Authorization", "value": "Bearer {token}" }
     ],
-    "request": [
-        {
-            "name": "avatar",
-            "type": "file",
-            "default": null,
-            "description": "Avatar image, max 2MB",
-            "required": true,
-            "accept": "image/png, image/jpeg"
-        },
-        {
-            "name": "caption",
-            "type": "string",
-            "default": null,
-            "description": "Optional caption",
-            "required": false
+    "request": {
+        "schema": [
+            {
+                "name": "avatar",
+                "type": "file",
+                "default": null,
+                "description": "Avatar image, max 2MB",
+                "required": true,
+                "accept": "image/png, image/jpeg"
+            },
+            {
+                "name": "caption",
+                "type": "string",
+                "default": null,
+                "description": "Optional caption",
+                "required": false
+            }
+        ],
+        "example": {
+            "avatar": "<file: avatar.png>",
+            "caption": "My new avatar"
         }
-    ],
+    },
     "responses": [
         {
             "code": 200,

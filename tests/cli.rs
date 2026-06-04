@@ -209,13 +209,15 @@ fn read_renders_accept_column_for_multipart_file_fields() {
         "headers": [
             { "name": "Content-Type", "value": "multipart/form-data" }
         ],
-        "request": [
-            { "name": "avatar", "type": "file", "default": null,
-              "description": "Avatar image", "required": true,
-              "accept": "image/png, image/jpeg" },
-            { "name": "caption", "type": "string", "default": null,
-              "description": "Optional caption", "required": false }
-        ],
+        "request": {
+            "schema": [
+                { "name": "avatar", "type": "file", "default": null,
+                  "description": "Avatar image", "required": true,
+                  "accept": "image/png, image/jpeg" },
+                { "name": "caption", "type": "string", "default": null,
+                  "description": "Optional caption", "required": false }
+            ]
+        },
         "responses": []
     }"#;
     fs::write(dir.join("contracts/upload.json"), contract).unwrap();
@@ -237,6 +239,75 @@ fn read_renders_accept_column_for_multipart_file_fields() {
         .assert()
         .success()
         .stdout(predicate::str::contains("ACCEPT").not());
+}
+
+#[test]
+fn read_example_shows_raw_json_payloads() {
+    let dir = init_project("example_view");
+    let contract = r#"{
+        "name": "login",
+        "method": "POST",
+        "path": "/auth/login",
+        "headers": [],
+        "request": {
+            "schema": [
+                { "name": "username", "type": "string", "default": null,
+                  "description": "Username", "required": true }
+            ],
+            "example": { "username": "rizukirr", "password": "123qweA@" }
+        },
+        "responses": [
+            { "code": 200, "description": "ok",
+              "example": { "status": 200, "message": "welcome" } },
+            { "code": 401, "description": "denied",
+              "schema": [
+                  { "name": "status", "type": "int", "default": null,
+                    "description": "Status", "required": true, "properties": null }
+              ] }
+        ]
+    }"#;
+    fs::write(dir.join("contracts/login.json"), contract).unwrap();
+
+    // Default view renders the schema table, not the example payload.
+    apic(&dir)
+        .args(["read", "-f", "login"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("USERNAME").or(predicate::str::contains("username")))
+        .stdout(predicate::str::contains("123qweA@").not());
+
+    // --example shows raw JSON payloads; a response without one says so.
+    apic(&dir)
+        .args(["read", "-f", "login", "--example"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"username\": \"rizukirr\""))
+        .stdout(predicate::str::contains("\"message\": \"welcome\""))
+        .stdout(predicate::str::contains("(no example provided)"));
+}
+
+#[test]
+fn read_example_only_contract_renders_example_by_default() {
+    let dir = init_project("example_only");
+    let contract = r#"{
+        "name": "ping",
+        "method": "GET",
+        "path": "/ping",
+        "headers": [],
+        "request": { "example": { "probe": true } },
+        "responses": [
+            { "code": 200, "description": "pong", "example": { "pong": true } }
+        ]
+    }"#;
+    fs::write(dir.join("contracts/ping.json"), contract).unwrap();
+
+    // With no schema at all, the default view falls back to the examples.
+    apic(&dir)
+        .args(["read", "-f", "ping"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"probe\": true"))
+        .stdout(predicate::str::contains("\"pong\": true"));
 }
 
 #[test]

@@ -29,20 +29,32 @@
             "value": "Bearer {token}"
         }
     ],
-    "request": [
-        {
-            "name": "field_name",
-            "type": "string",
-            "default": null,
-            "description": "A request body field",
-            "required": true,
-            "accept": null
+    "request": {
+        "schema": [
+            {
+                "name": "field_name",
+                "type": "string",
+                "default": null,
+                "description": "A request body field",
+                "required": true,
+                "accept": null
+            }
+        ],
+        "example": {
+            "field_name": "value"
         }
-    ],
+    },
     "responses": [
         {
             "code": 200,
             "description": "Successful response",
+            "example": {
+                "status": 200,
+                "message": "OK",
+                "data": {
+                    "nested_field": "value"
+                }
+            },
             "schema": [
                 {
                     "name": "status",

@@ -25,6 +25,16 @@
         {
             "code": 200,
             "description": "success",
+            "example": {
+                "status": 200,
+                "message": "OK",
+                "data": {
+                    "id": 1,
+                    "name": "Rizki Rakasiwi",
+                    "email": "rizki@example.com",
+                    "role": "admin"
+                }
+            },
             "schema": [
                 {
                     "name": "status",

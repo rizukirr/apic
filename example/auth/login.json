@@ -13,26 +13,40 @@
             "value": "Bearer {token}"
         }
     ],
-    "request": [
-        {
-            "name": "username",
-            "type": "string",
-            "default": null,
-            "description": "Username",
-            "required": true
-        },
-        {
-            "name": "password",
-            "type": "string",
-            "default": null,
-            "description": "Password",
-            "required": true
+    "request": {
+        "schema": [
+            {
+                "name": "username",
+                "type": "string",
+                "default": null,
+                "description": "Username",
+                "required": true
+            },
+            {
+                "name": "password",
+                "type": "string",
+                "default": null,
+                "description": "Password",
+                "required": true
+            }
+        ],
+        "example": {
+            "username": "rizukirr",
+            "password": "123qweA@"
         }
-    ],
+    },
     "responses": [
         {
             "code": 200,
             "description": "Successful login",
+            "example": {
+                "status": 200,
+                "message": "Login successful",
+                "data": {
+                    "access_token": "eyJhbGciOiJIUzI1NiJ9.example",
+                    "refresh_token": "def50200af1b3c2d.example"
+                }
+            },
             "schema": [
                 {
                     "name": "status",

@@ -9,20 +9,25 @@ use crossterm::style::Stylize;
 use std::io::IsTerminal;
 
 /// Renders `contract` as formatted text to stdout.
-pub fn render(contract: &JsonContent) {
-    let p = Printer::new();
+///
+/// With `example_mode` the request and response sections print their raw JSON
+/// example payloads instead of schema tables.
+pub fn render(contract: &JsonContent, example_mode: bool) {
+    let p = Printer::new(example_mode);
     p.contract(contract);
 }
 
-/// Stateful printer carrying the color-or-plain decision.
+/// Stateful printer carrying the color-or-plain decision and view mode.
 struct Printer {
     color: bool,
+    example_mode: bool,
 }
 
 impl Printer {
-    fn new() -> Self {
+    fn new(example_mode: bool) -> Self {
         Self {
             color: std::io::stdout().is_terminal(),
+            example_mode,
         }
     }
 
@@ -82,15 +87,47 @@ impl Printer {
 
         if let Some(request) = &c.request {
             self.section("REQUEST");
-            let (headers, rows) = request_rows(request);
-            self.table(Some(&headers), &rows);
+            if self.example_mode {
+                self.example(&request.example);
+            } else if let Some(schema) = &request.schema {
+                let (headers, rows) = request_rows(schema);
+                self.table(Some(&headers), &rows);
+            } else {
+                // No schema — fall back to the example so the section is
+                // never silently empty.
+                self.example(&request.example);
+            }
         }
 
         for response in &c.responses {
             self.response_title(response.code, &response.description);
-            let mut rows = Vec::new();
-            schema_rows(&response.schema, 0, &mut rows);
-            self.table(Some(&["NAME", "TYPE", "REQ", "DESCRIPTION"]), &rows);
+            if self.example_mode {
+                self.example(&response.example);
+            } else if !response.schema.is_empty() {
+                let mut rows = Vec::new();
+                schema_rows(&response.schema, 0, &mut rows);
+                self.table(Some(&["NAME", "TYPE", "REQ", "DESCRIPTION"]), &rows);
+            } else {
+                self.example(&response.example);
+            }
+        }
+    }
+
+    /// Prints a raw JSON example payload, pretty-printed and indented, or a
+    /// note when none is provided.
+    ///
+    /// Serializing through serde_json escapes control characters as `\uXXXX`,
+    /// so a hostile example cannot inject terminal escape sequences.
+    fn example(&self, example: &Option<serde_json::Value>) {
+        match example {
+            Some(value) => {
+                let pretty = serde_json::to_string_pretty(value)
+                    .unwrap_or_else(|_| "(unrenderable example)".to_string());
+                for line in pretty.lines() {
+                    println!(" {line}");
+                }
+            }
+            None => println!(" (no example provided)"),
         }
     }
 

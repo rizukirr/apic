@@ -78,6 +78,11 @@ enum Commands {
         /// Show only the response with this HTTP status code (e.g. `401`).
         #[arg(long, short = 's', value_name = "CODE")]
         status: Option<u16>,
+
+        /// Show the raw JSON example payloads for the request and responses
+        /// instead of the schema tables.
+        #[arg(long, short = 'e')]
+        example: bool,
     },
     /// Scaffold a new contract from a template and open it in your editor.
     ///
@@ -222,15 +227,16 @@ pub fn read_filename(filename: &str) -> Option<String> {
 
 /// Parses `content` as a JSON contract, keeps only the responses whose code
 /// matches `status` (or all responses when `status` is `None`), and renders
-/// the resulting contract as formatted text.
+/// the resulting contract as formatted text. With `example`, the request and
+/// response sections show their raw JSON example payloads instead of tables.
 ///
 /// Parse errors are printed rather than returned. When a `status` filter
 /// matches no response, a note is printed so the empty output is not mistaken
 /// for a contract without responses.
-fn read(content: &str, status: Option<u16>) -> Result<(), String> {
+fn read(content: &str, status: Option<u16>, example: bool) -> Result<(), String> {
     match json_get(content, status) {
         Ok(contract) => {
-            render(&contract);
+            render(&contract, example);
             if let Some(status) = status
                 && contract.responses.is_empty()
             {
@@ -422,8 +428,12 @@ pub fn run() {
             }
             Ok(())
         }
-        Commands::Read { filename, status } => match read_filename(&filename) {
-            Some(content) => read(content.as_str(), status),
+        Commands::Read {
+            filename,
+            status,
+            example,
+        } => match read_filename(&filename) {
+            Some(content) => read(content.as_str(), status, example),
             None => {
                 println!("No contract found");
                 Ok(())

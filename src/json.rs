@@ -13,8 +13,19 @@ pub struct JsonContent {
     pub(crate) query: Option<Vec<Query>>,
     pub(crate) params: Option<Vec<Param>>,
     pub(crate) headers: Vec<Header>,
-    pub(crate) request: Option<Vec<Request>>,
+    pub(crate) request: Option<RequestBody>,
     pub(crate) responses: Vec<Response>,
+}
+
+/// The request body section: a field-level schema, a raw JSON example payload,
+/// or both. Either part may be omitted — early-stage contracts often have only
+/// an example, formal ones only a schema.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RequestBody {
+    #[serde(default)]
+    pub(crate) schema: Option<Vec<Request>>,
+    #[serde(default)]
+    pub(crate) example: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -57,7 +68,12 @@ pub struct Request {
 pub struct Response {
     pub code: u16,
     pub description: String,
+    /// Field-level schema; may be omitted when only an example is provided.
+    #[serde(default)]
     pub schema: Vec<Schema>,
+    /// Raw JSON example payload for this response.
+    #[serde(default)]
+    pub example: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -163,19 +179,42 @@ mod tests {
     fn request_field_parses_optional_accept_for_multipart() {
         let json = r#"{
             "name": "upload", "method": "POST", "path": "/u", "headers": [],
-            "request": [
-                { "name": "avatar", "type": "file", "default": null,
-                  "description": "Image", "required": true,
-                  "accept": "image/png" },
-                { "name": "caption", "type": "string", "default": null,
-                  "description": "Text", "required": false }
-            ],
+            "request": {
+                "schema": [
+                    { "name": "avatar", "type": "file", "default": null,
+                      "description": "Image", "required": true,
+                      "accept": "image/png" },
+                    { "name": "caption", "type": "string", "default": null,
+                      "description": "Text", "required": false }
+                ]
+            },
             "responses": []
         }"#;
         let c = json_get(json, None).unwrap();
+        let schema = c.request.unwrap().schema.unwrap();
+        assert_eq!(schema[0].accept.as_deref(), Some("image/png"));
+        assert_eq!(schema[1].accept, None);
+    }
+
+    #[test]
+    fn request_parses_example_only_without_schema() {
+        let json = r#"{
+            "name": "login", "method": "POST", "path": "/l", "headers": [],
+            "request": {
+                "example": { "username": "rizukirr", "password": "123qweA@" }
+            },
+            "responses": [
+                { "code": 200, "description": "ok",
+                  "example": { "status": 200, "message": "welcome" } }
+            ]
+        }"#;
+        let c = json_get(json, None).unwrap();
         let request = c.request.unwrap();
-        assert_eq!(request[0].accept.as_deref(), Some("image/png"));
-        assert_eq!(request[1].accept, None);
+        assert!(request.schema.is_none());
+        assert_eq!(request.example.unwrap()["username"], "rizukirr");
+        // Response: schema omitted defaults to empty; example parsed.
+        assert!(c.responses[0].schema.is_empty());
+        assert_eq!(c.responses[0].example.as_ref().unwrap()["status"], 200);
     }
 
     #[test]

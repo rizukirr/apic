@@ -116,6 +116,25 @@ apic read -f user/user.json   # exact path
 apic read -f auth/login       # extension optional
 apic read -f login            # fuzzy
 apic read -f login -s 401     # show only the 401 response
+apic read -f login --example  # show raw JSON example payloads
+```
+
+With `--example` (or `-e`), the request and response sections print their raw
+JSON example payloads instead of schema tables — the copy-paste view:
+
+```text
+ REQUEST
+ {
+   "username": "rizukirr",
+   "password": "123qweA@"
+ }
+
+ RESPONSE 200 — Successful login
+ {
+   "status": 200,
+   "message": "Login successful",
+   "data": { "access_token": "..." }
+ }
 ```
 
 ### `apic open -f <filename>`
@@ -178,15 +197,21 @@ template that `apic create` writes.
     "headers": [
         { "name": "Content-Type", "value": "application/json" }
     ],
-    "request": [
-        {
-            "name": "username",
-            "type": "string",
-            "default": null,
-            "description": "Username",
-            "required": true
+    "request": {
+        "schema": [
+            {
+                "name": "username",
+                "type": "string",
+                "default": null,
+                "description": "Username",
+                "required": true
+            }
+        ],
+        "example": {
+            "username": "rizukirr",
+            "password": "123qweA@"
         }
-    ],
+    },
     "responses": [
         {
             "code": 200,
@@ -200,11 +225,20 @@ template that `apic create` writes.
                     "required": true,
                     "properties": null
                 }
-            ]
+            ],
+            "example": {
+                "access_token": "eyJhbGciOiJIUzI1NiJ9.example"
+            }
         }
     ]
 }
 ```
+
+Both `schema` (field-level detail, rendered as tables) and `example` (a raw
+JSON payload, shown with `read --example`) are optional in the request and in
+each response — early-stage contracts often start with just an example, formal
+ones with just a schema. When a section has an example but no schema, the
+default view shows the example so the contract is never empty.
 
 ### Fields
 
@@ -217,10 +251,10 @@ template that `apic create` writes.
 | `query` | no | Array of query parameters (`name`, `value`, `description`, `required`). |
 | `params` | no | Array of path parameters (`name`, `value`, `description`, `required`). |
 | `headers` | yes | Array of headers (`name`, `value`). |
-| `request` | no | Array of request-body fields (see field schema below). |
-| `responses` | yes | Array of responses (`code`, `description`, `schema`). |
+| `request` | no | Request body: `{ "schema": [fields], "example": <raw JSON> }` — both parts optional. |
+| `responses` | yes | Array of responses (`code`, `description`, optional `schema`, optional `example`). |
 
-A **field** (in `request` and response `schema`) has:
+A **field** (in the request `schema` and response `schema`) has:
 
 | Field | Description |
 |-------|-------------|
@@ -247,23 +281,25 @@ optional `accept` field documents which MIME types the part allows, and
     "headers": [
         { "name": "Content-Type", "value": "multipart/form-data" }
     ],
-    "request": [
-        {
-            "name": "avatar",
-            "type": "file",
-            "default": null,
-            "description": "Avatar image, max 2MB",
-            "required": true,
-            "accept": "image/png, image/jpeg"
-        },
-        {
-            "name": "caption",
-            "type": "string",
-            "default": null,
-            "description": "Optional caption",
-            "required": false
-        }
-    ],
+    "request": {
+        "schema": [
+            {
+                "name": "avatar",
+                "type": "file",
+                "default": null,
+                "description": "Avatar image, max 2MB",
+                "required": true,
+                "accept": "image/png, image/jpeg"
+            },
+            {
+                "name": "caption",
+                "type": "string",
+                "default": null,
+                "description": "Optional caption",
+                "required": false
+            }
+        ]
+    },
     "responses": []
 }
 ```
