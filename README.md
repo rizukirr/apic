@@ -3,7 +3,9 @@
 A small CLI for **git-able API contracts**. Each endpoint is a plain JSON file
 that lives in your repository, so contracts are diffable, reviewable in pull
 requests, and versioned alongside the code they describe. `apic` discovers,
-renders, and scaffolds those files.
+renders, and scaffolds those files.`
+
+https://github.com/user-attachments/assets/ebcfb7a4-e099-43d0-934d-15e8cf591c74
 
 ## Why
 
