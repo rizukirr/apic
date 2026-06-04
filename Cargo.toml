@@ -2,10 +2,16 @@
 name = "apic"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 authors = ["Rizki Rakasiwi"]
 description = "A git-able API contract CLI: contracts as plain per-endpoint JSON files in your repo"
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/rizukirr/apic"
+homepage = "https://github.com/rizukirr/apic"
+keywords = ["api", "contract", "cli", "rest", "json"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["/.github", "/.apic", "/example"]
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }

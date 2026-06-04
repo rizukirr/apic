@@ -27,16 +27,26 @@ That means contracts are:
 
 ## Install
 
-Build from source (requires a Rust toolchain, edition 2024):
+**From crates.io** (requires a Rust toolchain, 1.88+):
 
 ```bash
-git clone <repo-url> apic
+cargo install apic
+```
+
+**Prebuilt binaries** — download the archive for your platform from the
+[latest release](https://github.com/rizukirr/apic/releases/latest), verify the
+`.sha256` checksum, extract, and put `apic` on your `PATH`. Builds are published
+for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), and Windows (x86_64).
+
+**From source:**
+
+```bash
+git clone https://github.com/rizukirr/apic
 cd apic
 cargo install --path .
 ```
 
-This puts the `apic` binary on your `PATH`. To run without installing, use
-`cargo run -- <args>` from the project directory.
+To run without installing, use `cargo run -- <args>` from the project directory.
 
 ## Quick start
 
