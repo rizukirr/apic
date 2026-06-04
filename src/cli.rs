@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 /// Top-level CLI parser for the `apic` binary.
 #[derive(Debug, Parser)]
 #[command(name = "apic")]
-#[command(version = "1.0.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(author = "rizukirr")]
 #[command(about = "API contract tools")]
 struct Cli {
