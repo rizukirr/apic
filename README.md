@@ -101,13 +101,30 @@ Lists discovered `.json` contract files under the working directory.
   relative to the working directory.
 
 ### `apic read -f <filename> [-s <status>]`
-Fuzzy-finds the contract whose path best matches `<filename>` and renders it as
-formatted tables. `-s <status>` filters the response section to a single HTTP
-status code.
+Renders a contract as formatted tables. `-s <status>` filters the response
+section to a single HTTP status code.
+
+`<filename>` is resolved flexibly — an exact match wins, then fuzzy:
+
+1. a path relative to the working directory — `user/user.json`
+2. the same without the `.json` extension — `user/user`, `auth/login`
+3. a fuzzy fragment — `user`, `logn`
 
 ```bash
-apic read -f login          # render the whole contract
-apic read -f login -s 401   # show only the 401 response
+apic read -f user/user.json   # exact path
+apic read -f auth/login       # extension optional
+apic read -f login            # fuzzy
+apic read -f login -s 401     # show only the 401 response
+```
+
+### `apic open -f <filename>`
+Resolves `<filename>` exactly like `read` (path, extensionless, or fuzzy) and
+opens the matching contract in your editor — the same editor resolution as
+`apic create`.
+
+```bash
+apic open -f user/user.json
+apic open -f user
 ```
 
 Output is colorized when stdout is a terminal and plain when piped, so it stays

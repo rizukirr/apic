@@ -65,6 +65,14 @@ enum Commands {
         #[arg(long, short = 'f')]
         filename: Option<String>,
     },
+    /// Open an existing contract in your editor.
+    ///
+    /// The filename may be a path (`user/user.json`), drop the extension
+    /// (`user/user`), or be a fuzzy fragment (`user`).
+    Open {
+        #[arg(long, short = 'f')]
+        filename: String,
+    },
 }
 
 /// Updates the configured root working directory.
@@ -135,30 +143,54 @@ pub fn list(depth: Option<usize>, is_absolute: bool) -> Option<Vec<PathBuf>> {
     }
 }
 
-/// Fuzzy-finds the contract file best matching `filename` and returns its content.
+/// Resolves a contract reference to an existing file path under the working dir.
 ///
-/// The best match (by fuzzy score) is read and its content returned; `None` is
-/// returned when no file matches or no contract files exist at all.
-pub fn read_filename(filename: &str) -> Option<String> {
+/// Resolution tries, in order:
+/// 1. an exact path relative to the working directory (`user/user.json`),
+/// 2. the same with a `.json` extension appended (`user/user`, `auth/login`),
+/// 3. the best fuzzy match over all contracts (`user`, `logn`).
+///
+/// Exact matches always win over fuzzy ones, so a precise path is never
+/// mis-ranked. Returns `None` when nothing resolves or no contracts exist.
+pub fn resolve_contract(filename: &str) -> Option<PathBuf> {
     let files = list(None, true)?;
 
+    // 1 & 2: exact file under the working directory, with or without `.json`.
+    if let Ok(root) = read_config_file().and_then(|c| c.get_root_dir()) {
+        let candidates = [
+            PathBuf::from(filename),
+            PathBuf::from(format!("{filename}.json")),
+        ];
+        for candidate in candidates {
+            if let Ok(path) = confine_to_dir(&root, &candidate)
+                && path.is_file()
+            {
+                return Some(path);
+            }
+        }
+    }
+
+    // 3: fuzzy fallback over every discovered contract.
     let file_str: Vec<String> = files
         .iter()
         .map(|f| f.to_string_lossy().to_string())
         .collect();
+    let hits = fuzzy_find(filename, &file_str)?;
+    Some(PathBuf::from(&hits[0].0))
+}
 
-    let result = fuzzy_find(filename, &file_str);
-    if let Some(result) = result {
-        let path = Path::new(&result[0].0);
-        match read_file(path) {
-            Ok(content) => return Some(content),
-            Err(err) => {
-                eprintln!("Failed to read {}: {}", path.display(), err);
-                return None;
-            }
+/// Resolves `filename` to a contract and returns its content.
+///
+/// `None` is returned when no file resolves or the file cannot be read.
+pub fn read_filename(filename: &str) -> Option<String> {
+    let path = resolve_contract(filename)?;
+    match read_file(&path) {
+        Ok(content) => Some(content),
+        Err(err) => {
+            eprintln!("Failed to read {}: {}", path.display(), err);
+            None
         }
     }
-    None
 }
 
 /// Parses `content` as a JSON contract, keeps only the responses whose code
@@ -279,6 +311,14 @@ fn create(filename: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Resolves `filename` to an existing contract and opens it in the editor.
+fn open(filename: &str) -> Result<(), String> {
+    let path = resolve_contract(filename)
+        .ok_or_else(|| format!("No contract found matching '{filename}'"))?;
+    open_in_editor(&path).map_err(|err| format!("Failed to open editor: {err}"))?;
+    Ok(())
+}
+
 /// Opens `path` in the user's preferred editor and waits for it to close.
 ///
 /// Resolves the editor from `$VISUAL`, then `$EDITOR`, then the `config.toml`
@@ -345,6 +385,7 @@ pub fn run() {
             validate(filename.as_deref());
             Ok(())
         }
+        Commands::Open { filename } => open(&filename),
     };
 
     if let Err(err) = result {

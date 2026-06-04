@@ -139,6 +139,51 @@ fn validate_passes_for_valid_and_fails_for_broken() {
 }
 
 #[test]
+fn read_resolves_path_extensionless_and_fuzzy_forms() {
+    let dir = init_project("resolve");
+    apic(&dir)
+        .args(["create", "-f", "user/user.json"])
+        .assert()
+        .success();
+
+    // Every form resolves to the same contract.
+    for form in ["user/user.json", "user/user", "user.json", "user"] {
+        apic(&dir)
+            .args(["read", "-f", form])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("/resource/{id}/action"));
+    }
+}
+
+#[test]
+fn open_resolves_and_succeeds() {
+    let dir = init_project("open");
+    apic(&dir)
+        .args(["create", "-f", "user/user.json"])
+        .assert()
+        .success();
+
+    for form in ["user/user.json", "user/user", "user"] {
+        apic(&dir).args(["open", "-f", form]).assert().success();
+    }
+}
+
+#[test]
+fn open_missing_contract_fails() {
+    let dir = init_project("open_missing");
+    apic(&dir)
+        .args(["create", "-f", "a.json"])
+        .assert()
+        .success();
+    apic(&dir)
+        .args(["open", "-f", "zzz_no_match_zzz"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No contract found"));
+}
+
+#[test]
 fn config_set_dir_rejects_missing_directory() {
     let dir = init_project("setdir");
     apic(&dir)
