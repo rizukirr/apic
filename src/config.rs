@@ -78,7 +78,8 @@ impl Config {
         };
 
         let dir = PathBuf::from(".apic");
-        let pwd = std::env::current_dir().unwrap();
+        let pwd = std::env::current_dir()
+            .map_err(|err| format!("Failed to get current directory: {err}"))?;
         let makedir = pwd.join(&dir);
 
         if !makedir.exists() {
@@ -191,12 +192,16 @@ pub fn configured_editor() -> Option<String> {
 
 /// Serializes `config` to TOML and writes it to `apic_dir/config.toml`.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if serialization or the file write fails.
+/// Returns `Err` if the config cannot be serialized or the file cannot be
+/// written (e.g. a read-only directory or a full disk).
 fn write_config_file(apic_dir: PathBuf, config: &Config) -> Result<(), String> {
-    let config_to_str = toml::to_string_pretty(config).unwrap();
-    fs::write(apic_dir.join("config.toml"), config_to_str).unwrap();
+    let config_to_str = toml::to_string_pretty(config)
+        .map_err(|err| format!("Failed to serialize config: {err}"))?;
+    let path = apic_dir.join("config.toml");
+    fs::write(&path, config_to_str)
+        .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
     Ok(())
 }
 
