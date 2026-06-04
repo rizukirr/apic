@@ -42,17 +42,26 @@ impl Config {
         }
     }
 
-    /// Returns the configured root working directory.
+    /// Returns the configured working directory as a normalized absolute path.
+    ///
+    /// The stored `working_dir` is relative to the project root (the parent of
+    /// the `.apic` directory), which keeps the config portable across machines
+    /// and clones. A legacy absolute `working_dir` is still honored, since
+    /// joining an absolute path simply yields that path.
     pub fn get_root_dir(&self) -> Result<PathBuf, String> {
-        let root = self.root.working_dir.to_path_buf();
-        if !root.exists() {
+        let project_root = project_root()?;
+        let resolved = project_root.join(&self.root.working_dir);
+        if !resolved.exists() {
             let err = format!(
                 "working directory {} does not exist, try to run `apic config --set-dir <dir>`",
-                root.display()
+                resolved.display()
             );
             return Err(err);
         }
-        Ok(root)
+        // Normalize away `.`/`..` components (and symlinks) so downstream path
+        // stripping in scans operates on a clean absolute root.
+        fs::canonicalize(&resolved)
+            .map_err(|err| format!("Failed to resolve {}: {}", resolved.display(), err))
     }
 
     /// Initializes a new project: creates the `.apic` directory and writes a
@@ -92,6 +101,9 @@ impl Config {
             };
         }
 
+        // `working_dir` is stored relative to the project root (= `pwd` here,
+        // where `.apic` is created) so the config stays portable. A `None`
+        // working dir means the project root itself.
         let working_dir = match working_dir {
             Some(dir) => {
                 let dir = PathBuf::from(dir);
@@ -99,14 +111,9 @@ impl Config {
                     let err = format!("Directory {} does not exist", dir.display());
                     return Err(err);
                 }
-
-                if dir.is_absolute() {
-                    dir
-                } else {
-                    pwd.join(dir)
-                }
+                relative_to_root(&pwd, &dir)
             }
-            None => pwd,
+            None => PathBuf::from("."),
         };
         write_config_file(makedir.clone(), &Config::default(&working_dir))
     }
@@ -137,12 +144,18 @@ impl Config {
             let err = format!("Directory {} does not exist", dir.display());
             return Err(err);
         }
-        if dir == self.root.working_dir {
+
+        // No-op if the new target resolves to the current working directory.
+        let current = root.join(&self.root.working_dir);
+        if let (Ok(a), Ok(b)) = (fs::canonicalize(&dir), fs::canonicalize(&current))
+            && a == b
+        {
             let err = format!("Already in {}", dir.display());
             return Err(err);
         }
 
-        self.root.working_dir = dir;
+        // Persist relative to the project root so the config stays portable.
+        self.root.working_dir = relative_to_root(root, Path::new(new_dir));
         write_config_file(apic_dir, self)
     }
 
@@ -205,6 +218,40 @@ fn write_config_file(apic_dir: PathBuf, config: &Config) -> Result<(), String> {
     Ok(())
 }
 
+/// Returns the project root: the parent of the discovered `.apic` directory.
+///
+/// # Errors
+///
+/// Returns `Err` if the project is not initialized.
+fn project_root() -> Result<PathBuf, String> {
+    match find_file_apic_dir()? {
+        FindFileResult::Found(dir) => {
+            let apic_dir = dir.first().unwrap();
+            Ok(apic_dir.parent().unwrap_or(apic_dir).to_path_buf())
+        }
+        FindFileResult::NotFound => Err("Not initialized yet, run `apic init` first".to_string()),
+    }
+}
+
+/// Expresses `dir` relative to `root` so it can be stored portably.
+///
+/// A relative `dir` is returned unchanged (it is already relative to `root`).
+/// An absolute `dir` under `root` is stripped to the relative remainder;
+/// an absolute `dir` outside the project cannot be made portable and is kept
+/// as-is. A result equal to `root` itself collapses to `.`.
+fn relative_to_root(root: &Path, dir: &Path) -> PathBuf {
+    let rel = if dir.is_absolute() {
+        dir.strip_prefix(root).unwrap_or(dir)
+    } else {
+        dir
+    };
+    if rel.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        rel.to_path_buf()
+    }
+}
+
 /// Searches upward from the current directory for the `.apic` directory.
 fn find_file_apic_dir() -> Result<FindFileResult, String> {
     let pwd = match std::env::current_dir() {
@@ -253,4 +300,45 @@ pub fn read_config_file() -> Result<Config, String> {
     let config: Config = toml::from_str(&content)
         .map_err(|err| format!("Failed to parse {}: {}", config_file.display(), err))?;
     Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relative_input_is_kept_as_is() {
+        let root = Path::new("/home/u/project");
+        assert_eq!(
+            relative_to_root(root, Path::new("api-contract")),
+            PathBuf::from("api-contract")
+        );
+    }
+
+    #[test]
+    fn absolute_input_under_root_is_made_relative() {
+        let root = Path::new("/home/u/project");
+        assert_eq!(
+            relative_to_root(root, Path::new("/home/u/project/api-contract")),
+            PathBuf::from("api-contract")
+        );
+    }
+
+    #[test]
+    fn absolute_input_equal_to_root_collapses_to_dot() {
+        let root = Path::new("/home/u/project");
+        assert_eq!(
+            relative_to_root(root, Path::new("/home/u/project")),
+            PathBuf::from(".")
+        );
+    }
+
+    #[test]
+    fn absolute_input_outside_root_is_kept_absolute() {
+        let root = Path::new("/home/u/project");
+        assert_eq!(
+            relative_to_root(root, Path::new("/etc/contracts")),
+            PathBuf::from("/etc/contracts")
+        );
+    }
 }
