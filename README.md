@@ -194,4 +194,4 @@ working_dir = "/path/to/api-contract"
 
 ## License
 
-See the repository for license details.
+Licensed under the [MIT License](LICENSE).
