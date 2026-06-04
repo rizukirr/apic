@@ -1,0 +1,104 @@
+{
+    "name": "endpoint-name",
+    "description": "Short description of what this endpoint does",
+    "method": "POST",
+    "path": "/resource/{id}/action",
+    "query": [
+        {
+            "name": "page",
+            "value": "1",
+            "description": "Page number",
+            "required": false
+        }
+    ],
+    "params": [
+        {
+            "name": "id",
+            "value": "123",
+            "description": "Resource identifier",
+            "required": true
+        }
+    ],
+    "headers": [
+        {
+            "name": "Content-Type",
+            "value": "application/json"
+        },
+        {
+            "name": "Authorization",
+            "value": "Bearer {token}"
+        }
+    ],
+    "request": [
+        {
+            "name": "field_name",
+            "type": "string",
+            "default": null,
+            "description": "A request body field",
+            "required": true
+        }
+    ],
+    "responses": [
+        {
+            "code": 200,
+            "description": "Successful response",
+            "schema": [
+                {
+                    "name": "status",
+                    "type": "int",
+                    "default": "200",
+                    "description": "Status code",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "message",
+                    "type": "string",
+                    "default": null,
+                    "description": "Human-readable message",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "data",
+                    "type": "object",
+                    "default": null,
+                    "description": "Response payload",
+                    "required": false,
+                    "properties": [
+                        {
+                            "name": "nested_field",
+                            "type": "string",
+                            "default": null,
+                            "description": "A nested field inside data",
+                            "required": true,
+                            "properties": null
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "code": 400,
+            "description": "Bad request",
+            "schema": [
+                {
+                    "name": "status",
+                    "type": "int",
+                    "default": "400",
+                    "description": "Status code",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "message",
+                    "type": "string",
+                    "default": null,
+                    "description": "Error message",
+                    "required": true,
+                    "properties": null
+                }
+            ]
+        }
+    ]
+}

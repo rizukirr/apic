@@ -1,0 +1,14 @@
+/target
+.apic/
+api-contract/
+
+# Stray machine-local config from an earlier prototype (unused by the code,
+# which reads .apic/config.toml). Kept on disk but not tracked.
+/config.toml
+
+
+# Added by cargo
+#
+# already existing elements were commented out
+
+#/target
