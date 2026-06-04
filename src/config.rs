@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     name: String,
     version: String,
-    author: String,
     /// Preferred editor command; overrides `$VISUAL`/`$EDITOR` when set.
     editor: Option<String>,
     root: Root,
@@ -36,7 +35,6 @@ impl Config {
         Config {
             name: "apic".to_string(),
             version: "0.1.0".to_string(),
-            author: "rizukirr".to_string(),
             editor: None,
             root: root_dir,
         }

@@ -94,6 +94,11 @@
         {
             "code": 401,
             "description": "Invalid credentials",
+            "example": {
+                "status": 401,
+                "message": "Invalid credentials",
+                "data": null
+            },
             "schema": [
                 {
                     "name": "status",

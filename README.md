@@ -321,7 +321,6 @@ REQUEST
 ```toml
 name = "apic"
 version = "0.1.0"
-author = "rizukirr"
 editor = "nvim"
 
 [root]
