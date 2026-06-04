@@ -1,6 +1,9 @@
 /target
-.apic/
-api-contract/
+
+# Share the portable project config, but keep any other .apic contents
+# (e.g. future local caches) out of version control.
+.apic/*
+!.apic/config.toml
 
 # Stray machine-local config from an earlier prototype (unused by the code,
 # which reads .apic/config.toml). Kept on disk but not tracked.

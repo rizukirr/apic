@@ -76,9 +76,11 @@ Creates a new contract from the built-in template and opens it in your editor.
 A relative path is resolved against the configured working directory. `apic`
 refuses to overwrite an existing file.
 
-Editor resolution order: `config.toml` editor → `$VISUAL` → `$EDITOR` → `vi`.
-GUI editors need their wait flag (`code --wait`, `subl -w`) so `apic` waits for
-the file to be saved.
+Editor resolution order: `$VISUAL` → `$EDITOR` → `config.toml` editor → `vi`.
+Your personal environment variables take precedence over the project config,
+so a shared (committed) config can set a team default without overriding your
+own editor. GUI editors need their wait flag (`code --wait`, `subl -w`) so
+`apic` waits for the file to be saved.
 
 ### `apic list [--depth <n>] [--absolute <true|false>]`
 Lists discovered `.json` contract files under the working directory.
@@ -181,16 +183,13 @@ author = "rizukirr"
 editor = "nvim"
 
 [root]
-working_dir = "/path/to/api-contract"
+working_dir = "api-contract"
 ```
 
-`apic` locates the project by walking up from the current directory to find the
+`working_dir` is stored relative to the project root, so `.apic/config.toml`
+is safe to commit and share — it resolves correctly on any clone. `apic`
+locates the project by walking up from the current directory to find the
 `.apic` directory, so commands work from anywhere inside the project tree.
-
-## Roadmap
-
-- `apic tui` — an interactive terminal UI for browsing contracts (scaffolded,
-  not yet implemented).
 
 ## License
 

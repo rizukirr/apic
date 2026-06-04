@@ -1,0 +1,115 @@
+{
+    "name": "user",
+    "description": "User management",
+    "method": "GET",
+    "path": "/user",
+    "params": [
+        {
+            "name": "id",
+            "value": "{id}",
+            "description": "User ID",
+            "required": false
+        }
+    ],
+    "headers": [
+        {
+            "name": "Content-Type",
+            "value": "application/json"
+        },
+        {
+            "name": "Authorization",
+            "value": "Bearer {token}"
+        }
+    ],
+    "responses": [
+        {
+            "code": 200,
+            "description": "success",
+            "schema": [
+                {
+                    "name": "status",
+                    "type": "int",
+                    "default": "200",
+                    "description": "Status code",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "message",
+                    "type": "string",
+                    "default": null,
+                    "description": "Message",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "data",
+                    "type": "object",
+                    "default": null,
+                    "description": "Data",
+                    "required": false,
+                    "properties": [
+                        {
+                            "name": "id",
+                            "type": "int",
+                            "default": null,
+                            "description": "User ID",
+                            "required": true
+                        },
+                        {
+                            "name": "name",
+                            "type": "string",
+                            "default": null,
+                            "description": "User name",
+                            "required": true
+                        },
+                        {
+                            "name": "email",
+                            "type": "string",
+                            "default": null,
+                            "description": "User email",
+                            "required": true
+                        },
+                        {
+                            "name": "role",
+                            "type": "string",
+                            "default": null,
+                            "description": "User role",
+                            "required": true
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "code": 401,
+            "description": "Invalid credentials",
+            "schema": [
+                {
+                    "name": "status",
+                    "type": "int",
+                    "default": "401",
+                    "description": "Status code",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "message",
+                    "type": "string",
+                    "default": null,
+                    "description": "Message",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "data",
+                    "type": "object",
+                    "default": null,
+                    "description": "Data",
+                    "required": false,
+                    "properties": null
+                }
+            ]
+        }
+    ]
+}

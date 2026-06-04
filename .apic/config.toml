@@ -1,0 +1,7 @@
+name = "apic"
+version = "0.1.0"
+author = "rizukirr"
+editor = "nvim"
+
+[root]
+working_dir = "api-contract"

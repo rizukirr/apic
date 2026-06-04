@@ -52,7 +52,7 @@ enum Commands {
         #[arg(long, short = 's')]
         status: Option<u16>,
     },
-    Tui,
+    /// Scaffold a new contract from a template and open it in your editor.
     Create {
         #[arg(long, short = 'f')]
         filename: Option<String>,
@@ -214,13 +214,16 @@ fn create(filename: &str) -> std::io::Result<()> {
 
 /// Opens `path` in the user's preferred editor and waits for it to close.
 ///
-/// Resolves the editor from `config.toml`, then `$VISUAL`, then `$EDITOR`,
-/// falling back to `vi`. Extra arguments in the value (e.g. `code --wait`)
-/// are honored.
+/// Resolves the editor from `$VISUAL`, then `$EDITOR`, then the `config.toml`
+/// editor, falling back to `vi`. Personal environment variables take
+/// precedence over the project config, so a shared, committed config can set a
+/// team default without overriding anyone's own editor. Extra arguments in the
+/// value (e.g. `code --wait`) are honored.
 fn open_in_editor(path: &Path) -> std::io::Result<()> {
-    let editor = configured_editor()
-        .or_else(|| std::env::var("VISUAL").ok())
+    let editor = std::env::var("VISUAL")
+        .ok()
         .or_else(|| std::env::var("EDITOR").ok())
+        .or_else(configured_editor)
         .unwrap_or_else(|| String::from("vi"));
 
     let mut parts = editor.split_whitespace();
@@ -275,6 +278,5 @@ pub fn run() {
                 println!("No contract found");
             }
         },
-        Commands::Tui => {}
     }
 }

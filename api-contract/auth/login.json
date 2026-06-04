@@ -1,0 +1,111 @@
+{
+    "name": "login",
+    "description": "Login to the API",
+    "method": "POST",
+    "path": "/auth/login",
+    "headers": [
+        {
+            "name": "Content-Type",
+            "value": "application/json"
+        },
+        {
+            "name": "Authorization",
+            "value": "Bearer {token}"
+        }
+    ],
+    "request": [
+        {
+            "name": "username",
+            "type": "string",
+            "default": null,
+            "description": "Username",
+            "required": true
+        },
+        {
+            "name": "password",
+            "type": "string",
+            "default": null,
+            "description": "Password",
+            "required": true
+        }
+    ],
+    "responses": [
+        {
+            "code": 200,
+            "description": "Successful login",
+            "schema": [
+                {
+                    "name": "status",
+                    "type": "int",
+                    "default": "200",
+                    "description": "Status code",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "message",
+                    "type": "string",
+                    "default": null,
+                    "description": "Message",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "data",
+                    "type": "object",
+                    "default": null,
+                    "description": "Data",
+                    "required": false,
+                    "properties": [
+                        {
+                            "name": "access_token",
+                            "type": "string",
+                            "default": null,
+                            "description": "Token",
+                            "required": true,
+                            "properties": null
+                        },
+                        {
+                            "name": "refresh_token",
+                            "type": "string",
+                            "default": null,
+                            "description": "Refresh token",
+                            "required": true,
+                            "properties": null
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "code": 401,
+            "description": "Invalid credentials",
+            "schema": [
+                {
+                    "name": "status",
+                    "type": "int",
+                    "default": "401",
+                    "description": "Status code",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "message",
+                    "type": "string",
+                    "default": null,
+                    "description": "Message",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "data",
+                    "type": "object",
+                    "default": null,
+                    "description": "Data",
+                    "required": false,
+                    "properties": null
+                }
+            ]
+        }
+    ]
+}
