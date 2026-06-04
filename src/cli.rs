@@ -14,7 +14,13 @@ use std::path::{Path, PathBuf};
 #[command(name = "apic")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(author = "rizukirr")]
-#[command(about = "API contract tools")]
+#[command(about = "Git-able API contracts — per-endpoint JSON files in your repo")]
+#[command(
+    long_about = "apic stores API contracts as plain per-endpoint JSON files in your \
+repository, so they are versioned, diffable, and reviewable alongside code.\n\n\
+Typical flow: `apic init` to set up a project, `apic config --set-dir <dir>` to point at your \
+contracts folder, then `create`, `open`, `read`, and `validate` to work with contracts."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -23,54 +29,86 @@ struct Cli {
 /// The subcommands accepted by `apic`.
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Update configuration, e.g. the working directory or editor.
+    /// Change project settings in `.apic/config.toml`.
+    ///
+    /// Each flag is optional; given together they are all applied. With no
+    /// flags, nothing changes.
     Config {
-        #[arg(long)]
+        /// Set the contracts working directory, relative to the project root
+        /// (the directory must already exist).
+        #[arg(long, value_name = "DIR")]
         set_dir: Option<String>,
 
-        #[arg(long)]
+        /// Set the editor used by `create` and `open`, e.g. `nvim` or
+        /// `"code --wait"`. Your $VISUAL/$EDITOR still take precedence.
+        #[arg(long, value_name = "EDITOR")]
         set_editor: Option<String>,
     },
-    /// Initialize an `.apic` project in the current directory.
+    /// Initialize an apic project in the current directory.
+    ///
+    /// Creates `.apic/config.toml`. Run this once at the root of your repo.
     Init {
-        #[arg(long)]
+        /// Folder that holds your contract files, relative to here. Defaults to
+        /// the current directory.
+        #[arg(long, value_name = "DIR")]
         set_dir: Option<String>,
     },
-    /// List discovered JSON contract files, optionally limited by depth.
+    /// List discovered contract files under the working directory.
     List {
-        #[arg(long)]
+        /// Truncate reported paths to N components below the working directory.
+        /// `0` (the default) prints full paths.
+        #[arg(long, value_name = "N")]
         depth: Option<usize>,
 
-        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        /// Print absolute paths (`true`) or paths relative to the working
+        /// directory (`false`).
+        #[arg(long, value_name = "BOOL", default_value_t = true, action = clap::ArgAction::Set)]
         absolute: bool,
     },
-    /// Fuzzy-find a contract file by name and print its contents.
+    /// Render a contract as formatted, colorized tables.
+    ///
+    /// The filename is resolved flexibly: an exact path (`user/user.json`), the
+    /// same without the `.json` extension (`user/user`, `auth/login`), or a
+    /// fuzzy fragment (`user`, `logn`). Exact matches win over fuzzy ones.
     Read {
-        #[arg(long, short = 'f')]
+        /// Contract to read — path, extensionless path, or fuzzy fragment.
+        #[arg(long, short = 'f', value_name = "FILENAME")]
         filename: String,
 
-        #[arg(long, short = 's')]
+        /// Show only the response with this HTTP status code (e.g. `401`).
+        #[arg(long, short = 's', value_name = "CODE")]
         status: Option<u16>,
     },
     /// Scaffold a new contract from a template and open it in your editor.
+    ///
+    /// The path is resolved against the working directory and confined to it;
+    /// a `..` escape or an absolute path elsewhere is rejected. Refuses to
+    /// overwrite an existing file.
     Create {
-        #[arg(long, short = 'f')]
+        /// Path for the new contract, relative to the working directory
+        /// (e.g. `auth/login.json`).
+        #[arg(long, short = 'f', value_name = "FILENAME")]
         filename: Option<String>,
     },
     /// Check that contracts parse and conform to the schema.
     ///
     /// With no filename, every contract under the working directory is checked.
-    /// Exits non-zero if any contract is invalid, for use in CI.
+    /// Prints `ok`/`FAIL` per file and exits non-zero if any contract is
+    /// invalid, so it can gate CI or a pre-commit hook.
     Validate {
-        #[arg(long, short = 'f')]
+        /// Validate only this contract (path, extensionless, or fuzzy). Omit to
+        /// check every contract.
+        #[arg(long, short = 'f', value_name = "FILENAME")]
         filename: Option<String>,
     },
     /// Open an existing contract in your editor.
     ///
-    /// The filename may be a path (`user/user.json`), drop the extension
-    /// (`user/user`), or be a fuzzy fragment (`user`).
+    /// The filename is resolved like `read`: an exact path (`user/user.json`),
+    /// without the `.json` extension (`user/user`), or a fuzzy fragment
+    /// (`user`). Uses the same editor resolution as `create`.
     Open {
-        #[arg(long, short = 'f')]
+        /// Contract to open — path, extensionless path, or fuzzy fragment.
+        #[arg(long, short = 'f', value_name = "FILENAME")]
         filename: String,
     },
 }
