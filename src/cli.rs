@@ -1,10 +1,10 @@
 //! Command-line interface: argument parsing and subcommand handlers.
 
 use crate::config::{Config, configured_editor, read_config_file};
-use crate::file::read_file;
+use crate::file::{confine_to_dir, read_file};
 use crate::fuzzy::fuzzy_find;
 use crate::json::{JsonScanFileErr, json_get, scan_json_file};
-use crate::render::render;
+use crate::render::{render, sanitize};
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -184,31 +184,29 @@ const DEFAULT_CONTRACT: &str = include_str!("templates/contract.json");
 /// Creates a new contract file from the default template and opens it in the
 /// configured editor.
 ///
-/// A relative `filename` is resolved against the configured working directory
-/// when the project is initialized; otherwise against the current directory.
-/// Refuses to overwrite an existing file.
-fn create(filename: &str) -> std::io::Result<()> {
-    let mut path = PathBuf::from(filename);
-    if path.is_relative()
-        && let Ok(root) = read_config_file().and_then(|conf| conf.get_root_dir())
-    {
-        path = root.join(path);
-    }
+/// Inside an initialized project the `filename` is resolved against the
+/// working directory and confined to it: a path that escapes via `..` or an
+/// absolute path elsewhere is rejected. Outside a project the path is taken
+/// as given. Refuses to overwrite an existing file.
+fn create(filename: &str) -> Result<(), String> {
+    let path = match read_config_file().and_then(|conf| conf.get_root_dir()) {
+        Ok(root) => confine_to_dir(&root, Path::new(filename))?,
+        Err(_) => PathBuf::from(filename),
+    };
 
     if path.exists() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            format!("{} already exists", path.display()),
-        ));
+        return Err(format!("{} already exists", path.display()));
     }
 
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to create {}: {}", parent.display(), err))?;
     }
 
-    fs::write(&path, DEFAULT_CONTRACT)?;
-    println!("Created {}", path.display());
-    open_in_editor(&path)?;
+    fs::write(&path, DEFAULT_CONTRACT)
+        .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
+    println!("Created {}", sanitize(&path.to_string_lossy()));
+    open_in_editor(&path).map_err(|err| format!("Failed to open editor: {err}"))?;
     Ok(())
 }
 
@@ -266,7 +264,9 @@ pub fn run() {
             let files = list(depth, absolute);
             if let Some(files) = files {
                 for file in files {
-                    println!("{}", file.display());
+                    // File names come from the filesystem and may carry control
+                    // characters; strip them before printing to the terminal.
+                    println!("{}", sanitize(&file.to_string_lossy()));
                 }
             }
         }

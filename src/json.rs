@@ -188,6 +188,14 @@ mod tests {
         assert!(json_get("{ not json", None).is_err());
     }
 
+    #[test]
+    fn json_get_rejects_deeply_nested_input_without_overflowing() {
+        // serde_json enforces a recursion limit, so a pathologically nested
+        // document returns an error instead of overflowing the stack.
+        let deep = format!("{}{}", "[".repeat(100_000), "]".repeat(100_000));
+        assert!(json_get(&deep, None).is_err());
+    }
+
     /// Creates a unique, empty temp directory for a single test and removes any
     /// leftover from a previous run.
     fn temp_dir(tag: &str) -> PathBuf {

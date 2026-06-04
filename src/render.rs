@@ -249,7 +249,7 @@ fn req_mark(required: bool) -> String {
 /// sequences (e.g. `ESC[2J`, `OSC 0;…BEL`) would reach the terminal and could
 /// clear the screen, rewrite the title bar, or spoof output. The tool's own
 /// styling is applied *after* sanitization, so legitimate colors are kept.
-fn sanitize(s: &str) -> String {
+pub(crate) fn sanitize(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
 }
 
