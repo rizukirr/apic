@@ -119,8 +119,11 @@ apic read -f login -s 401     # show only the 401 response
 apic read -f login --example  # show raw JSON example payloads
 ```
 
-With `--example` (or `-e`), the request and response sections print their raw
-JSON example payloads instead of schema tables — the copy-paste view:
+By default each schema table is followed by its example payload (when the
+contract provides one), labeled `Example:`, so structure and a concrete
+payload read together. With `--example` (or `-e`) the schema tables are
+skipped entirely and only the raw JSON payloads print — the compact
+copy-paste view:
 
 ```text
  REQUEST
@@ -235,10 +238,10 @@ template that `apic create` writes.
 ```
 
 Both `schema` (field-level detail, rendered as tables) and `example` (a raw
-JSON payload, shown with `read --example`) are optional in the request and in
-each response — early-stage contracts often start with just an example, formal
-ones with just a schema. When a section has an example but no schema, the
-default view shows the example so the contract is never empty.
+JSON payload) are optional in the request and in each response — early-stage
+contracts often start with just an example, formal ones with just a schema.
+The default view shows the example beneath its schema table (or alone when
+there is no schema), and `read --example` shows only the payloads.
 
 ### Fields
 

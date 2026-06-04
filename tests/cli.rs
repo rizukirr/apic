@@ -268,15 +268,19 @@ fn read_example_shows_raw_json_payloads() {
     }"#;
     fs::write(dir.join("contracts/login.json"), contract).unwrap();
 
-    // Default view renders the schema table, not the example payload.
+    // Default view renders the schema table with the example shown beneath
+    // it, labeled, so structure and payload stay adjacent.
     apic(&dir)
         .args(["read", "-f", "login"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("USERNAME").or(predicate::str::contains("username")))
-        .stdout(predicate::str::contains("123qweA@").not());
+        .stdout(predicate::str::contains("NAME")) // schema table header
+        .stdout(predicate::str::contains("Example:"))
+        .stdout(predicate::str::contains("\"password\": \"123qweA@\""))
+        // Sections without an example get no note in the default view.
+        .stdout(predicate::str::contains("(no example provided)").not());
 
-    // --example shows raw JSON payloads; a response without one says so.
+    // --example shows raw JSON payloads only; a response without one says so.
     apic(&dir)
         .args(["read", "-f", "login", "--example"])
         .assert()

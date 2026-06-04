@@ -88,29 +88,48 @@ impl Printer {
         if let Some(request) = &c.request {
             self.section("REQUEST");
             if self.example_mode {
-                self.example(&request.example);
+                self.example(request.example.as_ref());
             } else if let Some(schema) = &request.schema {
                 let (headers, rows) = request_rows(schema);
                 self.table(Some(&headers), &rows);
+                // Keep the concrete payload adjacent to its schema.
+                if let Some(example) = &request.example {
+                    self.example_block(example);
+                }
             } else {
                 // No schema — fall back to the example so the section is
                 // never silently empty.
-                self.example(&request.example);
+                self.example(request.example.as_ref());
             }
         }
 
         for response in &c.responses {
             self.response_title(response.code, &response.description);
             if self.example_mode {
-                self.example(&response.example);
+                self.example(response.example.as_ref());
             } else if !response.schema.is_empty() {
                 let mut rows = Vec::new();
                 schema_rows(&response.schema, 0, &mut rows);
                 self.table(Some(&["NAME", "TYPE", "REQ", "DESCRIPTION"]), &rows);
+                if let Some(example) = &response.example {
+                    self.example_block(example);
+                }
             } else {
-                self.example(&response.example);
+                self.example(response.example.as_ref());
             }
         }
+    }
+
+    /// Prints a dimmed `Example:` label followed by the JSON payload. Used in
+    /// the default view beneath a schema table, only when an example exists.
+    fn example_block(&self, example: &serde_json::Value) {
+        println!();
+        if self.color {
+            println!(" {}", "Example:".dark_grey());
+        } else {
+            println!(" Example:");
+        }
+        self.example(Some(example));
     }
 
     /// Prints a raw JSON example payload, pretty-printed and indented, or a
@@ -118,7 +137,7 @@ impl Printer {
     ///
     /// Serializing through serde_json escapes control characters as `\uXXXX`,
     /// so a hostile example cannot inject terminal escape sequences.
-    fn example(&self, example: &Option<serde_json::Value>) {
+    fn example(&self, example: Option<&serde_json::Value>) {
         match example {
             Some(value) => {
                 let pretty = serde_json::to_string_pretty(value)
