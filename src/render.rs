@@ -236,7 +236,11 @@ fn schema_rows(schemas: &[Schema], depth: usize, out: &mut Vec<Vec<String>>) {
 
 /// Marks a required field in table output.
 fn req_mark(required: bool) -> String {
-    if required { "✓".to_string() } else { String::new() }
+    if required {
+        "✓".to_string()
+    } else {
+        String::new()
+    }
 }
 
 /// Strips control characters from a file-derived string before it is printed.
@@ -247,4 +251,59 @@ fn req_mark(required: bool) -> String {
 /// styling is applied *after* sanitization, so legitimate colors are kept.
 fn sanitize(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::json::Schema;
+
+    #[test]
+    fn sanitize_strips_escape_and_bell_sequences() {
+        // Regression: untrusted contract strings must not inject terminal escapes.
+        let evil = "\x1b[2J\x1b[31mHACKED\x1b[0m\x07";
+        let clean = sanitize(evil);
+        assert!(!clean.contains('\x1b'), "ESC survived: {clean:?}");
+        assert!(!clean.contains('\x07'), "BEL survived: {clean:?}");
+        // Readable content is preserved (minus the control bytes).
+        assert!(clean.contains("HACKED"));
+    }
+
+    #[test]
+    fn sanitize_keeps_normal_and_multibyte_text() {
+        assert_eq!(sanitize("café /auth/login"), "café /auth/login");
+    }
+
+    #[test]
+    fn req_mark_renders_check_only_when_required() {
+        assert_eq!(req_mark(true), "✓");
+        assert_eq!(req_mark(false), "");
+    }
+
+    fn field(name: &str, properties: Option<Vec<Schema>>) -> Schema {
+        Schema {
+            name: name.to_string(),
+            dtype: "string".to_string(),
+            default: None,
+            description: String::new(),
+            required: true,
+            properties,
+        }
+    }
+
+    #[test]
+    fn schema_rows_flattens_nested_properties_with_tree_prefixes() {
+        let schema = vec![field(
+            "data",
+            Some(vec![field("first", None), field("last", None)]),
+        )];
+        let mut rows = Vec::new();
+        schema_rows(&schema, 0, &mut rows);
+
+        // Top-level name has no prefix; nested names get tree branches.
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0][0], "data");
+        assert_eq!(rows[1][0], "├─ first");
+        assert_eq!(rows[2][0], "└─ last");
+    }
 }

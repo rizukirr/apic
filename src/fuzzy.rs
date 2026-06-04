@@ -115,3 +115,58 @@ pub fn fuzzy_find<'a>(query: &str, items: &'a [String]) -> Option<Vec<(&'a Strin
 
     Some(results)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_query_matches_everything() {
+        assert_eq!(fuzzy_score("", "anything"), Some(0));
+    }
+
+    #[test]
+    fn non_subsequence_does_not_match() {
+        assert_eq!(fuzzy_score("xyz", "login"), None);
+    }
+
+    #[test]
+    fn ordered_subsequence_matches() {
+        assert!(fuzzy_score("lgn", "login").is_some());
+    }
+
+    #[test]
+    fn matching_is_case_insensitive() {
+        assert!(fuzzy_score("LOGIN", "login").is_some());
+    }
+
+    #[test]
+    fn path_boundary_scores_higher_than_mid_word() {
+        // "login" right after a '/' boundary should beat an embedded match.
+        let boundary = fuzzy_score("login", "auth/login.json").unwrap();
+        let embedded = fuzzy_score("login", "prologinx").unwrap();
+        assert!(
+            boundary > embedded,
+            "boundary={boundary} embedded={embedded}"
+        );
+    }
+
+    #[test]
+    fn find_ranks_best_match_first() {
+        let items = vec![
+            "src/main.rs".to_string(),
+            "api/login.json".to_string(),
+            "api/logout.json".to_string(),
+        ];
+        let hits = fuzzy_find("login", &items).unwrap();
+        assert_eq!(hits[0].0, "api/login.json");
+        // Scores are sorted descending.
+        assert!(hits.windows(2).all(|w| w[0].1 >= w[1].1));
+    }
+
+    #[test]
+    fn find_returns_none_when_nothing_matches() {
+        let items = vec!["abc".to_string()];
+        assert!(fuzzy_find("zzz", &items).is_none());
+    }
+}

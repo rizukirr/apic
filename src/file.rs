@@ -111,3 +111,81 @@ pub fn find_file_upward(start: PathBuf, names: &[PathBuf]) -> FindFileResult {
 pub fn read_file(path: &Path) -> Result<String, io::Error> {
     fs::read_to_string(path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Creates a unique, empty temp directory for a single test.
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("apic_test_file_{tag}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn read_file_preserves_multibyte_across_old_chunk_boundary() {
+        // Regression: the old chunked reader corrupted any multibyte char that
+        // straddled a 1 KiB boundary. Place 'é' so its bytes cross offset 1024.
+        let root = temp_dir("utf8");
+        let path = root.join("c.txt");
+        let content = format!("{}é tail", "x".repeat(1023));
+        fs::write(&path, &content).unwrap();
+
+        assert_eq!(read_file(&path).unwrap(), content);
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn read_file_errors_instead_of_panicking_on_missing_file() {
+        let missing = std::env::temp_dir().join("apic_test_file_does_not_exist.txt");
+        let _ = fs::remove_file(&missing);
+        assert!(read_file(&missing).is_err());
+    }
+
+    #[test]
+    fn find_by_ext_downward_finds_json_and_reports_not_found() {
+        let root = temp_dir("byext");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("sub/a.json"), "{}").unwrap();
+        fs::write(root.join("b.txt"), "x").unwrap();
+
+        match find_file_by_ext_downward(root.clone(), &["json"]) {
+            FindFileResult::Found(files) => {
+                assert_eq!(files.len(), 1);
+                assert!(files[0].ends_with("a.json"));
+            }
+            FindFileResult::NotFound => panic!("expected to find a.json"),
+        }
+
+        // A directory with no matching extension reports NotFound.
+        let empty = temp_dir("byext_empty");
+        assert!(matches!(
+            find_file_by_ext_downward(empty.clone(), &["json"]),
+            FindFileResult::NotFound
+        ));
+
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&empty).unwrap();
+    }
+
+    #[test]
+    fn find_upward_locates_marker_in_an_ancestor() {
+        let root = temp_dir("upward");
+        let nested = root.join("a/b/c");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(root.join("marker"), "x").unwrap();
+
+        match find_file_upward(nested, &[PathBuf::from("marker")]) {
+            FindFileResult::Found(files) => {
+                assert_eq!(files.len(), 1);
+                assert!(files[0].ends_with("marker"));
+            }
+            FindFileResult::NotFound => panic!("expected to find marker upward"),
+        }
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+}

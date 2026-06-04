@@ -68,6 +68,7 @@ pub struct Schema {
 }
 
 /// Errors returned by [`scan_json_file`].
+#[derive(Debug)]
 pub enum JsonScanFileErr {
     /// No JSON files were found under the root.
     NotFound,
@@ -144,4 +145,103 @@ pub fn json_get(json: &str, status: Option<u16>) -> Result<JsonContent, serde_js
         json_content.responses.retain(|r| r.code == status);
     }
     Ok(json_content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    const CONTRACT: &str = r#"{
+        "name": "t",
+        "method": "GET",
+        "path": "/t",
+        "headers": [],
+        "responses": [
+            { "code": 200, "description": "ok", "schema": [] },
+            { "code": 404, "description": "no", "schema": [] }
+        ]
+    }"#;
+
+    #[test]
+    fn json_get_returns_all_responses_when_status_is_none() {
+        let c = json_get(CONTRACT, None).unwrap();
+        assert_eq!(c.responses.len(), 2);
+        assert_eq!(c.name, "t");
+    }
+
+    #[test]
+    fn json_get_filters_to_a_single_status() {
+        let c = json_get(CONTRACT, Some(404)).unwrap();
+        assert_eq!(c.responses.len(), 1);
+        assert_eq!(c.responses[0].code, 404);
+    }
+
+    #[test]
+    fn json_get_returns_empty_when_status_matches_nothing() {
+        let c = json_get(CONTRACT, Some(500)).unwrap();
+        assert!(c.responses.is_empty());
+    }
+
+    #[test]
+    fn json_get_errors_on_invalid_json() {
+        assert!(json_get("{ not json", None).is_err());
+    }
+
+    /// Creates a unique, empty temp directory for a single test and removes any
+    /// leftover from a previous run.
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("apic_test_{tag}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn scan_returns_full_paths_at_depth_zero() {
+        let root = temp_dir("scan_depth0");
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::write(root.join("a/x.json"), "{}").unwrap();
+        fs::write(root.join("a/y.json"), "{}").unwrap();
+
+        let files = scan_json_file(&root, 0, true).unwrap();
+        assert_eq!(files.len(), 2);
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn scan_dedups_directory_prefixes_at_depth_one() {
+        let root = temp_dir("scan_depth1");
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::write(root.join("a/x.json"), "{}").unwrap();
+        fs::write(root.join("a/y.json"), "{}").unwrap();
+
+        // Two files under `a/` truncate to the same prefix; expect one entry.
+        let files = scan_json_file(&root, 1, false).unwrap();
+        assert_eq!(files, vec![PathBuf::from("a")]);
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn scan_reports_not_found_when_empty() {
+        let root = temp_dir("scan_empty");
+        assert!(matches!(
+            scan_json_file(&root, 0, true),
+            Err(JsonScanFileErr::NotFound)
+        ));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn scan_reports_depth_too_large() {
+        let root = temp_dir("scan_toodeep");
+        fs::write(root.join("x.json"), "{}").unwrap();
+        assert!(matches!(
+            scan_json_file(&root, 99, true),
+            Err(JsonScanFileErr::DepthTooLarge { .. })
+        ));
+        fs::remove_dir_all(&root).unwrap();
+    }
 }
