@@ -1,7 +1,8 @@
 name: Release
 
 # Build prebuilt binaries and attach them to a GitHub Release when a version
-# tag is pushed, e.g. `git tag v0.1.0 && git push origin v0.1.0`.
+# tag is pushed, e.g. `git tag v0.1.0-beta.1 && git push origin v0.1.0-beta.1`.
+# Tags with a pre-release suffix (e.g. -beta.1) publish a GitHub *pre-release*.
 on:
   push:
     tags:
@@ -11,8 +12,20 @@ permissions:
   contents: write
 
 jobs:
+  # Creates the GitHub Release for the tag. taiki-e/create-gh-release-action
+  # marks it as a pre-release automatically when the tag is a semver
+  # pre-release (contains a `-`, e.g. v0.1.0-beta.1).
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/create-gh-release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   upload-binaries:
     name: ${{ matrix.target }}
+    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
