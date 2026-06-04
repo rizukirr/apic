@@ -200,6 +200,46 @@ fn list_defaults_to_relative_paths() {
 }
 
 #[test]
+fn read_renders_accept_column_for_multipart_file_fields() {
+    let dir = init_project("multipart");
+    let contract = r#"{
+        "name": "upload-avatar",
+        "method": "POST",
+        "path": "/user/avatar",
+        "headers": [
+            { "name": "Content-Type", "value": "multipart/form-data" }
+        ],
+        "request": [
+            { "name": "avatar", "type": "file", "default": null,
+              "description": "Avatar image", "required": true,
+              "accept": "image/png, image/jpeg" },
+            { "name": "caption", "type": "string", "default": null,
+              "description": "Optional caption", "required": false }
+        ],
+        "responses": []
+    }"#;
+    fs::write(dir.join("contracts/upload.json"), contract).unwrap();
+
+    apic(&dir)
+        .args(["read", "-f", "upload"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ACCEPT"))
+        .stdout(predicate::str::contains("image/png, image/jpeg"));
+
+    // Contracts without accept fields keep the four-column table.
+    apic(&dir)
+        .args(["create", "-f", "plain.json"])
+        .assert()
+        .success();
+    apic(&dir)
+        .args(["read", "-f", "plain"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ACCEPT").not());
+}
+
+#[test]
 fn list_filter_fuzzy_matches_contracts() {
     let dir = init_project("list_filter");
     apic(&dir)

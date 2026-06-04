@@ -35,7 +35,8 @@
             "type": "string",
             "default": null,
             "description": "A request body field",
-            "required": true
+            "required": true,
+            "accept": null
         }
     ],
     "responses": [

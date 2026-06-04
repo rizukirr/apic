@@ -47,6 +47,10 @@ pub struct Request {
     pub(crate) default: Option<String>,
     pub(crate) description: String,
     pub(crate) required: bool,
+    /// Accepted MIME types for `file` fields in multipart requests,
+    /// e.g. `"image/png, image/jpeg"`. Omitted for ordinary fields.
+    #[serde(default)]
+    pub(crate) accept: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -153,6 +157,25 @@ mod tests {
     #[test]
     fn validate_accepts_well_formed_contract() {
         assert!(validate(CONTRACT).is_ok());
+    }
+
+    #[test]
+    fn request_field_parses_optional_accept_for_multipart() {
+        let json = r#"{
+            "name": "upload", "method": "POST", "path": "/u", "headers": [],
+            "request": [
+                { "name": "avatar", "type": "file", "default": null,
+                  "description": "Image", "required": true,
+                  "accept": "image/png" },
+                { "name": "caption", "type": "string", "default": null,
+                  "description": "Text", "required": false }
+            ],
+            "responses": []
+        }"#;
+        let c = json_get(json, None).unwrap();
+        let request = c.request.unwrap();
+        assert_eq!(request[0].accept.as_deref(), Some("image/png"));
+        assert_eq!(request[1].accept, None);
     }
 
     #[test]

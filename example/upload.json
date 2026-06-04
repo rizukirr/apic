@@ -1,0 +1,37 @@
+{
+    "name": "upload-avatar",
+    "description": "Upload a user avatar",
+    "method": "POST",
+    "path": "/user/avatar",
+    "headers": [
+        { "name": "Content-Type", "value": "multipart/form-data" },
+        { "name": "Authorization", "value": "Bearer {token}" }
+    ],
+    "request": [
+        {
+            "name": "avatar",
+            "type": "file",
+            "default": null,
+            "description": "Avatar image, max 2MB",
+            "required": true,
+            "accept": "image/png, image/jpeg"
+        },
+        {
+            "name": "caption",
+            "type": "string",
+            "default": null,
+            "description": "Optional caption",
+            "required": false
+        }
+    ],
+    "responses": [
+        {
+            "code": 200,
+            "description": "Avatar updated",
+            "schema": [
+                { "name": "status", "type": "int", "default": "200",
+                  "description": "Status code", "required": true, "properties": null }
+            ]
+        }
+    ]
+}

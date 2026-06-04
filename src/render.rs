@@ -4,7 +4,7 @@
 //! query, headers, request, responses). Colors are applied only when stdout is
 //! a terminal, so piped or redirected output stays clean.
 
-use crate::json::{JsonContent, Schema};
+use crate::json::{JsonContent, Request, Schema};
 use crossterm::style::Stylize;
 use std::io::IsTerminal;
 
@@ -82,18 +82,8 @@ impl Printer {
 
         if let Some(request) = &c.request {
             self.section("REQUEST");
-            let rows: Vec<Vec<String>> = request
-                .iter()
-                .map(|r| {
-                    vec![
-                        r.name.clone(),
-                        r.dtype.clone(),
-                        req_mark(r.required),
-                        r.description.clone(),
-                    ]
-                })
-                .collect();
-            self.table(Some(&["NAME", "TYPE", "REQ", "DESCRIPTION"]), &rows);
+            let (headers, rows) = request_rows(request);
+            self.table(Some(&headers), &rows);
         }
 
         for response in &c.responses {
@@ -206,6 +196,34 @@ impl Printer {
     }
 }
 
+/// Builds the REQUEST table headers and rows.
+///
+/// The ACCEPT column (allowed MIME types for `file` fields in multipart
+/// requests) is included only when at least one field declares it, so
+/// ordinary JSON-body contracts keep the compact four-column table.
+fn request_rows(request: &[Request]) -> (Vec<&'static str>, Vec<Vec<String>>) {
+    let has_accept = request.iter().any(|r| r.accept.is_some());
+    let headers = if has_accept {
+        vec!["NAME", "TYPE", "REQ", "ACCEPT", "DESCRIPTION"]
+    } else {
+        vec!["NAME", "TYPE", "REQ", "DESCRIPTION"]
+    };
+
+    let rows = request
+        .iter()
+        .map(|r| {
+            let mut row = vec![r.name.clone(), r.dtype.clone(), req_mark(r.required)];
+            if has_accept {
+                row.push(r.accept.clone().unwrap_or_default());
+            }
+            row.push(r.description.clone());
+            row
+        })
+        .collect();
+
+    (headers, rows)
+}
+
 /// Flattens a schema (and its nested `properties`) into table rows, prefixing
 /// nested names with `├─`/`└─` tree branches per depth level.
 fn schema_rows(schemas: &[Schema], depth: usize, out: &mut Vec<Vec<String>>) {
@@ -289,6 +307,40 @@ mod tests {
             required: true,
             properties,
         }
+    }
+
+    fn req_field(name: &str, dtype: &str, accept: Option<&str>) -> Request {
+        Request {
+            name: name.to_string(),
+            dtype: dtype.to_string(),
+            default: None,
+            description: String::new(),
+            required: true,
+            accept: accept.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn request_rows_without_accept_keeps_four_columns() {
+        let (headers, rows) = request_rows(&[req_field("username", "string", None)]);
+        assert_eq!(headers, vec!["NAME", "TYPE", "REQ", "DESCRIPTION"]);
+        assert_eq!(rows[0].len(), 4);
+    }
+
+    #[test]
+    fn request_rows_with_file_field_adds_accept_column() {
+        let fields = [
+            req_field("avatar", "file", Some("image/png, image/jpeg")),
+            req_field("caption", "string", None),
+        ];
+        let (headers, rows) = request_rows(&fields);
+        assert_eq!(
+            headers,
+            vec!["NAME", "TYPE", "REQ", "ACCEPT", "DESCRIPTION"]
+        );
+        // The file field shows its accepted types; the plain field stays blank.
+        assert_eq!(rows[0][3], "image/png, image/jpeg");
+        assert_eq!(rows[1][3], "");
     }
 
     #[test]

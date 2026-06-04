@@ -225,11 +225,55 @@ A **field** (in `request` and response `schema`) has:
 | Field | Description |
 |-------|-------------|
 | `name` | Field name. |
-| `type` | Data type (`string`, `int`, `object`, …). |
+| `type` | Data type (`string`, `int`, `file`, `object`, …). |
 | `default` | Default value as a string, or `null`. |
 | `description` | Field description. |
 | `required` | Whether the field is required. |
+| `accept` | Allowed MIME types for `file` fields, e.g. `"image/png, image/jpeg"`. Request only; omit for ordinary fields. |
 | `properties` | Nested fields (for `object` types), or `null`. Response schema only. |
+
+### Multipart / file uploads
+
+For `multipart/form-data` endpoints, declare the encoding in the
+`Content-Type` header as usual and use `"type": "file"` for file parts. The
+optional `accept` field documents which MIME types the part allows, and
+`apic read` shows it in an extra ACCEPT column:
+
+```json
+{
+    "name": "upload-avatar",
+    "method": "POST",
+    "path": "/user/avatar",
+    "headers": [
+        { "name": "Content-Type", "value": "multipart/form-data" }
+    ],
+    "request": [
+        {
+            "name": "avatar",
+            "type": "file",
+            "default": null,
+            "description": "Avatar image, max 2MB",
+            "required": true,
+            "accept": "image/png, image/jpeg"
+        },
+        {
+            "name": "caption",
+            "type": "string",
+            "default": null,
+            "description": "Optional caption",
+            "required": false
+        }
+    ],
+    "responses": []
+}
+```
+
+```text
+REQUEST
+ NAME     TYPE    REQ  ACCEPT                 DESCRIPTION
+ avatar   file    ✓    image/png, image/jpeg  Avatar image, max 2MB
+ caption  string                              Optional caption
+```
 
 ## Configuration
 
