@@ -1,7 +1,7 @@
 ---
 title: ambiguous contract picker
 date: 2026-06-07
-status: draft
+status: approved
 ---
 
 # Ambiguous contract picker — Design
