@@ -452,3 +452,48 @@ fn read_fuzzy_score_tie_errors_when_not_a_tty() {
         .stderr(predicate::str::contains("user-a.json"))
         .stderr(predicate::str::contains("user-b.json"));
 }
+
+#[test]
+fn list_piped_output_stays_flat_without_tree_chars() {
+    let dir = init_project("list_piped_flat");
+    apic(&dir)
+        .args(["create", "-f", "user/profile/user.json"])
+        .assert()
+        .success();
+
+    // assert_cmd captures stdout through a pipe (not a TTY), so this pins the
+    // scriptable contract: one path per line, no box-drawing characters.
+    apic(&dir)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("user/profile/user.json"))
+        .stdout(predicate::str::contains("├──").not())
+        .stdout(predicate::str::contains("└──").not());
+
+    // Same for --absolute: flat absolute paths, no tree.
+    apic(&dir)
+        .args(["list", "--absolute", "true"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(dir.to_string_lossy().to_string()))
+        .stdout(predicate::str::contains("├──").not());
+}
+
+#[test]
+fn list_filter_does_not_match_across_path_components() {
+    let dir = init_project("list_filter_component");
+    for f in ["user/user.json", "user/upload.json", "auth/user.json"] {
+        apic(&dir).args(["create", "-f", f]).assert().success();
+    }
+
+    // "user.json" must not match user/upload.json by borrowing "user" from
+    // the directory and ".json" from the extension.
+    apic(&dir)
+        .args(["list", "--filter", "user.json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("user/user.json"))
+        .stdout(predicate::str::contains("auth/user.json"))
+        .stdout(predicate::str::contains("upload.json").not());
+}

@@ -2,10 +2,11 @@
 
 use crate::config::{Config, configured_editor, read_config_file};
 use crate::file::{confine_to_dir, read_file};
-use crate::fuzzy::{fuzzy_find, fuzzy_score};
+use crate::fuzzy::{fuzzy_find, fuzzy_match_path};
 use crate::json::{json_get, scan_json_file, validate as validate_contract};
 use crate::picker;
 use crate::render::{render, sanitize};
+use crate::tree;
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::io::IsTerminal;
@@ -514,32 +515,73 @@ pub fn run() {
         Commands::Init { set_dir } => init(set_dir.as_deref()),
         Commands::List { filter, absolute } => {
             if let Some(files) = list(absolute) {
-                // Fuzzy-match the filter against the working-dir-relative form
-                // so an absolute prefix can't skew scores; display in the
-                // requested form. File names come from the filesystem and may
-                // carry control characters, so they are sanitized.
+                // Fuzzy-match the filter against the sanitized, working-dir-
+                // relative form so an absolute prefix can't skew scores and
+                // the match indices stay aligned with what is printed. File
+                // names come from the filesystem and may carry control
+                // characters, so they are sanitized before matching.
+                struct Row {
+                    /// Working-dir-relative display path (tree view).
+                    rel: String,
+                    /// Match positions in `rel`; unused when piped (the cost
+                    /// is bounded by the query length).
+                    indices: Vec<usize>,
+                    score: i32,
+                    /// Path in the requested form (flat piped view).
+                    shown: String,
+                }
+
+                let is_tty = std::io::stdout().is_terminal();
                 let root = read_config_file().and_then(|c| c.get_root_dir()).ok();
-                let mut rows: Vec<(String, i32)> = files
+                let mut rows: Vec<Row> = files
                     .iter()
                     .filter_map(|file| {
                         let rel = root
                             .as_ref()
                             .and_then(|r| file.strip_prefix(r).ok())
                             .unwrap_or(file);
-                        let score = match &filter {
-                            Some(query) => fuzzy_score(query, &rel.to_string_lossy())?,
-                            None => 0,
+                        let rel = sanitize(&rel.to_string_lossy());
+                        let (score, indices) = match &filter {
+                            Some(query) => fuzzy_match_path(query, &rel)?,
+                            None => (0, Vec::new()),
                         };
-                        Some((sanitize(&file.to_string_lossy()), score))
+                        let shown = sanitize(&file.to_string_lossy());
+                        Some(Row {
+                            rel,
+                            indices,
+                            score,
+                            shown,
+                        })
                     })
                     .collect();
 
-                // With a filter, print the best match first.
-                if filter.is_some() {
-                    rows.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
-                }
-                for (path, _) in rows {
-                    println!("{path}");
+                if rows.is_empty() {
+                    // A filter that matches nothing prints nothing — also
+                    // skips the `--absolute` root label.
+                } else if is_tty {
+                    // Tree view: alphabetical, directories first; under a
+                    // filter only matching files appear, with matched
+                    // characters highlighted.
+                    let mut tree_root = tree::Node::default();
+                    for row in &rows {
+                        tree_root.insert(Path::new(&row.rel), &row.indices);
+                    }
+                    let root_label = if absolute {
+                        root.as_ref()
+                            .map(|r| format!("{}/", sanitize(&r.to_string_lossy())))
+                    } else {
+                        None
+                    };
+                    print!("{}", tree::render(root_label.as_deref(), &tree_root, true));
+                } else {
+                    // Piped: flat path-per-line for scripts. With a filter,
+                    // print the best match first.
+                    if filter.is_some() {
+                        rows.sort_by_key(|row| std::cmp::Reverse(row.score));
+                    }
+                    for row in rows {
+                        println!("{}", row.shown);
+                    }
                 }
             }
             Ok(())
