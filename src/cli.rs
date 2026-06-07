@@ -520,8 +520,20 @@ pub fn run() {
                 // the match indices stay aligned with what is printed. File
                 // names come from the filesystem and may carry control
                 // characters, so they are sanitized before matching.
+                struct Row {
+                    /// Working-dir-relative display path (tree view).
+                    rel: String,
+                    /// Match positions in `rel`; unused when piped (the cost
+                    /// is bounded by the query length).
+                    indices: Vec<usize>,
+                    score: i32,
+                    /// Path in the requested form (flat piped view).
+                    shown: String,
+                }
+
+                let is_tty = std::io::stdout().is_terminal();
                 let root = read_config_file().and_then(|c| c.get_root_dir()).ok();
-                let mut rows: Vec<(String, Vec<usize>, i32, String)> = files
+                let mut rows: Vec<Row> = files
                     .iter()
                     .filter_map(|file| {
                         let rel = root
@@ -534,20 +546,25 @@ pub fn run() {
                             None => (0, Vec::new()),
                         };
                         let shown = sanitize(&file.to_string_lossy());
-                        Some((rel, indices, score, shown))
+                        Some(Row {
+                            rel,
+                            indices,
+                            score,
+                            shown,
+                        })
                     })
                     .collect();
 
                 if rows.is_empty() {
                     // A filter that matches nothing prints nothing — also
                     // skips the `--absolute` root label.
-                } else if std::io::stdout().is_terminal() {
+                } else if is_tty {
                     // Tree view: alphabetical, directories first; under a
                     // filter only matching files appear, with matched
                     // characters highlighted.
                     let mut tree_root = tree::Node::default();
-                    for (rel, indices, _, _) in &rows {
-                        tree_root.insert(Path::new(rel), indices);
+                    for row in &rows {
+                        tree_root.insert(Path::new(&row.rel), &row.indices);
                     }
                     let root_label = if absolute {
                         root.as_ref()
@@ -560,10 +577,10 @@ pub fn run() {
                     // Piped: flat path-per-line for scripts. With a filter,
                     // print the best match first.
                     if filter.is_some() {
-                        rows.sort_by_key(|(_, _, score, _)| std::cmp::Reverse(*score));
+                        rows.sort_by_key(|row| std::cmp::Reverse(row.score));
                     }
-                    for (_, _, _, shown) in rows {
-                        println!("{shown}");
+                    for row in rows {
+                        println!("{}", row.shown);
                     }
                 }
             }
