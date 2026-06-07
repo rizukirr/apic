@@ -175,6 +175,84 @@ pub fn list(is_absolute: bool) -> Option<Vec<PathBuf>> {
     scan_json_file(&root, is_absolute)
 }
 
+/// Outcome of resolving a contract reference against the discovered files.
+#[derive(Debug, PartialEq)]
+enum Resolution {
+    /// Exactly one contract matched.
+    One(PathBuf),
+    /// The reference is ambiguous; the caller must disambiguate.
+    Many(Vec<PathBuf>),
+    /// Nothing matched.
+    None,
+}
+
+/// Classifies `filename` against the discovered contract `files`.
+///
+/// Resolution tries, in order:
+/// 1. an exact path relative to the working directory (`user/user.json`),
+///    with or without the `.json` extension — always unambiguous;
+/// 2. for bare names only (no path separator), files whose *basename* equals
+///    the query (with `.json` appended when missing) — multiple matches are
+///    returned as [`Resolution::Many`];
+/// 3. the fuzzy fallback — a shared top score is ambiguous, a distinct top
+///    score wins.
+fn classify(filename: &str, root: &Path, files: &[PathBuf]) -> Resolution {
+    // 1: exact file under the working directory, with or without `.json`.
+    let candidates = [
+        PathBuf::from(filename),
+        PathBuf::from(format!("{filename}.json")),
+    ];
+    for candidate in candidates {
+        if let Ok(path) = confine_to_dir(root, &candidate)
+            && path.is_file()
+        {
+            return Resolution::One(path);
+        }
+    }
+
+    // 2: basename ties, bare names only — a query with a separator already
+    // had its chance at step 1 and falls through to fuzzy.
+    if !filename.contains('/') && !filename.contains('\\') {
+        let target = if filename.ends_with(".json") {
+            filename.to_string()
+        } else {
+            format!("{filename}.json")
+        };
+        let matches: Vec<PathBuf> = files
+            .iter()
+            .filter(|f| f.file_name().is_some_and(|n| n.to_string_lossy() == target))
+            .cloned()
+            .collect();
+        match matches.len() {
+            0 => {}
+            1 => return Resolution::One(matches.into_iter().next().unwrap()),
+            _ => return Resolution::Many(matches),
+        }
+    }
+
+    // 3: fuzzy fallback with tie detection on the top score.
+    let file_str: Vec<String> = files
+        .iter()
+        .map(|f| f.to_string_lossy().to_string())
+        .collect();
+    match fuzzy_find(filename, &file_str) {
+        Some(hits) => {
+            let top = hits[0].1;
+            let tied: Vec<PathBuf> = hits
+                .iter()
+                .take_while(|(_, score)| *score == top)
+                .map(|(path, _)| PathBuf::from(path.as_str()))
+                .collect();
+            if tied.len() == 1 {
+                Resolution::One(tied.into_iter().next().unwrap())
+            } else {
+                Resolution::Many(tied)
+            }
+        }
+        None => Resolution::None,
+    }
+}
+
 /// Resolves a contract reference to an existing file path under the working dir.
 ///
 /// Resolution tries, in order:
@@ -450,5 +528,114 @@ pub fn run() {
     if let Err(err) = result {
         eprintln!("Error: {err}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// Creates a unique, empty temp directory for a single test.
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("apic_test_cli_{tag}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Fake contract paths under a root that does not exist on disk, so the
+    /// exact-path step (which checks `is_file`) never triggers.
+    fn fake(root: &str, rels: &[&str]) -> (PathBuf, Vec<PathBuf>) {
+        let root = PathBuf::from(root);
+        let files = rels.iter().map(|r| root.join(r)).collect();
+        (root, files)
+    }
+
+    #[test]
+    fn classify_exact_path_wins_even_when_basenames_tie() {
+        // Real files on disk: exact resolution checks is_file().
+        let root = temp_dir("exact");
+        fs::create_dir_all(root.join("user")).unwrap();
+        fs::create_dir_all(root.join("auth")).unwrap();
+        fs::write(root.join("user/user.json"), "{}").unwrap();
+        fs::write(root.join("auth/user.json"), "{}").unwrap();
+        let files = vec![root.join("user/user.json"), root.join("auth/user.json")];
+
+        // Both with and without the .json extension.
+        for query in ["user/user.json", "user/user"] {
+            match classify(query, &root, &files) {
+                Resolution::One(path) => assert_eq!(path, root.join("user/user.json")),
+                other => panic!("expected One for {query}, got {other:?}"),
+            }
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn classify_basename_tie_returns_many_with_all_ties() {
+        let (root, files) = fake(
+            "/apic_no_such_root",
+            &["user/user.json", "auth/user.json", "user/profile/user.json"],
+        );
+        match classify("user", &root, &files) {
+            Resolution::Many(paths) => {
+                assert_eq!(paths.len(), 3);
+                assert!(paths.contains(&root.join("auth/user.json")));
+            }
+            other => panic!("expected Many, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_single_basename_match_returns_one() {
+        let (root, files) = fake("/apic_no_such_root", &["user/user.json", "auth/login.json"]);
+        // Both bare and with explicit .json extension.
+        for query in ["user", "user.json"] {
+            match classify(query, &root, &files) {
+                Resolution::One(path) => assert_eq!(path, root.join("user/user.json")),
+                other => panic!("expected One for {query}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn classify_query_with_separator_skips_basename_matching() {
+        // Two user.json basenames, but the query names a path, so basename
+        // tie-detection is skipped and fuzzy resolves it (only the first
+        // candidate contains an 'a' path segment).
+        let (root, files) = fake("/proj", &["a/user.json", "b/user.json"]);
+        match classify("a/user", &root, &files) {
+            Resolution::One(path) => assert_eq!(path, root.join("a/user.json")),
+            other => panic!("expected One, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_fuzzy_tie_returns_many_with_top_scorers() {
+        // Same structure, same length, same match positions -> equal scores.
+        let (root, files) = fake("/proj", &["a/user-a.json", "b/user-b.json"]);
+        match classify("usr", &root, &files) {
+            Resolution::Many(paths) => assert_eq!(paths.len(), 2),
+            other => panic!("expected Many, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_distinct_fuzzy_winner_returns_one() {
+        let (root, files) = fake("/proj", &["a/user.json", "b/zzz.json"]);
+        match classify("usr", &root, &files) {
+            Resolution::One(path) => assert_eq!(path, root.join("a/user.json")),
+            other => panic!("expected One, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_no_match_returns_none() {
+        let (root, files) = fake("/proj", &["a/user.json"]);
+        assert!(matches!(
+            classify("qqqq", &root, &files),
+            Resolution::None
+        ));
     }
 }
