@@ -245,7 +245,10 @@ user/
         let out = render(None, &tree, true);
         let us = "us".cyan().bold().to_string();
         let up = "up".cyan().bold().to_string();
-        assert!(out.contains(&format!("{us}er/")), "dir highlight missing: {out:?}");
+        assert!(
+            out.contains(&format!("{us}er/")),
+            "dir highlight missing: {out:?}"
+        );
         assert!(
             out.contains(&format!("└── {up}load.json")),
             "file highlight missing: {out:?}"

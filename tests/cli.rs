@@ -452,3 +452,30 @@ fn read_fuzzy_score_tie_errors_when_not_a_tty() {
         .stderr(predicate::str::contains("user-a.json"))
         .stderr(predicate::str::contains("user-b.json"));
 }
+
+#[test]
+fn list_piped_output_stays_flat_without_tree_chars() {
+    let dir = init_project("list_piped_flat");
+    apic(&dir)
+        .args(["create", "-f", "user/profile/user.json"])
+        .assert()
+        .success();
+
+    // assert_cmd captures stdout through a pipe (not a TTY), so this pins the
+    // scriptable contract: one path per line, no box-drawing characters.
+    apic(&dir)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("user/profile/user.json"))
+        .stdout(predicate::str::contains("├──").not())
+        .stdout(predicate::str::contains("└──").not());
+
+    // Same for --absolute: flat absolute paths, no tree.
+    apic(&dir)
+        .args(["list", "--absolute", "true"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(dir.to_string_lossy().to_string()))
+        .stdout(predicate::str::contains("├──").not());
+}
