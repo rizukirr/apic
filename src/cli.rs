@@ -271,19 +271,10 @@ fn rel_display(path: &Path, root: &Path) -> String {
     sanitize(&shown.to_string_lossy())
 }
 
-/// Builds the non-interactive ambiguity error: every candidate plus a hint.
-fn ambiguous_message(filename: &str, root: &Path, candidates: &[PathBuf]) -> String {
-    let rels: Vec<String> = candidates.iter().map(|c| rel_display(c, root)).collect();
-    let mut msg = format!(
-        "'{}' is ambiguous, {} contracts match:\n",
-        sanitize(filename),
-        rels.len()
-    );
-    for rel in &rels {
-        msg.push_str(&format!("  {rel}\n"));
-    }
-    msg.push_str(&format!("Specify the path, e.g. -f {}", rels[0]));
-    msg
+/// Reports a cancelled interactive pick; cancelling is not an error.
+fn cancelled() -> Result<(), String> {
+    println!("cancelled");
+    Ok(())
 }
 
 /// Resolves `filename` to exactly one contract, asking the user to pick when
@@ -303,10 +294,20 @@ fn resolve_one(filename: &str) -> Result<Resolved, String> {
         Resolution::One(path) => Ok(Resolved::Path(path)),
         Resolution::None => Ok(Resolved::NotFound),
         Resolution::Many(candidates) => {
-            if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
-                return Err(ambiguous_message(filename, &root, &candidates));
-            }
             let labels: Vec<String> = candidates.iter().map(|c| rel_display(c, &root)).collect();
+            if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+                // Non-interactive: fail loudly with every candidate and a hint.
+                let mut msg = format!(
+                    "'{}' is ambiguous, {} contracts match:\n",
+                    sanitize(filename),
+                    labels.len()
+                );
+                for label in &labels {
+                    msg.push_str(&format!("  {label}\n"));
+                }
+                msg.push_str(&format!("Specify the path, e.g. -f {}", labels[0]));
+                return Err(msg);
+            }
             let prompt = format!(
                 "{} contracts match \"{}\":",
                 candidates.len(),
@@ -331,10 +332,7 @@ fn read_cmd(filename: &str, status: Option<u16>, example: bool) -> Result<(), St
                 Ok(())
             }
         },
-        Resolved::Cancelled => {
-            println!("cancelled");
-            Ok(())
-        }
+        Resolved::Cancelled => cancelled(),
         Resolved::NotFound => {
             println!("No contract found");
             Ok(())
@@ -387,10 +385,7 @@ fn validate(filename: Option<&str>) -> Result<(), String> {
     let targets: Vec<PathBuf> = match filename {
         Some(name) => match resolve_one(name)? {
             Resolved::Path(path) => vec![path],
-            Resolved::Cancelled => {
-                println!("cancelled");
-                return Ok(());
-            }
+            Resolved::Cancelled => return cancelled(),
             Resolved::NotFound => {
                 eprintln!("No contract matches {}", sanitize(name));
                 std::process::exit(1);
@@ -468,10 +463,7 @@ fn open(filename: &str) -> Result<(), String> {
         Resolved::Path(path) => {
             open_in_editor(&path).map_err(|err| format!("Failed to open editor: {err}"))
         }
-        Resolved::Cancelled => {
-            println!("cancelled");
-            Ok(())
-        }
+        Resolved::Cancelled => cancelled(),
         Resolved::NotFound => Err(format!("No contract found matching '{filename}'")),
     }
 }

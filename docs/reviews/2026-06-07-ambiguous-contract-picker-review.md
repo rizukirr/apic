@@ -24,8 +24,10 @@
 
 ### Nit
 
-- `ambiguous_message` (src/cli.rs:275) has a single caller and could be inlined into resolve_one; kept separate for readability — fine as-is.
-- The three `Resolved::Cancelled => { println!("cancelled"); Ok(()) }` arms (src/cli.rs:334, :391 area, :470 area) repeat a two-line pattern; below the threshold where a helper pays for itself.
+- ~~`ambiguous_message` has a single caller and could be inlined into resolve_one~~ — **fixed**: inlined into resolve_one's non-TTY branch (also dedupes the label rendering).
+- ~~The three `Resolved::Cancelled => { println!("cancelled"); Ok(()) }` arms repeat a two-line pattern~~ — **fixed**: extracted `fn cancelled() -> Result<(), String>` used by read_cmd, validate, and open.
+
+Both fixes verified post-change: `cargo test` → 53 + 21 passed, 0 failed; clippy clean; `cargo fmt --check` exit 0.
 
 ## Pass details
 
