@@ -199,7 +199,7 @@ enum Resolution {
 /// 3. the fuzzy fallback — a shared top score is ambiguous, a distinct top
 ///    score wins.
 fn classify(filename: &str, root: &Path, files: &[PathBuf]) -> Resolution {
-    // 1: exact file under the working directory, with or without `.json`.
+    // exact file under the working directory, with or without `.json`.
     let candidates = [
         PathBuf::from(filename),
         PathBuf::from(format!("{filename}.json")),
@@ -212,7 +212,7 @@ fn classify(filename: &str, root: &Path, files: &[PathBuf]) -> Resolution {
         }
     }
 
-    // 2: basename ties, bare names only — a query with a separator already
+    // basename ties, bare names only — a query with a separator already
     // had its chance at step 1 and falls through to fuzzy.
     if !filename.contains('/') && !filename.contains('\\') {
         let target = if filename.ends_with(".json") {
@@ -232,7 +232,7 @@ fn classify(filename: &str, root: &Path, files: &[PathBuf]) -> Resolution {
         }
     }
 
-    // 3: fuzzy fallback with tie detection on the top score.
+    // fuzzy fallback with tie detection on the top score.
     let file_str: Vec<String> = files
         .iter()
         .map(|f| f.to_string_lossy().to_string())
