@@ -39,6 +39,17 @@ pub(crate) fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usiz
 
     let query_chars: Vec<char> = query.chars().collect();
 
+    // Lowercasing can expand a char (e.g. `İ` → `i` + combining dot), so map
+    // each lowered char back to its original char position; highlight indices
+    // must point at the original string. (`str::to_lowercase` differs from
+    // per-char lowercasing only for final sigma, which keeps the same char
+    // count, so the lengths always line up.)
+    let orig_index: Vec<usize> = candidate
+        .chars()
+        .enumerate()
+        .flat_map(|(i, c)| std::iter::repeat_n(i, c.to_lowercase().count()))
+        .collect();
+
     let mut query_index = 0;
     let mut score = 0;
     let mut matched_indices = Vec::with_capacity(query_chars.len());
@@ -74,7 +85,7 @@ pub(crate) fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usiz
             }
 
             last_match_index = Some(candidate_index);
-            matched_indices.push(candidate_index);
+            matched_indices.push(orig_index[candidate_index]);
             query_index += 1;
         }
 
@@ -95,16 +106,17 @@ pub(crate) fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usiz
 /// component — `user.json` matches `auth/user.json` but not
 /// `user/upload.json` — and the rightmost matching component wins, so a file
 /// name beats an identical directory prefix. The returned indices are
-/// positions in the full `candidate` string. A query containing a separator
-/// falls back to whole-path matching.
+/// positions in the full `candidate` string. A query containing a path
+/// separator (platform-aware: `/` everywhere, `\\` only on Windows) falls back
+/// to whole-path matching.
 pub(crate) fn fuzzy_match_path(query: &str, candidate: &str) -> Option<(i32, Vec<usize>)> {
-    if query.contains('/') || query.contains('\\') {
+    if query.chars().any(std::path::is_separator) {
         return fuzzy_match(query, candidate);
     }
 
     let mut offset = 0; // char offset of each component in `candidate`
     let mut components: Vec<(usize, &str)> = Vec::new();
-    for component in candidate.split(['/', '\\']) {
+    for component in candidate.split(std::path::is_separator) {
         components.push((offset, component));
         offset += component.chars().count() + 1; // +1 for the separator
     }
@@ -272,5 +284,30 @@ mod tests {
     #[test]
     fn path_match_with_separator_spans_the_whole_path() {
         assert!(fuzzy_match_path("user/up", "user/upload.json").is_some());
+    }
+
+    #[test]
+    fn lowercase_expansion_keeps_indices_on_original_chars() {
+        // `İ` lowercases to two chars (i + combining dot); indices must point
+        // at positions in the ORIGINAL string, so "nfo" is chars 1..=3.
+        let (_, indices) = fuzzy_match("nfo", "İnfo.json").unwrap();
+        assert_eq!(indices, vec![1, 2, 3]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backslash_is_a_literal_char_on_unix() {
+        // On unix a backslash is a valid filename char, not a separator, so
+        // it matches like any other char inside the single component.
+        let (_, indices) = fuzzy_match_path("d\\n", "weird\\name.json").unwrap();
+        assert_eq!(indices, vec![4, 5, 6]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn backslash_separates_components_on_windows() {
+        // On windows `\` is a path separator, so the single-component rule
+        // applies across it exactly as it does for `/`.
+        assert_eq!(fuzzy_match_path("user.json", "user\\upload.json"), None);
     }
 }
