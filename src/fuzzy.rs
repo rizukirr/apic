@@ -24,11 +24,11 @@ use std::cmp::Reverse;
 /// # Returns
 ///
 /// `Some((score, indices))` if every query character was matched in order,
-/// where `indices` are the char positions (not bytes) of the *rightmost*
-/// occurrence of the query as a subsequence of `candidate`, so highlights
-/// cluster near the end of the string (the file name in a path) (an empty
-/// query matches everything with a score of `0` and no indices); `None` if
-/// the query is not a subsequence of `candidate`.
+/// where `indices` are the char positions (not bytes) of the leftmost (greedy)
+/// occurrence of the query as a subsequence of `candidate`; callers that want
+/// highlights clustered on a file name should match per-component via
+/// [`fuzzy_match_path`] (an empty query matches everything with a score of `0`
+/// and no indices); `None` if the query is not a subsequence of `candidate`.
 pub(crate) fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usize>)> {
     if query.is_empty() {
         return Some((0, Vec::new()));
@@ -41,6 +41,7 @@ pub(crate) fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usiz
 
     let mut query_index = 0;
     let mut score = 0;
+    let mut matched_indices = Vec::with_capacity(query_chars.len());
 
     let mut last_match_index: Option<usize> = None;
     let mut prev_char: Option<char> = None;
@@ -73,6 +74,7 @@ pub(crate) fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usiz
             }
 
             last_match_index = Some(candidate_index);
+            matched_indices.push(candidate_index);
             query_index += 1;
         }
 
@@ -82,30 +84,10 @@ pub(crate) fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usiz
     if query_index == query_chars.len() {
         // Penalty: longer candidate is weaker
         score -= candidate.len() as i32 / 2;
-        Some((score, rightmost_indices(&query_chars, &candidate_lower)))
+        Some((score, matched_indices))
     } else {
         None
     }
-}
-
-/// Returns the char indices of the rightmost occurrence of `query_chars` as a
-/// subsequence of `candidate`. The caller has already established that one
-/// exists. Rightmost positions cluster highlights near the file name rather
-/// than an identical directory prefix.
-fn rightmost_indices(query_chars: &[char], candidate: &str) -> Vec<usize> {
-    let candidate_chars: Vec<char> = candidate.chars().collect();
-    let mut indices = vec![0; query_chars.len()];
-    let mut query_index = query_chars.len();
-    for candidate_index in (0..candidate_chars.len()).rev() {
-        if query_index == 0 {
-            break;
-        }
-        if candidate_chars[candidate_index] == query_chars[query_index - 1] {
-            query_index -= 1;
-            indices[query_index] = candidate_index;
-        }
-    }
-    indices
 }
 
 /// Matches `query` against the path string `candidate`, one component at a
@@ -252,14 +234,20 @@ mod tests {
     }
 
     #[test]
-    fn match_indices_prefer_the_rightmost_occurrence() {
-        // "user.json" also matches greedily via the "user/" dir + ".json",
-        // but highlights must cluster on the basename.
-        let (_, indices) = fuzzy_match("user.json", "user/profile/user.json").unwrap();
-        assert_eq!(indices, vec![13, 14, 15, 16, 17, 18, 19, 20, 21]);
+    fn separator_query_highlights_leftmost_path_match() {
+        // Regression: `user/` must highlight the `user/` directory; rightmost
+        // indices anchored the trailing `/` to the LAST separator and
+        // scattered highlights into `profile`.
+        let (_, indices) = fuzzy_match_path("user/", "user/profile/user.json").unwrap();
+        assert_eq!(indices, vec![0, 1, 2, 3, 4]);
+    }
 
-        let (_, indices) = fuzzy_match("user", "auth/user.json").unwrap();
-        assert_eq!(indices, vec![5, 6, 7, 8]);
+    #[test]
+    fn component_match_still_clusters_on_the_basename() {
+        // The basename-clustering behavior survives the leftmost revert
+        // because the match happens inside the `user.json` component.
+        let (_, indices) = fuzzy_match_path("user.json", "user/profile/user.json").unwrap();
+        assert_eq!(indices, vec![13, 14, 15, 16, 17, 18, 19, 20, 21]);
     }
 
     #[test]
