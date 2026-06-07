@@ -746,7 +746,7 @@ git commit -m "feat: prompt to pick when read/open contract is ambiguous"
 - Modify: `src/cli.rs` (`validate` signature and target selection; `run()`'s Validate arm)
 - Test: `tests/cli.rs`
 
-- [ ] **Step 1: Write the failing e2e tests**
+- [x] **Step 1: Write the failing e2e tests**
 
 Append to `tests/cli.rs`:
 
@@ -794,12 +794,12 @@ fn read_fuzzy_score_tie_errors_when_not_a_tty() {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test --test cli -- ambiguous_validate fuzzy_tie`
 Expected: both fail — `validate -f user` currently exits 0 validating the best fuzzy match, and `read -f usr` currently exits 0 rendering one of the tied candidates.
 
-- [ ] **Step 3: Rewire validate**
+- [x] **Step 3: Rewire validate**
 
 In `src/cli.rs`:
 
@@ -861,17 +861,17 @@ In `src/cli.rs`:
 
 3e. If `fuzzy_find` is now unreferenced in `cli.rs` (its last direct caller was the old `validate` narrowing), remove it from the `use crate::fuzzy::...` import **only if** the compiler warns — `classify` still uses it, so the import stays.
 
-- [ ] **Step 4: Run the full suite**
+- [x] **Step 4: Run the full suite**
 
 Run: `cargo test`
 Expected: all tests pass, including `validate_passes_for_valid_and_fails_for_broken` (unchanged behavior for the no-filename and unambiguous cases).
 
-- [ ] **Step 5: Lint and format**
+- [x] **Step 5: Lint and format**
 
 Run: `cargo clippy --all-targets && cargo fmt --check`
 Expected: no errors (warnings to be fixed if clippy flags the new code); `fmt --check` exits 0 — if it does not, run `cargo fmt` and include the result in the commit.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/cli.rs tests/cli.rs
