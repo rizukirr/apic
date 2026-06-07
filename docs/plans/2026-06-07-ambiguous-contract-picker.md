@@ -400,7 +400,7 @@ git commit -m "feat: add picker key-step logic"
 **Files:**
 - Modify: `src/picker.rs` (add imports, `RawGuard`, `draw`, `pick`)
 
-- [ ] **Step 1: Add the render loop**
+- [x] **Step 1: Add the render loop**
 
 In `src/picker.rs`, replace the existing single `use` line with:
 
@@ -515,12 +515,12 @@ pub fn pick(prompt: &str, labels: &[String]) -> io::Result<Option<usize>> {
 }
 ```
 
-- [ ] **Step 2: Build and test**
+- [x] **Step 2: Build and test**
 
 Run: `cargo build && cargo test`
 Expected: build exits 0; full suite passes. A dead-code warning on `pick` is acceptable — it gets a caller in Task 4.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/picker.rs
