@@ -2,7 +2,7 @@
 
 use crate::config::{Config, configured_editor, read_config_file};
 use crate::file::{confine_to_dir, read_file};
-use crate::fuzzy::{fuzzy_find, fuzzy_match};
+use crate::fuzzy::{fuzzy_find, fuzzy_match_path};
 use crate::json::{json_get, scan_json_file, validate as validate_contract};
 use crate::picker;
 use crate::render::{render, sanitize};
@@ -530,7 +530,7 @@ pub fn run() {
                             .unwrap_or(file);
                         let rel = sanitize(&rel.to_string_lossy());
                         let (score, indices) = match &filter {
-                            Some(query) => fuzzy_match(query, &rel)?,
+                            Some(query) => fuzzy_match_path(query, &rel)?,
                             None => (0, Vec::new()),
                         };
                         let shown = sanitize(&file.to_string_lossy());
