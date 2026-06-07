@@ -154,9 +154,7 @@ pub fn update_editor(editor: Option<&str>) -> Result<(), String> {
 /// Initializes a new `.apic` project, optionally pointing at `working_dir`.
 ///
 /// The directory creation and config write are delegated to [`Config::init`].
-// TODO: scan json files and store them in a cache
-// TODO: for example call read function then store it
-pub fn init(working_dir: Option<&str>) -> Result<(), String> {
+pub fn init_cmd(working_dir: Option<&str>) -> Result<(), String> {
     Config::init(working_dir)?;
     println!("Successfully initialized");
     Ok(())
@@ -371,7 +369,7 @@ fn read(content: &str, status: Option<u16>, example: bool) -> Result<(), String>
 /// is checked. Each file is read (subject to the size cap) and parsed against
 /// the contract schema. Prints `ok`/`FAIL` per file and a summary, and exits
 /// the process non-zero if any contract is invalid so it can gate CI.
-fn validate(filename: Option<&str>) -> Result<(), String> {
+fn validate_cmd(filename: Option<&str>) -> Result<(), String> {
     let files = match list(true) {
         Some(files) => files,
         None => {
@@ -436,7 +434,7 @@ const DEFAULT_CONTRACT: &str = include_str!("templates/contract.json");
 /// working directory and confined to it: a path that escapes via `..` or an
 /// absolute path elsewhere is rejected. Outside a project the path is taken
 /// as given. Refuses to overwrite an existing file.
-fn create(filename: &str) -> Result<(), String> {
+fn create_cmd(filename: &str) -> Result<(), String> {
     let path = match read_config_file().and_then(|conf| conf.get_root_dir()) {
         Ok(root) => confine_to_dir(&root, Path::new(filename))?,
         Err(_) => PathBuf::from(filename),
@@ -459,7 +457,7 @@ fn create(filename: &str) -> Result<(), String> {
 }
 
 /// Resolves `filename` to an existing contract and opens it in the editor.
-fn open(filename: &str) -> Result<(), String> {
+fn open_cmd(filename: &str) -> Result<(), String> {
     match resolve_one(filename)? {
         Resolved::Path(path) => {
             open_in_editor(&path).map_err(|err| format!("Failed to open editor: {err}"))
@@ -497,6 +495,84 @@ fn open_in_editor(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// List files in the current working directory, print it as a tree.
+///
+/// If `filter` is given, only files whose path fuzzy-matches it are printed.
+/// If `absolute` is true, the working directory is not prepended to the path.
+fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), String> {
+    if let Some(files) = list(absolute) {
+        // Fuzzy-match the filter against the sanitized, working-dir-
+        // relative form so an absolute prefix can't skew scores and
+        // the match indices stay aligned with what is printed. File
+        // names come from the filesystem and may carry control
+        // characters, so they are sanitized before matching.
+        struct Row {
+            /// Working-dir-relative display path (tree view).
+            rel: String,
+            /// Match positions in `rel`; unused when piped (the cost
+            /// is bounded by the query length).
+            indices: Vec<usize>,
+            score: i32,
+            /// Path in the requested form (flat piped view).
+            shown: String,
+        }
+
+        let is_tty = std::io::stdout().is_terminal();
+        let root = read_config_file().and_then(|c| c.get_root_dir()).ok();
+        let mut rows: Vec<Row> = files
+            .iter()
+            .filter_map(|file| {
+                let rel = root
+                    .as_ref()
+                    .and_then(|r| file.strip_prefix(r).ok())
+                    .unwrap_or(file);
+                let rel = sanitize(&rel.to_string_lossy());
+                let (score, indices) = match &filter {
+                    Some(query) => fuzzy_match_path(query, &rel)?,
+                    None => (0, Vec::new()),
+                };
+                let shown = sanitize(&file.to_string_lossy());
+                Some(Row {
+                    rel,
+                    indices,
+                    score,
+                    shown,
+                })
+            })
+            .collect();
+
+        if rows.is_empty() {
+            // A filter that matches nothing prints nothing — also
+            // skips the `--absolute` root label.
+        } else if is_tty {
+            // Tree view: alphabetical, directories first; under a
+            // filter only matching files appear, with matched
+            // characters highlighted.
+            let mut tree_root = tree::Node::default();
+            for row in &rows {
+                tree_root.insert(Path::new(&row.rel), &row.indices);
+            }
+            let root_label = if absolute {
+                root.as_ref()
+                    .map(|r| format!("{}/", sanitize(&r.to_string_lossy())))
+            } else {
+                None
+            };
+            print!("{}", tree::render(root_label.as_deref(), &tree_root, true));
+        } else {
+            // Piped: flat path-per-line for scripts. With a filter,
+            // print the best match first.
+            if filter.is_some() {
+                rows.sort_by_key(|row| std::cmp::Reverse(row.score));
+            }
+            for row in rows {
+                println!("{}", row.shown);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Parses command-line arguments and runs the selected subcommand.
 ///
 /// This is the CLI entry point invoked from `main`.
@@ -509,92 +585,18 @@ pub fn run() {
         } => update_working_dir(set_dir.as_deref())
             .and_then(|_| update_editor(set_editor.as_deref())),
         Commands::Create { filename } => match filename {
-            Some(filename) => create(&filename),
+            Some(filename) => create_cmd(&filename),
             None => Err("no filename provided, use 'apic create -f <filename>'".to_string()),
         },
-        Commands::Init { set_dir } => init(set_dir.as_deref()),
-        Commands::List { filter, absolute } => {
-            if let Some(files) = list(absolute) {
-                // Fuzzy-match the filter against the sanitized, working-dir-
-                // relative form so an absolute prefix can't skew scores and
-                // the match indices stay aligned with what is printed. File
-                // names come from the filesystem and may carry control
-                // characters, so they are sanitized before matching.
-                struct Row {
-                    /// Working-dir-relative display path (tree view).
-                    rel: String,
-                    /// Match positions in `rel`; unused when piped (the cost
-                    /// is bounded by the query length).
-                    indices: Vec<usize>,
-                    score: i32,
-                    /// Path in the requested form (flat piped view).
-                    shown: String,
-                }
-
-                let is_tty = std::io::stdout().is_terminal();
-                let root = read_config_file().and_then(|c| c.get_root_dir()).ok();
-                let mut rows: Vec<Row> = files
-                    .iter()
-                    .filter_map(|file| {
-                        let rel = root
-                            .as_ref()
-                            .and_then(|r| file.strip_prefix(r).ok())
-                            .unwrap_or(file);
-                        let rel = sanitize(&rel.to_string_lossy());
-                        let (score, indices) = match &filter {
-                            Some(query) => fuzzy_match_path(query, &rel)?,
-                            None => (0, Vec::new()),
-                        };
-                        let shown = sanitize(&file.to_string_lossy());
-                        Some(Row {
-                            rel,
-                            indices,
-                            score,
-                            shown,
-                        })
-                    })
-                    .collect();
-
-                if rows.is_empty() {
-                    // A filter that matches nothing prints nothing — also
-                    // skips the `--absolute` root label.
-                } else if is_tty {
-                    // Tree view: alphabetical, directories first; under a
-                    // filter only matching files appear, with matched
-                    // characters highlighted.
-                    let mut tree_root = tree::Node::default();
-                    for row in &rows {
-                        tree_root.insert(Path::new(&row.rel), &row.indices);
-                    }
-                    let root_label = if absolute {
-                        root.as_ref()
-                            .map(|r| format!("{}/", sanitize(&r.to_string_lossy())))
-                    } else {
-                        None
-                    };
-                    print!("{}", tree::render(root_label.as_deref(), &tree_root, true));
-                } else {
-                    // Piped: flat path-per-line for scripts. With a filter,
-                    // print the best match first.
-                    if filter.is_some() {
-                        rows.sort_by_key(|row| std::cmp::Reverse(row.score));
-                    }
-                    for row in rows {
-                        println!("{}", row.shown);
-                    }
-                }
-            }
-            Ok(())
-        }
+        Commands::Init { set_dir } => init_cmd(set_dir.as_deref()),
+        Commands::List { filter, absolute } => list_cmd(filter.as_deref(), absolute),
         Commands::Read {
             filename,
             status,
             example,
         } => read_cmd(&filename, status, example),
-        // `validate` exits the process itself when contracts fail
-        // (per-file reporting); resolution errors return normally.
-        Commands::Validate { filename } => validate(filename.as_deref()),
-        Commands::Open { filename } => open(&filename),
+        Commands::Validate { filename } => validate_cmd(filename.as_deref()),
+        Commands::Open { filename } => open_cmd(&filename),
     };
 
     if let Err(err) = result {
