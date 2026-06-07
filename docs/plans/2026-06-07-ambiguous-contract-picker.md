@@ -253,7 +253,7 @@ git commit -m "feat: add ambiguity-aware contract classification"
 - Create: `src/picker.rs`
 - Modify: `src/main.rs:10` (add `mod picker;`)
 
-- [ ] **Step 1: Create the module with failing tests**
+- [x] **Step 1: Create the module with failing tests**
 
 Create `src/picker.rs`:
 
@@ -379,14 +379,14 @@ In `src/main.rs`, after `mod json;` (line 10), add:
 mod picker;
 ```
 
-- [ ] **Step 2: Run tests to verify they pass**
+- [x] **Step 2: Run tests to verify they pass**
 
 (The implementation is written together with its tests in Step 1 — the module is new, so there is no pre-existing behavior to fail against. The tests are the executable specification of the key map.)
 
 Run: `cargo test picker`
 Expected: `test result: ok. 8 passed`. A dead-code warning on `step`/`Outcome` is acceptable — `pick()` consumes them in Task 3.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/picker.rs src/main.rs
