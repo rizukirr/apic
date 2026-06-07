@@ -535,7 +535,7 @@ git commit -m "feat: add interactive crossterm picker"
 - Modify: `src/cli.rs` (add `Resolved`, `rel_display`, `ambiguous_message`, `resolve_one`; rewrite the `Read` arm and `open()`; delete `resolve_contract` and `read_filename`)
 - Test: `tests/cli.rs`
 
-- [ ] **Step 1: Write the failing e2e tests**
+- [x] **Step 1: Write the failing e2e tests**
 
 Append to `tests/cli.rs`:
 
@@ -591,12 +591,12 @@ fn open_ambiguous_basename_errors_when_not_a_tty() {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test --test cli ambiguous`
 Expected: both new tests fail — the command currently exits 0 (read) / opens the editor (open) by silently picking the best fuzzy match, so the `.failure()` assertions trip.
 
-- [ ] **Step 3: Implement resolve_one and rewire read + open**
+- [x] **Step 3: Implement resolve_one and rewire read + open**
 
 In `src/cli.rs`:
 
@@ -726,12 +726,12 @@ fn open(filename: &str) -> Result<(), String> {
         } => read_cmd(&filename, status, example),
 ```
 
-- [ ] **Step 4: Run the full suite**
+- [x] **Step 4: Run the full suite**
 
 Run: `cargo test`
 Expected: everything passes — the two new ambiguity tests plus all pre-existing tests (`read_resolves_path_extensionless_and_fuzzy_forms` and `open_resolves_and_succeeds` exercise the unambiguous paths and must stay green).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli.rs tests/cli.rs
