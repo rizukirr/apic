@@ -8,6 +8,7 @@ mod config;
 mod file;
 mod fuzzy;
 mod json;
+mod picker;
 mod render;
 
 /// Restores the default `SIGPIPE` disposition on Unix.

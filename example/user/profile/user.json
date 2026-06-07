@@ -1,0 +1,126 @@
+{
+    "name": "user-profile",
+    "description": "Public profile of a user",
+    "method": "GET",
+    "path": "/user/{id}/profile",
+    "params": [
+        {
+            "name": "id",
+            "value": "{id}",
+            "description": "User ID",
+            "required": true
+        }
+    ],
+    "headers": [
+        {
+            "name": "Content-Type",
+            "value": "application/json"
+        }
+    ],
+    "responses": [
+        {
+            "code": 200,
+            "description": "success",
+            "example": {
+                "status": 200,
+                "message": "OK",
+                "data": {
+                    "id": 1,
+                    "display_name": "rizukirr",
+                    "bio": "Building git-able API contracts",
+                    "avatar_url": "https://example.com/avatar/1.png"
+                }
+            },
+            "schema": [
+                {
+                    "name": "status",
+                    "type": "int",
+                    "default": "200",
+                    "description": "Status code",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "message",
+                    "type": "string",
+                    "default": null,
+                    "description": "Message",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "data",
+                    "type": "object",
+                    "default": null,
+                    "description": "Data",
+                    "required": false,
+                    "properties": [
+                        {
+                            "name": "id",
+                            "type": "int",
+                            "default": null,
+                            "description": "User ID",
+                            "required": true
+                        },
+                        {
+                            "name": "display_name",
+                            "type": "string",
+                            "default": null,
+                            "description": "Display name",
+                            "required": true
+                        },
+                        {
+                            "name": "bio",
+                            "type": "string",
+                            "default": null,
+                            "description": "Short bio",
+                            "required": false
+                        },
+                        {
+                            "name": "avatar_url",
+                            "type": "string",
+                            "default": null,
+                            "description": "Avatar image URL",
+                            "required": false
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "code": 404,
+            "description": "User not found",
+            "example": {
+                "status": 404,
+                "message": "User not found",
+                "data": null
+            },
+            "schema": [
+                {
+                    "name": "status",
+                    "type": "int",
+                    "default": "404",
+                    "description": "Status code",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "message",
+                    "type": "string",
+                    "default": null,
+                    "description": "Message",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "data",
+                    "type": "object",
+                    "default": null,
+                    "description": "Data",
+                    "required": false,
+                    "properties": null
+                }
+            ]
+        }
+    ]
+}
