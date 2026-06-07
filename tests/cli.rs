@@ -360,3 +360,53 @@ fn version_matches_package_version() {
         .success()
         .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
 }
+
+#[test]
+fn read_ambiguous_basename_errors_when_not_a_tty() {
+    let dir = init_project("ambiguous_read");
+    apic(&dir)
+        .args(["create", "-f", "user/user.json"])
+        .assert()
+        .success();
+    apic(&dir)
+        .args(["create", "-f", "auth/user.json"])
+        .assert()
+        .success();
+
+    // Test stdin/stdout are pipes, not TTYs, so the picker must not run:
+    // the command exits non-zero and lists every candidate.
+    apic(&dir)
+        .args(["read", "-f", "user"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is ambiguous"))
+        .stderr(predicate::str::contains("user/user.json"))
+        .stderr(predicate::str::contains("auth/user.json"))
+        .stderr(predicate::str::contains("Specify the path"));
+
+    // A precise path still resolves without any prompt.
+    apic(&dir)
+        .args(["read", "-f", "auth/user.json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("/resource/{id}/action"));
+}
+
+#[test]
+fn open_ambiguous_basename_errors_when_not_a_tty() {
+    let dir = init_project("ambiguous_open");
+    apic(&dir)
+        .args(["create", "-f", "user/user.json"])
+        .assert()
+        .success();
+    apic(&dir)
+        .args(["create", "-f", "auth/user.json"])
+        .assert()
+        .success();
+
+    apic(&dir)
+        .args(["open", "-f", "user"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is ambiguous"));
+}

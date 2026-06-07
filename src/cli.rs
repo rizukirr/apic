@@ -4,9 +4,11 @@ use crate::config::{Config, configured_editor, read_config_file};
 use crate::file::{confine_to_dir, read_file};
 use crate::fuzzy::{fuzzy_find, fuzzy_score};
 use crate::json::{json_get, scan_json_file, validate as validate_contract};
+use crate::picker;
 use crate::render::{render, sanitize};
 use clap::{Parser, Subcommand};
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 /// Top-level CLI parser for the `apic` binary.
@@ -253,52 +255,94 @@ fn classify(filename: &str, root: &Path, files: &[PathBuf]) -> Resolution {
     }
 }
 
-/// Resolves a contract reference to an existing file path under the working dir.
-///
-/// Resolution tries, in order:
-/// 1. an exact path relative to the working directory (`user/user.json`),
-/// 2. the same with a `.json` extension appended (`user/user`, `auth/login`),
-/// 3. the best fuzzy match over all contracts (`user`, `logn`).
-///
-/// Exact matches always win over fuzzy ones, so a precise path is never
-/// mis-ranked. Returns `None` when nothing resolves or no contracts exist.
-pub fn resolve_contract(filename: &str) -> Option<PathBuf> {
-    let files = list(true)?;
+/// A contract reference resolved down to a single decision.
+enum Resolved {
+    /// Exactly one contract — proceed.
+    Path(PathBuf),
+    /// The user cancelled an interactive pick — not an error.
+    Cancelled,
+    /// Nothing matched.
+    NotFound,
+}
 
-    // 1 & 2: exact file under the working directory, with or without `.json`.
-    if let Ok(root) = read_config_file().and_then(|c| c.get_root_dir()) {
-        let candidates = [
-            PathBuf::from(filename),
-            PathBuf::from(format!("{filename}.json")),
-        ];
-        for candidate in candidates {
-            if let Ok(path) = confine_to_dir(&root, &candidate)
-                && path.is_file()
+/// Renders `path` relative to `root` for display, control characters stripped.
+fn rel_display(path: &Path, root: &Path) -> String {
+    let shown = path.strip_prefix(root).unwrap_or(path);
+    sanitize(&shown.to_string_lossy())
+}
+
+/// Builds the non-interactive ambiguity error: every candidate plus a hint.
+fn ambiguous_message(filename: &str, root: &Path, candidates: &[PathBuf]) -> String {
+    let rels: Vec<String> = candidates.iter().map(|c| rel_display(c, root)).collect();
+    let mut msg = format!(
+        "'{}' is ambiguous, {} contracts match:\n",
+        sanitize(filename),
+        rels.len()
+    );
+    for rel in &rels {
+        msg.push_str(&format!("  {rel}\n"));
+    }
+    msg.push_str(&format!("Specify the path, e.g. -f {}", rels[0]));
+    msg
+}
+
+/// Resolves `filename` to exactly one contract, asking the user to pick when
+/// the reference is ambiguous.
+///
+/// Interactive sessions get an inline arrow-key picker. When stdin or stdout
+/// is not a terminal the picker is never shown; an error listing every
+/// candidate is returned instead, so scripts fail loudly rather than hang.
+fn resolve_one(filename: &str) -> Result<Resolved, String> {
+    let files = match list(true) {
+        Some(files) => files,
+        None => return Ok(Resolved::NotFound),
+    };
+    let root = read_config_file().and_then(|c| c.get_root_dir())?;
+
+    match classify(filename, &root, &files) {
+        Resolution::One(path) => Ok(Resolved::Path(path)),
+        Resolution::None => Ok(Resolved::NotFound),
+        Resolution::Many(candidates) => {
+            if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+                return Err(ambiguous_message(filename, &root, &candidates));
+            }
+            let labels: Vec<String> = candidates
+                .iter()
+                .map(|c| rel_display(c, &root))
+                .collect();
+            let prompt = format!(
+                "{} contracts match \"{}\":",
+                candidates.len(),
+                sanitize(filename)
+            );
+            match picker::pick(&prompt, &labels)
+                .map_err(|err| format!("picker failed: {err}"))?
             {
-                return Some(path);
+                Some(idx) => Ok(Resolved::Path(candidates[idx].clone())),
+                None => Ok(Resolved::Cancelled),
             }
         }
     }
-
-    // 3: fuzzy fallback over every discovered contract.
-    let file_str: Vec<String> = files
-        .iter()
-        .map(|f| f.to_string_lossy().to_string())
-        .collect();
-    let hits = fuzzy_find(filename, &file_str)?;
-    Some(PathBuf::from(&hits[0].0))
 }
 
-/// Resolves `filename` to a contract and returns its content.
-///
-/// `None` is returned when no file resolves or the file cannot be read.
-pub fn read_filename(filename: &str) -> Option<String> {
-    let path = resolve_contract(filename)?;
-    match read_file(&path) {
-        Ok(content) => Some(content),
-        Err(err) => {
-            eprintln!("Failed to read {}: {}", path.display(), err);
-            None
+/// Handles `apic read`: resolve to one contract, read it, render it.
+fn read_cmd(filename: &str, status: Option<u16>, example: bool) -> Result<(), String> {
+    match resolve_one(filename)? {
+        Resolved::Path(path) => match read_file(&path) {
+            Ok(content) => read(&content, status, example),
+            Err(err) => {
+                eprintln!("Failed to read {}: {}", path.display(), err);
+                println!("No contract found");
+                Ok(())
+            }
+        },
+        Resolved::Cancelled => {
+            println!("cancelled");
+            Ok(())
+        }
+        Resolved::NotFound => {
+            println!("No contract found");
+            Ok(())
         }
     }
 }
@@ -424,10 +468,16 @@ fn create(filename: &str) -> Result<(), String> {
 
 /// Resolves `filename` to an existing contract and opens it in the editor.
 fn open(filename: &str) -> Result<(), String> {
-    let path = resolve_contract(filename)
-        .ok_or_else(|| format!("No contract found matching '{filename}'"))?;
-    open_in_editor(&path).map_err(|err| format!("Failed to open editor: {err}"))?;
-    Ok(())
+    match resolve_one(filename)? {
+        Resolved::Path(path) => {
+            open_in_editor(&path).map_err(|err| format!("Failed to open editor: {err}"))
+        }
+        Resolved::Cancelled => {
+            println!("cancelled");
+            Ok(())
+        }
+        Resolved::NotFound => Err(format!("No contract found matching '{filename}'")),
+    }
 }
 
 /// Opens `path` in the user's preferred editor and waits for it to close.
@@ -510,13 +560,7 @@ pub fn run() {
             filename,
             status,
             example,
-        } => match read_filename(&filename) {
-            Some(content) => read(content.as_str(), status, example),
-            None => {
-                println!("No contract found");
-                Ok(())
-            }
-        },
+        } => read_cmd(&filename, status, example),
         // `validate` exits the process itself on failure (per-file reporting).
         Commands::Validate { filename } => {
             validate(filename.as_deref());
