@@ -29,7 +29,7 @@ Modified:
 **Files:**
 - Modify: `src/cli.rs` (add `Resolution`, `classify`, and a tests module; do not touch handlers yet)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to the end of `src/cli.rs`:
 
@@ -144,12 +144,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test classify`
 Expected: compilation fails — `classify` and `Resolution` are not defined yet (error E0425/E0412 referencing `classify` / `Resolution`).
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `src/cli.rs`, directly above the existing `resolve_contract` function (around line 178), add:
 
@@ -233,12 +233,12 @@ fn classify(filename: &str, root: &Path, files: &[PathBuf]) -> Resolution {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test classify`
 Expected: `test result: ok. 7 passed` (the rest of the suite is untouched). A dead-code warning on `classify`/`Resolution` is acceptable at this stage — they get callers in Task 4.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli.rs
