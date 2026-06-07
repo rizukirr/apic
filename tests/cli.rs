@@ -479,3 +479,21 @@ fn list_piped_output_stays_flat_without_tree_chars() {
         .stdout(predicate::str::contains(dir.to_string_lossy().to_string()))
         .stdout(predicate::str::contains("├──").not());
 }
+
+#[test]
+fn list_filter_does_not_match_across_path_components() {
+    let dir = init_project("list_filter_component");
+    for f in ["user/user.json", "user/upload.json", "auth/user.json"] {
+        apic(&dir).args(["create", "-f", f]).assert().success();
+    }
+
+    // "user.json" must not match user/upload.json by borrowing "user" from
+    // the directory and ".json" from the extension.
+    apic(&dir)
+        .args(["list", "--filter", "user.json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("user/user.json"))
+        .stdout(predicate::str::contains("auth/user.json"))
+        .stdout(predicate::str::contains("upload.json").not());
+}
