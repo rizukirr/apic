@@ -5,7 +5,7 @@ that lives in your repository, so contracts are diffable, reviewable in pull
 requests, and versioned alongside the code they describe. `apic` discovers,
 renders, and scaffolds those files.`
 
-https://github.com/user-attachments/assets/7f70eff7-0b5a-4f57-a6a5-f478b9d8bbf7
+https://github.com/user-attachments/assets/89b5fb4b-7942-49a1-9bee-41308d234236
 
 ## Why
 
