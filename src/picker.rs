@@ -198,7 +198,10 @@ mod tests {
 
     #[test]
     fn picker_esc_q_and_ctrl_c_cancel() {
-        assert_eq!(step(1, 3, KeyCode::Esc, NONE), (1, Some(Outcome::Cancelled)));
+        assert_eq!(
+            step(1, 3, KeyCode::Esc, NONE),
+            (1, Some(Outcome::Cancelled))
+        );
         assert_eq!(
             step(1, 3, KeyCode::Char('q'), NONE),
             (1, Some(Outcome::Cancelled))

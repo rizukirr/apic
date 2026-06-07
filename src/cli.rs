@@ -306,18 +306,13 @@ fn resolve_one(filename: &str) -> Result<Resolved, String> {
             if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
                 return Err(ambiguous_message(filename, &root, &candidates));
             }
-            let labels: Vec<String> = candidates
-                .iter()
-                .map(|c| rel_display(c, &root))
-                .collect();
+            let labels: Vec<String> = candidates.iter().map(|c| rel_display(c, &root)).collect();
             let prompt = format!(
                 "{} contracts match \"{}\":",
                 candidates.len(),
                 sanitize(filename)
             );
-            match picker::pick(&prompt, &labels)
-                .map_err(|err| format!("picker failed: {err}"))?
-            {
+            match picker::pick(&prompt, &labels).map_err(|err| format!("picker failed: {err}"))? {
                 Some(idx) => Ok(Resolved::Path(candidates[idx].clone())),
                 None => Ok(Resolved::Cancelled),
             }
@@ -372,36 +367,35 @@ fn read(content: &str, status: Option<u16>, example: bool) -> Result<(), String>
 
 /// Validates contracts under the working directory, printing one line per file.
 ///
-/// With `filename`, only the best fuzzy match is checked; otherwise every
-/// contract is checked. Each file is read (subject to the size cap) and parsed
-/// against the contract schema. Prints `ok`/`FAIL` per file and a summary, and
-/// exits the process non-zero if any contract is invalid so it can gate CI.
-fn validate(filename: Option<&str>) {
+/// With `filename`, the reference is resolved like `read` — exact path,
+/// basename, then fuzzy, prompting when ambiguous; otherwise every contract
+/// is checked. Each file is read (subject to the size cap) and parsed against
+/// the contract schema. Prints `ok`/`FAIL` per file and a summary, and exits
+/// the process non-zero if any contract is invalid so it can gate CI.
+fn validate(filename: Option<&str>) -> Result<(), String> {
     let files = match list(true) {
         Some(files) => files,
         None => {
             println!("No contracts found");
-            return;
+            return Ok(());
         }
     };
 
     let root = read_config_file().and_then(|c| c.get_root_dir()).ok();
 
-    // Narrow to a single fuzzy match when a filename is given.
+    // Narrow to a single contract when a filename is given.
     let targets: Vec<PathBuf> = match filename {
-        Some(name) => {
-            let strs: Vec<String> = files
-                .iter()
-                .map(|f| f.to_string_lossy().to_string())
-                .collect();
-            match fuzzy_find(name, &strs) {
-                Some(hits) => vec![PathBuf::from(&hits[0].0)],
-                None => {
-                    eprintln!("No contract matches {name}");
-                    std::process::exit(1);
-                }
+        Some(name) => match resolve_one(name)? {
+            Resolved::Path(path) => vec![path],
+            Resolved::Cancelled => {
+                println!("cancelled");
+                return Ok(());
             }
-        }
+            Resolved::NotFound => {
+                eprintln!("No contract matches {}", sanitize(name));
+                std::process::exit(1);
+            }
+        },
         None => files,
     };
 
@@ -430,6 +424,8 @@ fn validate(filename: Option<&str>) {
     if failed > 0 {
         std::process::exit(1);
     }
+
+    Ok(())
 }
 
 /// Default contract template written by `apic create`.
@@ -561,11 +557,9 @@ pub fn run() {
             status,
             example,
         } => read_cmd(&filename, status, example),
-        // `validate` exits the process itself on failure (per-file reporting).
-        Commands::Validate { filename } => {
-            validate(filename.as_deref());
-            Ok(())
-        }
+        // `validate` exits the process itself when contracts fail
+        // (per-file reporting); resolution errors return normally.
+        Commands::Validate { filename } => validate(filename.as_deref()),
         Commands::Open { filename } => open(&filename),
     };
 
@@ -677,9 +671,6 @@ mod tests {
     #[test]
     fn classify_no_match_returns_none() {
         let (root, files) = fake("/proj", &["a/user.json"]);
-        assert!(matches!(
-            classify("qqqq", &root, &files),
-            Resolution::None
-        ));
+        assert!(matches!(classify("qqqq", &root, &files), Resolution::None));
     }
 }

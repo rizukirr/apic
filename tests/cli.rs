@@ -410,3 +410,45 @@ fn open_ambiguous_basename_errors_when_not_a_tty() {
         .failure()
         .stderr(predicate::str::contains("is ambiguous"));
 }
+
+#[test]
+fn validate_ambiguous_basename_errors_when_not_a_tty() {
+    let dir = init_project("ambiguous_validate");
+    apic(&dir)
+        .args(["create", "-f", "user/user.json"])
+        .assert()
+        .success();
+    apic(&dir)
+        .args(["create", "-f", "auth/user.json"])
+        .assert()
+        .success();
+
+    apic(&dir)
+        .args(["validate", "-f", "user"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is ambiguous"));
+}
+
+#[test]
+fn read_fuzzy_score_tie_errors_when_not_a_tty() {
+    let dir = init_project("fuzzy_tie");
+    // Different basenames, identical structure: "usr" is not a basename
+    // match for either, and both fuzzy-score identically -> ambiguous.
+    apic(&dir)
+        .args(["create", "-f", "a/user-a.json"])
+        .assert()
+        .success();
+    apic(&dir)
+        .args(["create", "-f", "b/user-b.json"])
+        .assert()
+        .success();
+
+    apic(&dir)
+        .args(["read", "-f", "usr"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is ambiguous"))
+        .stderr(predicate::str::contains("user-a.json"))
+        .stderr(predicate::str::contains("user-b.json"));
+}
