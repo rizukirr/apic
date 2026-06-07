@@ -5,7 +5,12 @@
 //! terminal; raw mode is held behind an RAII guard so it is restored on every
 //! exit path, including panics.
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::cursor::{MoveToColumn, MoveUp};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, read};
+use crossterm::style::Stylize;
+use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
+use crossterm::{execute, queue};
+use std::io::{self, Write};
 
 /// Terminal decision of one picker interaction.
 #[derive(Debug, PartialEq)]
@@ -14,6 +19,104 @@ enum Outcome {
     Picked(usize),
     /// The user cancelled (Esc, `q`, or Ctrl-C).
     Cancelled,
+}
+
+/// Holds the terminal in raw mode for its lifetime.
+///
+/// Raw mode is restored in `Drop`, so every exit path — confirm, cancel, IO
+/// error, panic — leaves the terminal usable.
+struct RawGuard;
+
+impl RawGuard {
+    fn new() -> io::Result<Self> {
+        enable_raw_mode()?;
+        Ok(RawGuard)
+    }
+}
+
+impl Drop for RawGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+    }
+}
+
+/// Draws (or redraws) the prompt and the candidate list in place.
+///
+/// On a redraw the cursor is first moved back up over the previously drawn
+/// block. Lines end with `\r\n` because the terminal is in raw mode.
+fn draw(
+    out: &mut impl Write,
+    prompt: &str,
+    labels: &[String],
+    selected: usize,
+    redraw: bool,
+) -> io::Result<()> {
+    if redraw {
+        queue!(out, MoveUp(labels.len() as u16 + 1))?;
+    }
+    queue!(out, MoveToColumn(0), Clear(ClearType::FromCursorDown))?;
+    write!(out, "{prompt}\r\n")?;
+    for (i, label) in labels.iter().enumerate() {
+        if i == selected {
+            write!(out, "{}\r\n", format!("> {}. {label}", i + 1).bold())?;
+        } else {
+            write!(out, "  {}. {label}\r\n", i + 1)?;
+        }
+    }
+    out.flush()
+}
+
+/// Shows an inline arrow-key picker over `labels` and blocks until the user
+/// confirms or cancels.
+///
+/// Returns `Ok(Some(index))` for the chosen label, or `Ok(None)` when the
+/// user cancels (Esc / `q` / Ctrl-C). On confirm the picker lines are cleared
+/// and replaced with a one-line summary so scroll-back stays clean. The
+/// caller must ensure stdin and stdout are terminals before calling.
+pub fn pick(prompt: &str, labels: &[String]) -> io::Result<Option<usize>> {
+    let mut out = io::stdout();
+    let guard = RawGuard::new()?;
+    let mut selected = 0usize;
+    draw(&mut out, prompt, labels, selected, false)?;
+
+    let outcome = loop {
+        if let Event::Key(KeyEvent {
+            code,
+            modifiers,
+            kind,
+            ..
+        }) = read()?
+        {
+            if kind != KeyEventKind::Press {
+                continue;
+            }
+            let (next, outcome) = step(selected, labels.len(), code, modifiers);
+            if next != selected {
+                selected = next;
+                draw(&mut out, prompt, labels, selected, true)?;
+            }
+            if let Some(outcome) = outcome {
+                break outcome;
+            }
+        }
+    };
+
+    // Clear the picker block, leave raw mode, then print the summary line.
+    execute!(
+        out,
+        MoveUp(labels.len() as u16 + 1),
+        MoveToColumn(0),
+        Clear(ClearType::FromCursorDown)
+    )?;
+    drop(guard);
+
+    match outcome {
+        Outcome::Picked(idx) => {
+            println!("→ {}", labels[idx]);
+            Ok(Some(idx))
+        }
+        Outcome::Cancelled => Ok(None),
+    }
 }
 
 /// Applies one key press to the picker state.
