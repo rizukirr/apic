@@ -6,7 +6,8 @@
 
 use std::cmp::Reverse;
 
-/// Scores how well `candidate` matches `query` using ordered-subsequence matching.
+/// Scores how well `candidate` matches `query` and reports which candidate
+/// characters matched, using ordered-subsequence matching.
 ///
 /// Both inputs are lowercased before comparison, so matching is case-insensitive.
 /// The query characters must occur in `candidate` in order; gaps between them are
@@ -22,12 +23,14 @@ use std::cmp::Reverse;
 ///
 /// # Returns
 ///
-/// `Some(score)` if every query character was matched in order (an empty query
-/// matches everything with a score of `0`); `None` if the query is not a
-/// subsequence of `candidate`.
-pub(crate) fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
+/// `Some((score, indices))` if every query character was matched in order,
+/// where `indices` are the char positions (not bytes) of the matched
+/// characters in `candidate` (an empty query matches everything with a score
+/// of `0` and no indices); `None` if the query is not a subsequence of
+/// `candidate`.
+pub(crate) fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usize>)> {
     if query.is_empty() {
-        return Some(0);
+        return Some((0, Vec::new()));
     }
 
     let query = query.to_lowercase();
@@ -37,6 +40,7 @@ pub(crate) fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
 
     let mut query_index = 0;
     let mut score = 0;
+    let mut matched_indices = Vec::with_capacity(query_chars.len());
 
     let mut last_match_index: Option<usize> = None;
     let mut prev_char: Option<char> = None;
@@ -69,6 +73,7 @@ pub(crate) fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
             }
 
             last_match_index = Some(candidate_index);
+            matched_indices.push(candidate_index);
             query_index += 1;
         }
 
@@ -78,10 +83,16 @@ pub(crate) fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
     if query_index == query_chars.len() {
         // Penalty: longer candidate is weaker
         score -= candidate.len() as i32 / 2;
-        Some(score)
+        Some((score, matched_indices))
     } else {
         None
     }
+}
+
+/// Scores how well `candidate` matches `query`; see [`fuzzy_match`] for the
+/// scoring rules. This is `fuzzy_match` minus the matched-index bookkeeping.
+pub(crate) fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
+    fuzzy_match(query, candidate).map(|(score, _)| score)
 }
 
 /// Finds and ranks the items that fuzzy-match `query`.
@@ -168,5 +179,31 @@ mod tests {
     fn find_returns_none_when_nothing_matches() {
         let items = vec!["abc".to_string()];
         assert!(fuzzy_find("zzz", &items).is_none());
+    }
+
+    #[test]
+    fn match_returns_indices_of_matched_chars() {
+        // "lgn" in "login": l(0), g(2), n(4).
+        let (_, indices) = fuzzy_match("lgn", "login").unwrap();
+        assert_eq!(indices, vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn match_indices_are_case_insensitive() {
+        let (_, indices) = fuzzy_match("LOG", "Login").unwrap();
+        assert_eq!(indices, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn empty_query_matches_with_no_indices() {
+        assert_eq!(fuzzy_match("", "anything"), Some((0, Vec::new())));
+    }
+
+    #[test]
+    fn score_is_match_score() {
+        assert_eq!(
+            fuzzy_score("login", "auth/login.json"),
+            fuzzy_match("login", "auth/login.json").map(|(s, _)| s)
+        );
     }
 }
