@@ -85,6 +85,34 @@ fn create_scaffolds_then_read_renders_it() {
 }
 
 #[test]
+fn remove_deletes_a_resolved_contract() {
+    let dir = init_project("remove");
+    apic(&dir)
+        .args(["create", "-f", "auth/login.json"])
+        .assert()
+        .success();
+    assert!(dir.join("contracts/auth/login.json").exists());
+
+    // Non-interactive (no TTY) proceeds without prompting.
+    apic(&dir)
+        .args(["remove", "-f", "login"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Removed"));
+    assert!(!dir.join("contracts/auth/login.json").exists());
+}
+
+#[test]
+fn remove_reports_when_nothing_matches() {
+    let dir = init_project("remove_missing");
+    apic(&dir)
+        .args(["remove", "-f", "nope"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No contract found"));
+}
+
+#[test]
 fn create_refuses_to_overwrite() {
     let dir = init_project("overwrite");
     apic(&dir)

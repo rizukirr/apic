@@ -1,11 +1,10 @@
 {
-    "name": "login",
-    "description": "Login to the API",
+    "name": "endpoint-name",
+    "description": "Short description of what this endpoint does",
     "method": "POST",
     "url": {
         "protocol": "https",
-        "host": "api.example.com",
-        "path": ["auth", "login"]
+        "host": "api.example.com"
     },
     "headers": [
         {
@@ -15,6 +14,10 @@
         {
             "name": "Authorization",
             "value": "Bearer {token}"
+        },
+        {
+            "name": "DeviceId",
+            "value": "{deviceId}"
         }
     ],
     "request": {
@@ -22,34 +25,29 @@
             {
                 "name": "username",
                 "type": "string",
-                "default": null,
-                "description": "Username",
+                "description": "username",
                 "required": true
             },
             {
                 "name": "password",
                 "type": "string",
-                "default": null,
-                "description": "Password",
+                "description": "user password",
                 "required": true
             }
         ],
         "example": {
-            "username": "rizukirr",
-            "password": "123qweA@"
+            "username": "user001",
+            "password": "secret123A@"
         }
     },
     "responses": [
         {
             "code": 200,
-            "description": "Successful login",
+            "description": "Successful response",
             "example": {
                 "status": 200,
-                "message": "Login successful",
-                "data": {
-                    "access_token": "eyJhbGciOiJIUzI1NiJ9.example",
-                    "refresh_token": "def50200af1b3c2d.example"
-                }
+                "message": "OK",
+                "data": null
             },
             "schema": [
                 {
@@ -64,7 +62,7 @@
                     "name": "message",
                     "type": "string",
                     "default": null,
-                    "description": "Message",
+                    "description": "Human-readable message",
                     "required": true,
                     "properties": null
                 },
@@ -72,37 +70,20 @@
                     "name": "data",
                     "type": "object",
                     "default": null,
-                    "description": "Data",
+                    "description": "Response payload",
                     "required": false,
-                    "properties": [
-                        {
-                            "name": "access_token",
-                            "type": "string",
-                            "default": null,
-                            "description": "Token",
-                            "required": true,
-                            "properties": null
-                        },
-                        {
-                            "name": "refresh_token",
-                            "type": "string",
-                            "default": null,
-                            "description": "Refresh token",
-                            "required": true,
-                            "properties": null
-                        }
-                    ]
+                    "properties": null
                 }
             ]
         },
         {
-            "code": 401,
-            "description": "Invalid credentials",
+            "code": 400,
+            "description": "Bad request",
             "schema": [
                 {
                     "name": "status",
                     "type": "int",
-                    "default": "401",
+                    "default": "200",
                     "description": "Status code",
                     "required": true,
                     "properties": null
@@ -111,7 +92,7 @@
                     "name": "message",
                     "type": "string",
                     "default": null,
-                    "description": "Message",
+                    "description": "Human-readable message",
                     "required": true,
                     "properties": null
                 },
@@ -119,7 +100,7 @@
                     "name": "data",
                     "type": "object",
                     "default": null,
-                    "description": "Data",
+                    "description": "Response payload",
                     "required": false,
                     "properties": null
                 }

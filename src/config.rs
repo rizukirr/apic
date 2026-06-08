@@ -23,6 +23,17 @@ pub struct Root {
     working_dir: PathBuf,
 }
 
+/// The outcome of a successful [`Config::init`] call.
+#[derive(Debug, PartialEq, Eq)]
+pub enum InitOutcome {
+    /// A new project was created (the `.apic` directory, its `config.toml`,
+    /// and the seeded `template.json`).
+    Initialized,
+    /// The project already existed and only its missing `template.json` was
+    /// seeded.
+    TemplateSeeded,
+}
+
 impl Config {
     /// Builds a default config with `dir` as the working directory.
     fn default(dir: &Path) -> Config {
@@ -60,20 +71,35 @@ impl Config {
     }
 
     /// Initializes a new project: creates the `.apic` directory and writes a
-    /// default `config.toml`.
+    /// default `config.toml` and `template.json`.
     ///
     /// If `working_dir` is given it becomes the root (resolved relative to the
     /// current directory when not absolute); otherwise the current directory is
     /// used.
     ///
+    /// When the project already exists, this does not error outright: a missing
+    /// `template.json` is seeded (returning [`InitOutcome::TemplateSeeded`]) so
+    /// a project whose template was deleted or whose seed predates template
+    /// support can be repaired by re-running `init`. Only when the template is
+    /// also already present is it reported as already initialized.
+    ///
     /// # Errors
     ///
-    /// Returns `Err` if the project is already initialized, the given working
-    /// directory does not exist, or the `.apic` directory cannot be created.
-    pub fn init(working_dir: Option<&str>) -> Result<(), String> {
+    /// Returns `Err` if the project is already fully initialized, the given
+    /// working directory does not exist, or the `.apic` directory cannot be
+    /// created.
+    pub fn init(working_dir: Option<&str>) -> Result<InitOutcome, String> {
         match find_file_apic_config_file() {
             Ok(FindFileResult::Found(_)) => {
-                return Err("Already initialized!".to_string());
+                // Already initialized: recover a missing template instead of
+                // failing, but still report a fully-initialized project as an
+                // error so re-running `init` over a complete project is a no-op.
+                let apic_dir = find_apic_dir().ok_or("Already initialized!")?;
+                return if crate::template::seed_if_missing(&apic_dir)? {
+                    Ok(InitOutcome::TemplateSeeded)
+                } else {
+                    Err("Already initialized!".to_string())
+                };
             }
             Ok(FindFileResult::NotFound) => true,
             Err(err) => {
@@ -118,7 +144,8 @@ impl Config {
             }
             None => PathBuf::from("."),
         };
-        write_config_file(makedir.clone(), &Config::default(&working_dir))
+        write_config_file(makedir.clone(), &Config::default(&working_dir))?;
+        Ok(InitOutcome::Initialized)
     }
 
     /// Changes the root working directory to `new_dir` and persists the config.
