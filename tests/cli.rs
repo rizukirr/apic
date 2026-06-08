@@ -48,6 +48,16 @@ fn init_creates_config_and_refuses_second_init() {
 }
 
 #[test]
+fn init_seeds_template_file() {
+    let dir = init_project("seed_template");
+    let template = dir.join(".apic/template.json");
+    assert!(template.exists(), "init should seed .apic/template.json");
+    let content = fs::read_to_string(&template).unwrap();
+    // The built-in default's endpoint name.
+    assert!(content.contains("endpoint-name"));
+}
+
+#[test]
 fn commands_outside_a_project_report_not_initialized() {
     let dir = fresh_dir("noproject");
     apic(&dir)
