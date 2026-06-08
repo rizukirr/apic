@@ -193,6 +193,11 @@ A contract is a single JSON object describing one endpoint. See
 [`src/templates/contract.json`](src/templates/contract.json) for the full
 template that `apic create` writes.
 
+`apic init` writes a starter template to `.apic/template.json`. Edit it to set
+a project-wide convention — for example a standing `device-id` header — and
+every `apic create` reuses it. The file is never overwritten once it exists; if
+it is missing or malformed, `apic create` falls back to the built-in default.
+
 ```json
 {
     "name": "update-user",
