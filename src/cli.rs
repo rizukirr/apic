@@ -1,6 +1,6 @@
 //! Command-line interface: argument parsing and subcommand handlers.
 
-use crate::config::{Config, read_config_file};
+use crate::config::{Config, InitOutcome, read_config_file};
 use crate::file::{confine_to_dir, read_file};
 use crate::fuzzy::{fuzzy_find, fuzzy_match_path};
 use crate::json::{json_get, scan_json_file, validate as validate_contract};
@@ -9,7 +9,7 @@ use crate::render::{render, sanitize};
 use crate::tree;
 use clap::{Parser, Subcommand};
 use std::fs;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 /// Top-level CLI parser for the `apic` binary.
@@ -114,15 +114,42 @@ enum Commands {
     /// The filename is resolved like `read`: an exact path (`user/user.json`),
     /// without the `.json` extension (`user/user`), or a fuzzy fragment
     /// (`user`). Uses the same editor resolution as `create`.
+    ///
+    /// Pass `--template` instead of a filename to edit the project template
+    /// (`.apic/template.json`) that `apic create` scaffolds from.
     Open {
         /// Contract to open — path, extensionless path, or fuzzy fragment.
-        #[arg(long, short = 'f', value_name = "FILENAME")]
-        filename: String,
+        /// Required unless `--template` is given.
+        #[arg(
+            long,
+            short = 'f',
+            value_name = "FILENAME",
+            required_unless_present = "template",
+            conflicts_with = "template"
+        )]
+        filename: Option<String>,
 
         /// Editor to open the contract with (e.g. `nvim` or `"code --wait"`),
         /// overriding `$VISUAL` and `$EDITOR`.
         #[arg(long, short = 'e', value_name = "EDITOR")]
         editor: Option<String>,
+
+        /// Open the project template (`.apic/template.json`) instead of a
+        /// contract, seeding it from the default if it does not exist yet.
+        #[arg(long)]
+        template: bool,
+    },
+    /// Delete a contract file.
+    ///
+    /// The filename is resolved like `read`: an exact path (`user/user.json`),
+    /// without the `.json` extension (`user/user`), or a fuzzy fragment
+    /// (`user`), prompting to pick when ambiguous. On an interactive terminal
+    /// it asks for confirmation before deleting; in scripts it removes without
+    /// prompting.
+    Remove {
+        /// Contract to remove — path, extensionless path, or fuzzy fragment.
+        #[arg(long, short = 'f', value_name = "FILENAME")]
+        filename: String,
     },
 }
 
@@ -144,9 +171,15 @@ pub fn update_working_dir(working_dir: Option<&str>) -> Result<(), String> {
 /// Initializes a new `.apic` project, optionally pointing at `working_dir`.
 ///
 /// The directory creation and config write are delegated to [`Config::init`].
+/// On an already-initialized project a missing `template.json` is seeded
+/// rather than erroring.
 pub fn init_cmd(working_dir: Option<&str>) -> Result<(), String> {
-    Config::init(working_dir)?;
-    println!("Successfully initialized");
+    match Config::init(working_dir)? {
+        InitOutcome::Initialized => println!("Successfully initialized"),
+        InitOutcome::TemplateSeeded => {
+            println!("Already initialized; created the missing template")
+        }
+    }
     Ok(())
 }
 
@@ -441,8 +474,24 @@ fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// Resolves `filename` to an existing contract and opens it in the editor.
-fn open_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
+/// Opens a contract, or the project template when `template` is set.
+///
+/// With `--template` the project's `.apic/template.json` is opened, seeded from
+/// the default first if it does not exist. Otherwise `filename` is resolved to
+/// an existing contract (path, extensionless, or fuzzy) and that is opened.
+/// `filename` is guaranteed present by the CLI parser unless `template` is set.
+fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Result<(), String> {
+    if template {
+        let apic_dir =
+            crate::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
+        crate::template::seed_if_missing(&apic_dir)?;
+        let path = crate::template::path(&apic_dir);
+        return open_in_editor(&path, editor)
+            .map_err(|err| format!("Failed to open editor: {err}"));
+    }
+
+    // The parser requires `-f` unless `--template` is given, so this is safe.
+    let filename = filename.expect("filename is required without --template");
     match resolve_one(filename)? {
         Resolved::Path(path) => {
             open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))
@@ -450,6 +499,52 @@ fn open_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
         Resolved::Cancelled => cancelled(),
         Resolved::NotFound => Err(format!("No contract found matching '{filename}'")),
     }
+}
+
+/// Resolves `filename` to one contract and deletes it after confirmation.
+///
+/// Resolution matches `read`/`open` (exact path, basename, then fuzzy, with the
+/// interactive picker when ambiguous). On an interactive terminal the user is
+/// asked to confirm; without a terminal (scripts) the deletion proceeds.
+fn remove_cmd(filename: &str) -> Result<(), String> {
+    match resolve_one(filename)? {
+        Resolved::Path(path) => {
+            let root = read_config_file().and_then(|c| c.get_root_dir())?;
+            let shown = rel_display(&path, &root);
+            if !confirm(&format!("Remove {shown}?"))? {
+                return cancelled();
+            }
+            fs::remove_file(&path).map_err(|err| format!("Failed to remove {shown}: {err}"))?;
+            println!("Removed {shown}");
+            Ok(())
+        }
+        Resolved::Cancelled => cancelled(),
+        Resolved::NotFound => Err(format!("No contract found matching '{filename}'")),
+    }
+}
+
+/// Asks the user `prompt` and returns whether they confirmed (default no).
+///
+/// Only prompts on an interactive terminal: when stdin or stdout is not a TTY
+/// there is no one to answer, so the action proceeds. A leading `y`/`yes`
+/// (case-insensitive) confirms; anything else declines.
+fn confirm(prompt: &str) -> Result<bool, String> {
+    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+        return Ok(true);
+    }
+
+    print!("{prompt} [y/N] ");
+    std::io::stdout()
+        .flush()
+        .map_err(|err| format!("Failed to write prompt: {err}"))?;
+
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|err| format!("Failed to read input: {err}"))?;
+
+    let answer = answer.trim().to_lowercase();
+    Ok(answer == "y" || answer == "yes")
 }
 
 /// Opens `path` in the user's preferred editor and waits for it to close.
@@ -576,7 +671,12 @@ pub fn run() {
             example,
         } => read_cmd(&filename, status, example),
         Commands::Validate { filename } => validate_cmd(filename.as_deref()),
-        Commands::Open { filename, editor } => open_cmd(&filename, editor.as_deref()),
+        Commands::Open {
+            filename,
+            editor,
+            template,
+        } => open_cmd(template, filename.as_deref(), editor.as_deref()),
+        Commands::Remove { filename } => remove_cmd(&filename),
     };
 
     if let Err(err) = result {

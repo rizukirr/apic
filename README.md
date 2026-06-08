@@ -140,20 +140,38 @@ copy-paste view:
  }
 ```
 
-### `apic open -f <filename> [-e <editor>]`
+### `apic open (-f <filename> | --template) [-e <editor>]`
 Resolves `<filename>` exactly like `read` (path, extensionless, or fuzzy) and
 opens the matching contract in your editor — the same editor resolution as
 `apic create`, including the `-e`/`--editor` flag.
+
+Pass `--template` instead of `-f` to edit the project template
+(`.apic/template.json`) that `apic create` scaffolds from; it is seeded from
+the built-in default first if it does not exist yet. `--template` and `-f` are
+mutually exclusive, and exactly one is required.
 
 ```bash
 apic open -f user/user.json
 apic open -f user
 apic open -f user -e nano       # open with a one-off editor
+apic open --template            # edit the project template
 ```
 
 Output is colorized when stdout is a terminal and plain when piped, so it stays
 clean in scripts. Contract strings are sanitized before display, so a file from
 an untrusted source cannot inject terminal escape sequences.
+
+### `apic remove -f <filename>`
+Resolves `<filename>` exactly like `read`/`open` (path, extensionless, or
+fuzzy, prompting to pick when ambiguous) and deletes the matching contract
+file. On an interactive terminal it asks `Remove <path>? [y/N]` first and only
+deletes on `y`/`yes`; when stdin/stdout is not a terminal (scripts) it removes
+without prompting.
+
+```bash
+apic remove -f user/user.json
+apic remove -f login            # fuzzy, with confirmation
+```
 
 ### `apic validate [-f <filename>]`
 Checks that contracts parse and conform to the schema. With no `-f`, every
