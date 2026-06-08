@@ -2,7 +2,11 @@
     "name": "login",
     "description": "Login to the API",
     "method": "POST",
-    "path": "/auth/login",
+    "url": {
+        "protocol": "https",
+        "host": "api.example.com",
+        "path": ["auth", "login"]
+    },
     "headers": [
         {
             "name": "Content-Type",

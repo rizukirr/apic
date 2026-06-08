@@ -2,15 +2,18 @@
     "name": "user",
     "description": "User management",
     "method": "GET",
-    "path": "/user",
-    "params": [
-        {
-            "name": "id",
-            "value": "{id}",
-            "description": "User ID",
-            "required": false
-        }
-    ],
+    "url": {
+        "protocol": "https",
+        "host": "api.example.com",
+        "path": ["user"],
+        "variable": [
+            {
+                "name": "id",
+                "type": "int",
+                "description": "User ID"
+            }
+        ]
+    },
     "headers": [
         {
             "name": "Content-Type",

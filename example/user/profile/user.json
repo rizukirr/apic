@@ -2,15 +2,18 @@
     "name": "user-profile",
     "description": "Public profile of a user",
     "method": "GET",
-    "path": "/user/{id}/profile",
-    "params": [
-        {
-            "name": "id",
-            "value": "{id}",
-            "description": "User ID",
-            "required": true
-        }
-    ],
+    "url": {
+        "protocol": "https",
+        "host": "api.example.com",
+        "path": ["user", "{id}", "profile"],
+        "variable": [
+            {
+                "name": "id",
+                "type": "int",
+                "description": "User ID"
+            }
+        ]
+    },
     "headers": [
         {
             "name": "Content-Type",
