@@ -36,29 +36,22 @@ pub fn resolve_for_create() -> String {
         return DEFAULT.to_string();
     };
 
+    // Any problem reaching a usable project template falls back to the embedded
+    // default without failing `create`.
+    let fallback = |reason: String| {
+        eprintln!("Warning: {reason}; using the built-in template");
+        DEFAULT.to_string()
+    };
+
     if let Err(err) = seed_if_missing(&apic_dir) {
-        eprintln!("Warning: {err}; using the built-in template");
-        return DEFAULT.to_string();
+        return fallback(err);
     }
 
     let path = apic_dir.join(TEMPLATE_FILE);
     match fs::read_to_string(&path) {
         Ok(content) if crate::json::validate(&content).is_ok() => content,
-        Ok(_) => {
-            eprintln!(
-                "Warning: {} is not a valid contract; using the built-in template",
-                path.display()
-            );
-            DEFAULT.to_string()
-        }
-        Err(err) => {
-            eprintln!(
-                "Warning: failed to read {}: {}; using the built-in template",
-                path.display(),
-                err
-            );
-            DEFAULT.to_string()
-        }
+        Ok(_) => fallback(format!("{} is not a valid contract", path.display())),
+        Err(err) => fallback(format!("failed to read {}: {}", path.display(), err)),
     }
 }
 

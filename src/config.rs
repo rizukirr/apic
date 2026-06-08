@@ -101,7 +101,11 @@ impl Config {
 
         // Surface the contract template so the user can customize it. An
         // existing template (e.g. on a re-created project) is left untouched.
-        crate::template::seed_if_missing(&makedir)?;
+        // Best-effort: a seed failure must not abort an otherwise-successful
+        // init — `apic create` re-seeds and falls back to the built-in default.
+        if let Err(err) = crate::template::seed_if_missing(&makedir) {
+            eprintln!("Warning: {err}");
+        }
 
         // `working_dir` is stored relative to the project root (= `pwd` here,
         // where `.apic` is created) so the config stays portable. A `None`
