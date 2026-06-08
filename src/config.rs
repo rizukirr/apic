@@ -99,6 +99,14 @@ impl Config {
             };
         }
 
+        // Surface the contract template so the user can customize it. An
+        // existing template (e.g. on a re-created project) is left untouched.
+        // Best-effort: a seed failure must not abort an otherwise-successful
+        // init — `apic create` re-seeds and falls back to the built-in default.
+        if let Err(err) = crate::template::seed_if_missing(&makedir) {
+            eprintln!("Warning: {err}");
+        }
+
         // `working_dir` is stored relative to the project root (= `pwd` here,
         // where `.apic` is created) so the config stays portable. A `None`
         // working dir means the project root itself.
@@ -262,6 +270,18 @@ fn find_file_apic_dir() -> Result<FindFileResult, String> {
     let name = vec![PathBuf::from(".apic")];
 
     Ok(find_file_upward(pwd, &name))
+}
+
+/// Returns the project's `.apic` directory if one is found by walking upward
+/// from the current directory; `None` when not inside a project.
+///
+/// Unlike [`project_root`] this never errors — callers that also work outside
+/// a project (e.g. `apic create`) treat `None` as "no project".
+pub fn find_apic_dir() -> Option<PathBuf> {
+    match find_file_apic_dir().ok()? {
+        FindFileResult::Found(dirs) => dirs.first().cloned(),
+        FindFileResult::NotFound => None,
+    }
 }
 
 /// Locates `config.toml` inside the discovered `.apic` directory.

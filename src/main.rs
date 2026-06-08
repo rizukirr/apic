@@ -10,6 +10,7 @@ mod fuzzy;
 mod json;
 mod picker;
 mod render;
+mod template;
 mod tree;
 
 /// Restores the default `SIGPIPE` disposition on Unix.

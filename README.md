@@ -85,9 +85,10 @@ Updates project configuration.
   `--set-editor "code --wait"`.
 
 ### `apic create -f <filename>`
-Creates a new contract from the built-in template and opens it in your editor.
-A relative path is resolved against the configured working directory. `apic`
-refuses to overwrite an existing file.
+Creates a new contract from the project template (`.apic/template.json`,
+falling back to the built-in default) and opens it in your editor. A relative
+path is resolved against the configured working directory. `apic` refuses to
+overwrite an existing file.
 
 Editor resolution order: `$VISUAL` → `$EDITOR` → `config.toml` editor → `vi`.
 Your personal environment variables take precedence over the project config,
@@ -192,6 +193,11 @@ against contracts from any source:
 A contract is a single JSON object describing one endpoint. See
 [`src/templates/contract.json`](src/templates/contract.json) for the full
 template that `apic create` writes.
+
+`apic init` writes a starter template to `.apic/template.json`. Edit it to set
+a project-wide convention — for example a standing `device-id` header — and
+every `apic create` reuses it. The file is never overwritten once it exists; if
+it is missing or malformed, `apic create` falls back to the built-in default.
 
 ```json
 {

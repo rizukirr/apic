@@ -422,11 +422,6 @@ fn validate_cmd(filename: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// Default contract template written by `apic create`.
-///
-/// Embedded at compile time; mirrors the shape of [`crate::json::JsonContent`].
-const DEFAULT_CONTRACT: &str = include_str!("templates/contract.json");
-
 /// Creates a new contract file from the default template and opens it in the
 /// configured editor.
 ///
@@ -449,7 +444,7 @@ fn create_cmd(filename: &str) -> Result<(), String> {
             .map_err(|err| format!("Failed to create {}: {}", parent.display(), err))?;
     }
 
-    fs::write(&path, DEFAULT_CONTRACT)
+    fs::write(&path, crate::template::resolve_for_create())
         .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
     println!("Created {}", sanitize(&path.to_string_lossy()));
     open_in_editor(&path).map_err(|err| format!("Failed to open editor: {err}"))?;
