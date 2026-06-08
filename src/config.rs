@@ -268,6 +268,18 @@ fn find_file_apic_dir() -> Result<FindFileResult, String> {
     Ok(find_file_upward(pwd, &name))
 }
 
+/// Returns the project's `.apic` directory if one is found by walking upward
+/// from the current directory; `None` when not inside a project.
+///
+/// Unlike [`project_root`] this never errors — callers that also work outside
+/// a project (e.g. `apic create`) treat `None` as "no project".
+pub fn find_apic_dir() -> Option<PathBuf> {
+    match find_file_apic_dir().ok()? {
+        FindFileResult::Found(dirs) => dirs.first().cloned(),
+        FindFileResult::NotFound => None,
+    }
+}
+
 /// Locates `config.toml` inside the discovered `.apic` directory.
 ///
 /// A missing `.apic` directory is reported as [`FindFileResult::NotFound`]

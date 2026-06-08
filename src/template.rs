@@ -25,6 +25,43 @@ pub fn seed_if_missing(apic_dir: &Path) -> Result<(), String> {
         .map_err(|err| format!("Failed to write {}: {}", path.display(), err))
 }
 
+/// Returns the contract body that `apic create` should write.
+///
+/// Inside a project the per-project `.apic/template.json` is seeded when
+/// missing, then used when it parses as a valid contract. A malformed template
+/// is reported and the embedded default is used instead, leaving the user's
+/// file untouched. Outside a project the embedded default is returned.
+pub fn resolve_for_create() -> String {
+    let Some(apic_dir) = crate::config::find_apic_dir() else {
+        return DEFAULT.to_string();
+    };
+
+    if let Err(err) = seed_if_missing(&apic_dir) {
+        eprintln!("Warning: {err}; using the built-in template");
+        return DEFAULT.to_string();
+    }
+
+    let path = apic_dir.join(TEMPLATE_FILE);
+    match fs::read_to_string(&path) {
+        Ok(content) if crate::json::validate(&content).is_ok() => content,
+        Ok(_) => {
+            eprintln!(
+                "Warning: {} is not a valid contract; using the built-in template",
+                path.display()
+            );
+            DEFAULT.to_string()
+        }
+        Err(err) => {
+            eprintln!(
+                "Warning: failed to read {}: {}; using the built-in template",
+                path.display(),
+                err
+            );
+            DEFAULT.to_string()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

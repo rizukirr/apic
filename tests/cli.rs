@@ -99,6 +99,48 @@ fn create_refuses_to_overwrite() {
 }
 
 #[test]
+fn create_uses_customized_template() {
+    let dir = init_project("custom_template");
+    // Overwrite the seeded template with a valid contract that adds a header.
+    let custom = r#"{
+        "name": "custom",
+        "method": "GET",
+        "url": { "protocol": "https", "host": "api.example.com", "path": ["x"] },
+        "headers": [ { "name": "device-id", "value": "{device_id}" } ],
+        "responses": []
+    }"#;
+    fs::write(dir.join(".apic/template.json"), custom).unwrap();
+
+    apic(&dir)
+        .args(["create", "-f", "foo.json"])
+        .assert()
+        .success();
+
+    let created = fs::read_to_string(dir.join("contracts/foo.json")).unwrap();
+    assert!(created.contains("device-id"), "create should use the custom template");
+}
+
+#[test]
+fn create_falls_back_when_template_malformed() {
+    let dir = init_project("malformed_template");
+    let broken = "{ not valid json";
+    fs::write(dir.join(".apic/template.json"), broken).unwrap();
+
+    apic(&dir)
+        .args(["create", "-f", "bar.json"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("built-in template"));
+
+    // Falls back to the built-in default for the new contract...
+    let created = fs::read_to_string(dir.join("contracts/bar.json")).unwrap();
+    assert!(created.contains("endpoint-name"));
+    // ...and leaves the user's (broken) template untouched.
+    let template = fs::read_to_string(dir.join(".apic/template.json")).unwrap();
+    assert_eq!(template, broken);
+}
+
+#[test]
 fn create_rejects_path_traversal() {
     let dir = init_project("traversal");
     apic(&dir)
