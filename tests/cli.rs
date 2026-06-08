@@ -117,7 +117,10 @@ fn create_uses_customized_template() {
         .success();
 
     let created = fs::read_to_string(dir.join("contracts/foo.json")).unwrap();
-    assert!(created.contains("device-id"), "create should use the custom template");
+    assert!(
+        created.contains("device-id"),
+        "create should use the custom template"
+    );
 }
 
 #[test]

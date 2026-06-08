@@ -21,8 +21,7 @@ pub fn seed_if_missing(apic_dir: &Path) -> Result<(), String> {
     if path.exists() {
         return Ok(());
     }
-    fs::write(&path, DEFAULT)
-        .map_err(|err| format!("Failed to write {}: {}", path.display(), err))
+    fs::write(&path, DEFAULT).map_err(|err| format!("Failed to write {}: {}", path.display(), err))
 }
 
 /// Returns the contract body that `apic create` should write.
