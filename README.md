@@ -75,26 +75,23 @@ Initializes an `.apic` project in the current directory by creating
 `.apic/config.toml`. The optional `--set-dir` records which directory contract
 files are scanned from (defaults to the current directory).
 
-### `apic config [--set-dir <dir>] [--set-editor <editor>]`
+### `apic config [--set-dir <dir>]`
 Updates project configuration.
 
 - `--set-dir <dir>` — change the working directory that contracts are scanned
   from (must exist).
-- `--set-editor <editor>` — set the editor used by `apic create`, e.g.
-  `apic config --set-editor nvim`. The value may include arguments, such as
-  `--set-editor "code --wait"`.
 
-### `apic create -f <filename>`
+### `apic create -f <filename> [-e <editor>]`
 Creates a new contract from the project template (`.apic/template.json`,
 falling back to the built-in default) and opens it in your editor. A relative
 path is resolved against the configured working directory. `apic` refuses to
 overwrite an existing file.
 
-Editor resolution order: `$VISUAL` → `$EDITOR` → `config.toml` editor → `vi`.
-Your personal environment variables take precedence over the project config,
-so a shared (committed) config can set a team default without overriding your
-own editor. GUI editors need their wait flag (`code --wait`, `subl -w`) so
-`apic` waits for the file to be saved.
+Editor resolution order: `--editor` flag → `$VISUAL` → `$EDITOR` → `vi`. The
+`-e`/`--editor` flag picks the editor for a single invocation (e.g.
+`apic create -f auth/login.json -e nano`) and the value may include arguments.
+GUI editors need their wait flag (`code --wait`, `subl -w`) so `apic` waits for
+the file to be saved.
 
 ### `apic list [--filter <query>] [--absolute <true|false>]`
 Lists discovered `.json` contract files under the working directory.
@@ -143,14 +140,15 @@ copy-paste view:
  }
 ```
 
-### `apic open -f <filename>`
+### `apic open -f <filename> [-e <editor>]`
 Resolves `<filename>` exactly like `read` (path, extensionless, or fuzzy) and
 opens the matching contract in your editor — the same editor resolution as
-`apic create`.
+`apic create`, including the `-e`/`--editor` flag.
 
 ```bash
 apic open -f user/user.json
 apic open -f user
+apic open -f user -e nano       # open with a one-off editor
 ```
 
 Output is colorized when stdout is a terminal and plain when piped, so it stays
@@ -369,7 +367,6 @@ REQUEST
 ```toml
 name = "apic"
 version = "0.1.0"
-editor = "nvim"
 
 [root]
 working_dir = "api-contract"

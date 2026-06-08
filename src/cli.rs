@@ -1,6 +1,6 @@
 //! Command-line interface: argument parsing and subcommand handlers.
 
-use crate::config::{Config, configured_editor, read_config_file};
+use crate::config::{Config, read_config_file};
 use crate::file::{confine_to_dir, read_file};
 use crate::fuzzy::{fuzzy_find, fuzzy_match_path};
 use crate::json::{json_get, scan_json_file, validate as validate_contract};
@@ -41,11 +41,6 @@ enum Commands {
         /// (the directory must already exist).
         #[arg(long, value_name = "DIR")]
         set_dir: Option<String>,
-
-        /// Set the editor used by `create` and `open`, e.g. `nvim` or
-        /// `"code --wait"`. Your $VISUAL/$EDITOR still take precedence.
-        #[arg(long, value_name = "EDITOR")]
-        set_editor: Option<String>,
     },
     /// Initialize an apic project in the current directory.
     ///
@@ -97,6 +92,11 @@ enum Commands {
         /// (e.g. `auth/login.json`).
         #[arg(long, short = 'f', value_name = "FILENAME")]
         filename: Option<String>,
+
+        /// Editor to open the new contract with (e.g. `nvim` or
+        /// `"code --wait"`), overriding `$VISUAL` and `$EDITOR`.
+        #[arg(long, short = 'e', value_name = "EDITOR")]
+        editor: Option<String>,
     },
     /// Check that contracts parse and conform to the schema.
     ///
@@ -118,6 +118,11 @@ enum Commands {
         /// Contract to open — path, extensionless path, or fuzzy fragment.
         #[arg(long, short = 'f', value_name = "FILENAME")]
         filename: String,
+
+        /// Editor to open the contract with (e.g. `nvim` or `"code --wait"`),
+        /// overriding `$VISUAL` and `$EDITOR`.
+        #[arg(long, short = 'e', value_name = "EDITOR")]
+        editor: Option<String>,
     },
 }
 
@@ -129,21 +134,6 @@ pub fn update_working_dir(working_dir: Option<&str>) -> Result<(), String> {
     match working_dir {
         Some(dir) => {
             read_config_file().and_then(|mut conf| conf.update_root_dir(dir))?;
-            println!("Successfully updated");
-            Ok(())
-        }
-        None => Ok(()),
-    }
-}
-
-/// Updates the configured editor.
-///
-/// A `None` value is a no-op. Prints a success message on change; returns the
-/// error message on failure so the caller can set a non-zero exit code.
-pub fn update_editor(editor: Option<&str>) -> Result<(), String> {
-    match editor {
-        Some(editor) => {
-            read_config_file().and_then(|mut conf| conf.update_editor(editor))?;
             println!("Successfully updated");
             Ok(())
         }
@@ -429,7 +419,7 @@ fn validate_cmd(filename: Option<&str>) -> Result<(), String> {
 /// working directory and confined to it: a path that escapes via `..` or an
 /// absolute path elsewhere is rejected. Outside a project the path is taken
 /// as given. Refuses to overwrite an existing file.
-fn create_cmd(filename: &str) -> Result<(), String> {
+fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
     let path = match read_config_file().and_then(|conf| conf.get_root_dir()) {
         Ok(root) => confine_to_dir(&root, Path::new(filename))?,
         Err(_) => PathBuf::from(filename),
@@ -447,15 +437,15 @@ fn create_cmd(filename: &str) -> Result<(), String> {
     fs::write(&path, crate::template::resolve_for_create())
         .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
     println!("Created {}", sanitize(&path.to_string_lossy()));
-    open_in_editor(&path).map_err(|err| format!("Failed to open editor: {err}"))?;
+    open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))?;
     Ok(())
 }
 
 /// Resolves `filename` to an existing contract and opens it in the editor.
-fn open_cmd(filename: &str) -> Result<(), String> {
+fn open_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
     match resolve_one(filename)? {
         Resolved::Path(path) => {
-            open_in_editor(&path).map_err(|err| format!("Failed to open editor: {err}"))
+            open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))
         }
         Resolved::Cancelled => cancelled(),
         Resolved::NotFound => Err(format!("No contract found matching '{filename}'")),
@@ -464,19 +454,18 @@ fn open_cmd(filename: &str) -> Result<(), String> {
 
 /// Opens `path` in the user's preferred editor and waits for it to close.
 ///
-/// Resolves the editor from `$VISUAL`, then `$EDITOR`, then the `config.toml`
-/// editor, falling back to `vi`. Personal environment variables take
-/// precedence over the project config, so a shared, committed config can set a
-/// team default without overriding anyone's own editor. Extra arguments in the
-/// value (e.g. `code --wait`) are honored.
-fn open_in_editor(path: &Path) -> std::io::Result<()> {
-    let editor = std::env::var("VISUAL")
-        .ok()
+/// Resolves the editor from the explicit `editor` argument (the `--editor`
+/// flag), then `$VISUAL`, then `$EDITOR`, falling back to `vi`. The `--editor`
+/// flag takes precedence over the environment. Extra arguments in the value
+/// (e.g. `code --wait`) are honored.
+fn open_in_editor(path: &Path, editor: Option<&str>) -> std::io::Result<()> {
+    let user_editor = editor
+        .map(String::from)
+        .or_else(|| std::env::var("VISUAL").ok())
         .or_else(|| std::env::var("EDITOR").ok())
-        .or_else(configured_editor)
         .unwrap_or_else(|| String::from("vi"));
 
-    let mut parts = editor.split_whitespace();
+    let mut parts = user_editor.split_whitespace();
     let program = parts.next().unwrap_or("vi");
 
     let status = std::process::Command::new(program)
@@ -574,13 +563,9 @@ fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), String> {
 pub fn run() {
     let cli = Cli::parse();
     let result: Result<(), String> = match cli.command {
-        Commands::Config {
-            set_dir,
-            set_editor,
-        } => update_working_dir(set_dir.as_deref())
-            .and_then(|_| update_editor(set_editor.as_deref())),
-        Commands::Create { filename } => match filename {
-            Some(filename) => create_cmd(&filename),
+        Commands::Config { set_dir } => update_working_dir(set_dir.as_deref()),
+        Commands::Create { filename, editor } => match filename {
+            Some(filename) => create_cmd(&filename, editor.as_deref()),
             None => Err("no filename provided, use 'apic create -f <filename>'".to_string()),
         },
         Commands::Init { set_dir } => init_cmd(set_dir.as_deref()),
@@ -591,7 +576,7 @@ pub fn run() {
             example,
         } => read_cmd(&filename, status, example),
         Commands::Validate { filename } => validate_cmd(filename.as_deref()),
-        Commands::Open { filename } => open_cmd(&filename),
+        Commands::Open { filename, editor } => open_cmd(&filename, editor.as_deref()),
     };
 
     if let Err(err) = result {

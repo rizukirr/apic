@@ -14,8 +14,6 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     name: String,
     version: String,
-    /// Preferred editor command; overrides `$VISUAL`/`$EDITOR` when set.
-    editor: Option<String>,
     root: Root,
 }
 
@@ -35,7 +33,6 @@ impl Config {
         Config {
             name: "apic".to_string(),
             version: "0.1.0".to_string(),
-            editor: None,
             root: root_dir,
         }
     }
@@ -164,49 +161,6 @@ impl Config {
         self.root.working_dir = relative_to_root(root, Path::new(new_dir));
         write_config_file(apic_dir, self)
     }
-
-    /// Changes the preferred editor to `editor` and persists the config.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if the project is not initialized or `editor` already
-    /// equals the configured editor.
-    pub fn update_editor(&mut self, editor: &str) -> Result<(), String> {
-        let apic_dir = match find_file_apic_dir() {
-            Ok(FindFileResult::Found(dir)) => dir.first().unwrap().clone(),
-            Ok(FindFileResult::NotFound) => {
-                return Err("Not initialized yet".to_string());
-            }
-            Err(err) => {
-                return Err(err);
-            }
-        };
-
-        if self.editor.as_deref() == Some(editor) {
-            let err = format!("Editor is already {}", editor);
-            return Err(err);
-        }
-
-        self.editor = Some(editor.to_string());
-        write_config_file(apic_dir, self)
-    }
-}
-
-/// Returns the editor configured in `config.toml`, if the project is
-/// initialized and one is set.
-///
-/// Unlike [`read_config_file`] this never panics, so callers that work
-/// outside an initialized project (e.g. `apic create`) can fall back to
-/// environment variables.
-pub fn configured_editor() -> Option<String> {
-    let config_file = match find_file_apic_config_file().ok()? {
-        FindFileResult::Found(path) => path.first()?.clone(),
-        FindFileResult::NotFound => return None,
-    };
-
-    let content = fs::read_to_string(config_file).ok()?;
-    let config: Config = toml::from_str(&content).ok()?;
-    config.editor
 }
 
 /// Serializes `config` to TOML and writes it to `apic_dir/config.toml`.
