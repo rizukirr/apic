@@ -195,48 +195,72 @@ template that `apic create` writes.
 
 ```json
 {
-    "name": "login",
-    "description": "Login to the API",
-    "method": "POST",
+    "name": "update-user",
+    "description": "Update a user",
+    "method": "PUT",
     "url": {
         "protocol": "https",
         "host": "api.example.com",
-        "path": ["auth", "login"]
+        "path": ["users", "{id}"],
+        "query": [
+            {
+                "name": "notify",
+                "value": "true",
+                "description": "Send a notification email",
+                "required": false
+            }
+        ],
+        "variable": [
+            {
+                "name": "id",
+                "type": "int",
+                "description": "User ID"
+            }
+        ]
     },
     "headers": [
-        { "name": "Content-Type", "value": "application/json" }
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {token}" }
     ],
     "request": {
         "schema": [
             {
-                "name": "username",
+                "name": "name",
                 "type": "string",
                 "default": null,
-                "description": "Username",
+                "description": "Display name",
                 "required": true
             }
         ],
         "example": {
-            "username": "rizukirr",
-            "password": "123qweA@"
+            "name": "Rizki Rakasiwi"
         }
     },
     "responses": [
         {
             "code": 200,
-            "description": "Successful login",
+            "description": "User updated",
             "schema": [
                 {
-                    "name": "access_token",
+                    "name": "status",
+                    "type": "int",
+                    "default": "200",
+                    "description": "Status code",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "message",
                     "type": "string",
                     "default": null,
-                    "description": "Token",
+                    "description": "Human-readable message",
                     "required": true,
                     "properties": null
                 }
             ],
             "example": {
-                "access_token": "eyJhbGciOiJIUzI1NiJ9.example"
+                "status": 200,
+                "message": "OK"
             }
         }
     ]
