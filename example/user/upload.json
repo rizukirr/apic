@@ -2,7 +2,11 @@
     "name": "upload-avatar",
     "description": "Upload a user avatar",
     "method": "POST",
-    "path": "/user/avatar",
+    "url": {
+        "protocol": "https",
+        "host": "api.example.com",
+        "path": ["user", "avatar"]
+    },
     "headers": [
         { "name": "Content-Type", "value": "multipart/form-data" },
         { "name": "Authorization", "value": "Bearer {token}" }
@@ -18,7 +22,7 @@
                 "accept": "image/png, image/jpeg"
             },
             {
-                "name": "caption",
+                "name": "file",
                 "type": "string",
                 "default": null,
                 "description": "Optional caption",

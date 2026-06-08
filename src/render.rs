@@ -1,10 +1,10 @@
 //! Plain-text rendering of a parsed contract to stdout.
 //!
-//! Output is column-aligned text with one section per contract part (params,
+//! Output is column-aligned text with one section per contract part (variable,
 //! query, headers, request, responses). Colors are applied only when stdout is
 //! a terminal, so piped or redirected output stays clean.
 
-use crate::json::{JsonContent, Request, Schema};
+use crate::json::{JsonContent, Request, Schema, Url};
 use crossterm::style::Stylize;
 use std::io::IsTerminal;
 
@@ -36,30 +36,29 @@ impl Printer {
         println!(
             " {} {} · {}",
             self.method(&c.method),
-            sanitize(&c.path),
+            sanitize(&build_url(&c.url)),
             sanitize(&c.name)
         );
         if let Some(desc) = &c.description {
             println!(" {}", sanitize(desc));
         }
 
-        if let Some(params) = &c.params {
-            self.section("PARAMS");
-            let rows: Vec<Vec<String>> = params
+        if let Some(variable) = &c.url.variable {
+            self.section("VARIABLE");
+            let rows: Vec<Vec<String>> = variable
                 .iter()
-                .map(|p| {
+                .map(|v| {
                     vec![
-                        p.name.clone(),
-                        p.value.clone(),
-                        req_mark(p.required),
-                        p.description.clone().unwrap_or_default(),
+                        v.name.clone(),
+                        v.dtype.clone(),
+                        v.description.clone().unwrap_or_default(),
                     ]
                 })
                 .collect();
-            self.table(Some(&["NAME", "VALUE", "REQ", "DESCRIPTION"]), &rows);
+            self.table(Some(&["NAME", "TYPE", "DESCRIPTION"]), &rows);
         }
 
-        if let Some(query) = &c.query {
+        if let Some(query) = &c.url.query {
             self.section("QUERY");
             let rows: Vec<Vec<String>> = query
                 .iter()
@@ -317,6 +316,28 @@ fn req_mark(required: bool) -> String {
     }
 }
 
+/// Assembles the displayable URL from its parts: `protocol://host` followed by
+/// the `/`-joined path segments. Each part is optional — an empty `host` yields
+/// a leading-slash path, an empty `protocol` drops the scheme, and an empty
+/// `path` yields the authority alone.
+fn build_url(url: &Url) -> String {
+    let path = url.path.as_deref().unwrap_or(&[]).join("/");
+
+    let authority = if url.host.is_empty() {
+        String::new()
+    } else if url.protocol.is_empty() {
+        url.host.clone()
+    } else {
+        format!("{}://{}", url.protocol, url.host)
+    };
+
+    match (authority.is_empty(), path.is_empty()) {
+        (true, _) => format!("/{path}"),
+        (false, true) => authority,
+        (false, false) => format!("{}/{path}", authority.trim_end_matches('/')),
+    }
+}
+
 /// Strips control characters from a file-derived string before it is printed.
 ///
 /// Contract files are untrusted input; without this, embedded ANSI/OSC escape
@@ -346,6 +367,40 @@ mod tests {
     #[test]
     fn sanitize_keeps_normal_and_multibyte_text() {
         assert_eq!(sanitize("café /auth/login"), "café /auth/login");
+    }
+
+    fn url(protocol: &str, host: &str, path: Option<&[&str]>) -> Url {
+        Url {
+            protocol: protocol.to_string(),
+            host: host.to_string(),
+            path: path.map(|segs| segs.iter().map(|s| s.to_string()).collect()),
+            query: None,
+            variable: None,
+        }
+    }
+
+    #[test]
+    fn build_url_joins_protocol_host_and_path() {
+        let u = url("https", "api.example.com", Some(&["auth", "login"]));
+        assert_eq!(build_url(&u), "https://api.example.com/auth/login");
+    }
+
+    #[test]
+    fn build_url_drops_scheme_when_protocol_empty() {
+        let u = url("", "api.example.com", Some(&["user"]));
+        assert_eq!(build_url(&u), "api.example.com/user");
+    }
+
+    #[test]
+    fn build_url_falls_back_to_leading_slash_path_without_host() {
+        let u = url("https", "", Some(&["auth", "login"]));
+        assert_eq!(build_url(&u), "/auth/login");
+    }
+
+    #[test]
+    fn build_url_renders_authority_alone_without_path() {
+        let u = url("https", "api.example.com", None);
+        assert_eq!(build_url(&u), "https://api.example.com");
     }
 
     #[test]

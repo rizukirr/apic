@@ -205,7 +205,7 @@ fn read_renders_accept_column_for_multipart_file_fields() {
     let contract = r#"{
         "name": "upload-avatar",
         "method": "POST",
-        "path": "/user/avatar",
+        "url": { "protocol": "https", "host": "api.example.com", "path": ["user", "avatar"] },
         "headers": [
             { "name": "Content-Type", "value": "multipart/form-data" }
         ],
@@ -247,7 +247,7 @@ fn read_example_shows_raw_json_payloads() {
     let contract = r#"{
         "name": "login",
         "method": "POST",
-        "path": "/auth/login",
+        "url": { "protocol": "https", "host": "api.example.com", "path": ["auth", "login"] },
         "headers": [],
         "request": {
             "schema": [
@@ -296,7 +296,7 @@ fn read_example_only_contract_renders_example_by_default() {
     let contract = r#"{
         "name": "ping",
         "method": "GET",
-        "path": "/ping",
+        "url": { "protocol": "https", "host": "api.example.com", "path": ["ping"] },
         "headers": [],
         "request": { "example": { "probe": true } },
         "responses": [

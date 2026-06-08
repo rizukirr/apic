@@ -2,23 +2,26 @@
     "name": "endpoint-name",
     "description": "Short description of what this endpoint does",
     "method": "POST",
-    "path": "/resource/{id}/action",
-    "query": [
-        {
-            "name": "page",
-            "value": "1",
-            "description": "Page number",
-            "required": false
-        }
-    ],
-    "params": [
-        {
-            "name": "id",
-            "value": "123",
-            "description": "Resource identifier",
-            "required": true
-        }
-    ],
+    "url": {
+        "protocol": "https",
+        "host": "api.example.com",
+        "path": ["resource", "{id}", "action"],
+        "query": [
+            {
+                "name": "page",
+                "value": "1",
+                "description": "Page number",
+                "required": false
+            }
+        ],
+        "variable": [
+            {
+                "name": "id",
+                "type": "string",
+                "description": "Resource identifier"
+            }
+        ]
+    },
     "headers": [
         {
             "name": "Content-Type",

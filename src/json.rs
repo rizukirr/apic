@@ -9,9 +9,7 @@ pub struct JsonContent {
     pub(crate) name: String,
     pub(crate) description: Option<String>,
     pub(crate) method: String,
-    pub(crate) path: String,
-    pub(crate) query: Option<Vec<Query>>,
-    pub(crate) params: Option<Vec<Param>>,
+    pub(crate) url: Url,
     pub(crate) headers: Vec<Header>,
     pub(crate) request: Option<RequestBody>,
     pub(crate) responses: Vec<Response>,
@@ -28,12 +26,30 @@ pub struct RequestBody {
     pub(crate) example: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Url {
+    pub(crate) protocol: String,
+    pub(crate) host: String,
+    pub(crate) path: Option<Vec<String>>,
+    pub(crate) query: Option<Vec<Query>>,
+    pub(crate) variable: Option<Vec<Variable>>,
+}
+
+/// A path variable, e.g. `id` in `/resource/{id}`. The path segment carries the
+/// `{id}` placeholder; this documents what it means. `type` defaults to
+/// `string` and `required` is implied (a path variable is structurally
+/// mandatory), so neither is carried here.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Param {
+pub struct Variable {
     pub(crate) name: String,
-    pub(crate) value: String,
+    #[serde(alias = "type", default = "default_variable_type")]
+    pub(crate) dtype: String,
     pub(crate) description: Option<String>,
-    pub(crate) required: bool,
+}
+
+/// Path variables default to `string` when `type` is omitted.
+fn default_variable_type() -> String {
+    "string".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -142,7 +158,7 @@ mod tests {
     const CONTRACT: &str = r#"{
         "name": "t",
         "method": "GET",
-        "path": "/t",
+        "url": { "protocol": "https", "host": "api.example.com", "path": ["t"] },
         "headers": [],
         "responses": [
             { "code": 200, "description": "ok", "schema": [] },
@@ -178,7 +194,9 @@ mod tests {
     #[test]
     fn request_field_parses_optional_accept_for_multipart() {
         let json = r#"{
-            "name": "upload", "method": "POST", "path": "/u", "headers": [],
+            "name": "upload", "method": "POST",
+            "url": { "protocol": "https", "host": "api.example.com", "path": ["u"] },
+            "headers": [],
             "request": {
                 "schema": [
                     { "name": "avatar", "type": "file", "default": null,
@@ -199,7 +217,9 @@ mod tests {
     #[test]
     fn request_parses_example_only_without_schema() {
         let json = r#"{
-            "name": "login", "method": "POST", "path": "/l", "headers": [],
+            "name": "login", "method": "POST",
+            "url": { "protocol": "https", "host": "api.example.com", "path": ["l"] },
+            "headers": [],
             "request": {
                 "example": { "username": "rizukirr", "password": "123qweA@" }
             },
@@ -218,8 +238,27 @@ mod tests {
     }
 
     #[test]
+    fn variable_type_defaults_to_string_when_omitted() {
+        let json = r#"{
+            "name": "t", "method": "GET",
+            "url": {
+                "protocol": "https", "host": "api.example.com", "path": ["u", "{id}"],
+                "variable": [
+                    { "name": "id", "description": "User ID" },
+                    { "name": "slug", "type": "int", "description": "Slug" }
+                ]
+            },
+            "headers": [], "responses": []
+        }"#;
+        let c = json_get(json, None).unwrap();
+        let variable = c.url.variable.unwrap();
+        assert_eq!(variable[0].dtype, "string");
+        assert_eq!(variable[1].dtype, "int");
+    }
+
+    #[test]
     fn validate_rejects_missing_required_field() {
-        // Missing `method`, `path`, `headers`, `responses`.
+        // Missing `method`, `url`, `headers`, `responses`.
         assert!(validate(r#"{ "name": "x" }"#).is_err());
     }
 

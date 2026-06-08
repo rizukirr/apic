@@ -198,7 +198,11 @@ template that `apic create` writes.
     "name": "login",
     "description": "Login to the API",
     "method": "POST",
-    "path": "/auth/login",
+    "url": {
+        "protocol": "https",
+        "host": "api.example.com",
+        "path": ["auth", "login"]
+    },
     "headers": [
         { "name": "Content-Type", "value": "application/json" }
     ],
@@ -252,12 +256,20 @@ there is no schema), and `read --example` shows only the payloads.
 | `name` | yes | Endpoint name. |
 | `description` | no | Short description of the endpoint. |
 | `method` | yes | HTTP method (`GET`, `POST`, …). |
-| `path` | yes | Request path, e.g. `/auth/login`. |
-| `query` | no | Array of query parameters (`name`, `value`, `description`, `required`). |
-| `params` | no | Array of path parameters (`name`, `value`, `description`, `required`). |
+| `url` | yes | Request URL, broken into parts (see below). |
 | `headers` | yes | Array of headers (`name`, `value`). |
 | `request` | no | Request body: `{ "schema": [fields], "example": <raw JSON> }` — both parts optional. |
 | `responses` | yes | Array of responses (`code`, `description`, optional `schema`, optional `example`). |
+
+The `url` object has:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `protocol` | yes | URL scheme, e.g. `http` or `https`. |
+| `host` | yes | Host, e.g. `api.example.com`. |
+| `path` | no | Path segments as an array, e.g. `["auth", "login"]`. |
+| `query` | no | Array of query parameters (`name`, `value`, `description`, `required`). |
+| `variable` | no | Array of path variables (`name`, optional `type` — defaults to `string`, `description`). |
 
 A **field** (in the request `schema` and response `schema`) has:
 
@@ -282,7 +294,11 @@ optional `accept` field documents which MIME types the part allows, and
 {
     "name": "upload-avatar",
     "method": "POST",
-    "path": "/user/avatar",
+    "url": {
+        "protocol": "https",
+        "host": "api.example.com",
+        "path": ["user", "avatar"]
+    },
     "headers": [
         { "name": "Content-Type", "value": "multipart/form-data" }
     ],
