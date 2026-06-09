@@ -305,39 +305,49 @@ pub fn read_config_file() -> Result<Config, String> {
 mod tests {
     use super::*;
 
+    /// Builds a platform-absolute path from components. A leading `/` is not
+    /// absolute on Windows (it needs a drive prefix like `C:\`), so tests must
+    /// construct roots this way to exercise the `is_absolute()` branch on every
+    /// OS.
+    fn abs(parts: &[&str]) -> PathBuf {
+        let mut p = PathBuf::from(if cfg!(windows) { "C:\\" } else { "/" });
+        for part in parts {
+            p.push(part);
+        }
+        p
+    }
+
     #[test]
     fn relative_input_is_kept_as_is() {
-        let root = Path::new("/home/u/project");
+        let root = abs(&["home", "u", "project"]);
         assert_eq!(
-            relative_to_root(root, Path::new("api-contract")),
+            relative_to_root(&root, Path::new("api-contract")),
             PathBuf::from("api-contract")
         );
     }
 
     #[test]
     fn absolute_input_under_root_is_made_relative() {
-        let root = Path::new("/home/u/project");
+        let root = abs(&["home", "u", "project"]);
         assert_eq!(
-            relative_to_root(root, Path::new("/home/u/project/api-contract")),
+            relative_to_root(&root, &abs(&["home", "u", "project", "api-contract"])),
             PathBuf::from("api-contract")
         );
     }
 
     #[test]
     fn absolute_input_equal_to_root_collapses_to_dot() {
-        let root = Path::new("/home/u/project");
+        let root = abs(&["home", "u", "project"]);
         assert_eq!(
-            relative_to_root(root, Path::new("/home/u/project")),
+            relative_to_root(&root, &abs(&["home", "u", "project"])),
             PathBuf::from(".")
         );
     }
 
     #[test]
     fn absolute_input_outside_root_is_kept_absolute() {
-        let root = Path::new("/home/u/project");
-        assert_eq!(
-            relative_to_root(root, Path::new("/etc/contracts")),
-            PathBuf::from("/etc/contracts")
-        );
+        let root = abs(&["home", "u", "project"]);
+        let outside = abs(&["etc", "contracts"]);
+        assert_eq!(relative_to_root(&root, &outside), outside);
     }
 }
