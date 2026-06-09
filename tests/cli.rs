@@ -221,6 +221,33 @@ fn validate_passes_for_valid_and_fails_for_broken() {
 }
 
 #[test]
+fn validate_template_reports_ok_fail_and_rejects_filename() {
+    let dir = init_project("validate_template");
+
+    // The seeded default template is valid: exits 0 with `ok`.
+    apic(&dir)
+        .args(["validate", "--template"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ok"));
+
+    // A malformed template makes `validate --template` exit non-zero with `FAIL`.
+    fs::write(dir.join(".apic/template.json"), "{ not json").unwrap();
+    apic(&dir)
+        .args(["validate", "--template"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("FAIL"));
+
+    // `--template` and `--filename` are mutually exclusive.
+    apic(&dir)
+        .args(["validate", "--template", "--filename", "foo"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
 fn read_resolves_path_extensionless_and_fuzzy_forms() {
     let dir = init_project("resolve");
     apic(&dir)
