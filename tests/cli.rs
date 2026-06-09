@@ -152,7 +152,7 @@ fn create_uses_customized_template() {
 }
 
 #[test]
-fn create_falls_back_when_template_malformed() {
+fn create_fails_when_template_malformed() {
     let dir = init_project("malformed_template");
     let broken = "{ not valid json";
     fs::write(dir.join(".apic/template.json"), broken).unwrap();
@@ -160,13 +160,12 @@ fn create_falls_back_when_template_malformed() {
     apic(&dir)
         .args(["create", "-f", "bar.json"])
         .assert()
-        .success()
-        .stderr(predicate::str::contains("built-in template"));
+        .failure()
+        .stderr(predicate::str::contains("is not valid JSON"));
 
-    // Falls back to the built-in default for the new contract...
-    let created = fs::read_to_string(dir.join("contracts/bar.json")).unwrap();
-    assert!(created.contains("endpoint-name"));
-    // ...and leaves the user's (broken) template untouched.
+    // No contract is created when the template is invalid...
+    assert!(!dir.join("contracts/bar.json").exists());
+    // ...and the user's (broken) template is left untouched.
     let template = fs::read_to_string(dir.join(".apic/template.json")).unwrap();
     assert_eq!(template, broken);
 }

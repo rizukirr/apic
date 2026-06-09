@@ -459,12 +459,14 @@ fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
         return Err(format!("{} already exists", path.display()));
     }
 
+    let contract = crate::template::resolve_for_create()?;
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("Failed to create {}: {}", parent.display(), err))?;
     }
 
-    fs::write(&path, crate::template::resolve_for_create())
+    fs::write(&path, contract)
         .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
     println!("Created {}", sanitize(&path.to_string_lossy()));
     open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))?;
