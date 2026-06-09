@@ -44,34 +44,83 @@ pub fn seed_if_missing(apic_dir: &Path) -> Result<bool, String> {
 /// The embedded default is always the base. Inside a project the per-project
 /// `.apic/template.json` is seeded when missing, then overlaid onto the default
 /// (see [`merge_onto_default`]) so the user only has to specify the fields they
-/// want to change. Any problem — unreadable file, invalid JSON, or a merge that
-/// does not validate — is reported and the plain default is used instead,
-/// leaving the user's file untouched. Outside a project the default is returned.
-pub fn resolve_for_create() -> String {
-    let Some(apic_dir) = crate::config::find_apic_dir() else {
-        return DEFAULT.to_string();
-    };
+/// want to change. A missing or unreadable file falls back to the plain default;
+/// a template that exists but does not merge into a valid contract is returned as
+/// an `Err` so `create` can abort. Outside a project the default is returned.
+pub fn resolve_for_create() -> Result<String, String> {
+    match crate::config::find_apic_dir() {
+        Some(apic_dir) => resolve_at(&apic_dir),
+        None => Ok(DEFAULT.to_string()),
+    }
+}
 
-    // Any problem reaching a usable project template falls back to the embedded
-    // default without failing `create`.
+/// Resolves the contract body for `create` against a known `apic_dir`.
+///
+/// Missing/unreadable template files and seed failures fall back to the
+/// built-in default with a warning (returned as `Ok`); only a template file
+/// that exists but does not merge into a valid contract is a hard error.
+fn resolve_at(apic_dir: &Path) -> Result<String, String> {
     let fallback = |reason: String| {
         eprintln!("Warning: {reason}; using the built-in template");
         DEFAULT.to_string()
     };
 
-    if let Err(err) = seed_if_missing(&apic_dir) {
-        return fallback(err);
+    if let Err(err) = seed_if_missing(apic_dir) {
+        return Ok(fallback(err));
     }
 
-    let path = path(&apic_dir);
+    let path = path(apic_dir);
     let overlay = match fs::read_to_string(&path) {
         Ok(content) => content,
-        Err(err) => return fallback(format!("failed to read {}: {err}", path.display())),
+        Err(err) => {
+            return Ok(fallback(format!(
+                "failed to read {}: {err}",
+                path.display()
+            )));
+        }
     };
 
     match merge_onto_default(&overlay) {
-        Ok(contract) => contract,
-        Err(reason) => fallback(format!("{} {reason}", path.display())),
+        Ok(contract) => Ok(contract),
+        Err(reason) => Err(format!("{} {reason}", path.display())),
+    }
+}
+
+/// Validation outcome for `apic validate --template`.
+pub enum TemplateCheck {
+    /// No project, or no readable template file present — nothing to validate.
+    Absent,
+    /// The template merges onto the default and yields a valid contract.
+    Valid,
+    /// The template exists but is invalid; the string explains why.
+    Invalid(String),
+}
+
+/// Checks the project template without writing anything.
+///
+/// Returns [`TemplateCheck::Absent`] outside a project; otherwise delegates to
+/// [`check_at`].
+pub fn check_template() -> TemplateCheck {
+    match crate::config::find_apic_dir() {
+        Some(apic_dir) => check_at(&apic_dir),
+        None => TemplateCheck::Absent,
+    }
+}
+
+/// Read-only validity check of `<apic_dir>/template.json`.
+///
+/// A missing or unreadable file is [`TemplateCheck::Absent`] (consistent with
+/// `create` treating those as non-fatal); a present file is `Valid`/`Invalid`
+/// based on the same [`merge_onto_default`] used to build the contract.
+fn check_at(apic_dir: &Path) -> TemplateCheck {
+    let path = path(apic_dir);
+    let overlay = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(_) => return TemplateCheck::Absent,
+    };
+    match merge_onto_default(&overlay) {
+        Ok(_) => TemplateCheck::Valid,
+        Err(reason) => TemplateCheck::Invalid(reason),
     }
 }
 
@@ -212,5 +261,75 @@ mod tests {
     #[test]
     fn merge_onto_default_rejects_invalid_json() {
         assert!(merge_onto_default("{ not json").is_err());
+    }
+
+    #[test]
+    fn resolve_at_returns_ok_for_valid_partial_overlay() {
+        let dir = temp_apic("resolve_valid");
+        fs::write(
+            dir.join("template.json"),
+            r#"{ "headers": [ { "name": "X-Custom", "value": "1" } ] }"#,
+        )
+        .unwrap();
+        let contract = resolve_at(&dir).unwrap();
+        assert!(crate::json::validate(&contract).is_ok());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_at_errors_for_malformed_json() {
+        let dir = temp_apic("resolve_malformed");
+        fs::write(dir.join("template.json"), "{ not json").unwrap();
+        assert!(resolve_at(&dir).is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_at_errors_when_overlay_merges_to_invalid_contract() {
+        let dir = temp_apic("resolve_invalid_merge");
+        // method must be a string; a number makes the merged contract invalid.
+        fs::write(dir.join("template.json"), r#"{ "method": 123 }"#).unwrap();
+        assert!(resolve_at(&dir).is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_at_seeds_and_returns_ok_when_template_missing() {
+        let dir = temp_apic("resolve_seed");
+        let contract = resolve_at(&dir).unwrap();
+        assert!(crate::json::validate(&contract).is_ok());
+        assert!(dir.join("template.json").exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn check_at_reports_valid_for_good_overlay() {
+        let dir = temp_apic("check_valid");
+        fs::write(dir.join("template.json"), r#"{ "method": "GET" }"#).unwrap();
+        assert!(matches!(check_at(&dir), TemplateCheck::Valid));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn check_at_reports_invalid_for_malformed_json() {
+        let dir = temp_apic("check_malformed");
+        fs::write(dir.join("template.json"), "{ not json").unwrap();
+        assert!(matches!(check_at(&dir), TemplateCheck::Invalid(_)));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn check_at_reports_invalid_when_merge_yields_invalid_contract() {
+        let dir = temp_apic("check_invalid_merge");
+        fs::write(dir.join("template.json"), r#"{ "method": 123 }"#).unwrap();
+        assert!(matches!(check_at(&dir), TemplateCheck::Invalid(_)));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn check_at_reports_absent_when_template_missing() {
+        let dir = temp_apic("check_absent");
+        assert!(matches!(check_at(&dir), TemplateCheck::Absent));
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
