@@ -1,6 +1,6 @@
 [package]
-name = "apic"
-version = "0.1.0-beta.2"
+name = "apic-cli"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Rizki Rakasiwi"]
@@ -12,6 +12,10 @@ homepage = "https://github.com/rizukirr/apic"
 keywords = ["api", "contract", "cli", "rest", "json"]
 categories = ["command-line-utilities", "development-tools"]
 exclude = ["/.github", "/.apic", "/example"]
+
+[[bin]]
+name = "apic"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }

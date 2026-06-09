@@ -554,12 +554,18 @@ fn list_piped_output_stays_flat_without_tree_chars() {
         .stdout(predicate::str::contains("├──").not())
         .stdout(predicate::str::contains("└──").not());
 
-    // Same for --absolute: flat absolute paths, no tree.
+    // Same for --absolute: flat absolute paths, no tree. The tool emits
+    // canonicalized, forward-slashed paths; on Windows that long-name/verbatim
+    // form differs from `dir`'s raw string, so assert on the stable project-dir
+    // leaf and the contract tail rather than the full temp-dir prefix.
     apic(&dir)
         .args(["list", "--absolute", "true"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(dir.to_string_lossy().to_string()))
+        .stdout(predicate::str::contains(
+            dir.file_name().unwrap().to_string_lossy().to_string(),
+        ))
+        .stdout(predicate::str::contains("user/profile/user.json"))
         .stdout(predicate::str::contains("├──").not());
 }
 

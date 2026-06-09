@@ -62,8 +62,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "apic"
-version = "0.1.0-beta.2"
+name = "apic-cli"
+version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "clap",
