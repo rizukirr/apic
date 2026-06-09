@@ -29,9 +29,11 @@ That means contracts are:
 
 ## Install
 
-> **Status: beta.** `apic` is in beta. The supported way to install is from
-> source; prebuilt beta binaries are available for testing. A crates.io release
-> will follow once the stable version is cut.
+**crates.io** (recommended) — installs the `apic` command:
+
+```bash
+cargo install apic-cli
+```
 
 **From source** (requires a Rust toolchain, 1.88+):
 
@@ -43,13 +45,10 @@ cargo install --path .
 
 To run without installing, use `cargo run -- <args>` from the project directory.
 
-**Beta prebuilt binaries** (for testing) — grab the archive for your platform
-from the [latest release](https://github.com/rizukirr/apic/releases), verify the
+**Prebuilt binaries** — grab the archive for your platform from the
+[latest release](https://github.com/rizukirr/apic/releases), verify the
 `.sha256` checksum, extract, and put `apic` on your `PATH`. Builds are provided
 for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), and Windows (x86_64).
-
-**crates.io** — `cargo install apic` will be available with the stable release
-(not published yet).
 
 ## Quick start
 
