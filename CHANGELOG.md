@@ -28,6 +28,9 @@ templates, an editor flag, and a `remove` command on top of the betas.
 ### Changed
 - Contract `url` restructured into a `url` object (base + path + query + variables).
 - `init` template seeding is best-effort and no longer blocks initialization.
+- Contract paths are displayed and stored with forward slashes on every OS, so
+  the committed `working_dir` and contract references stay portable across
+  Windows, macOS, and Linux.
 
 ## [0.1.0-beta.2] - 2026-06-04
 

@@ -11,6 +11,19 @@ use walkdir::WalkDir;
 /// multi-gigabyte file into a clean error instead of exhausting memory.
 pub const MAX_CONTRACT_BYTES: u64 = 5 * 1024 * 1024;
 
+/// Renders a path with `/` separators on every platform.
+///
+/// Contract paths are meant to be portable and git-reviewable, so they are
+/// stored and displayed with forward slashes regardless of the host OS. Rust
+/// accepts `/` as a separator on all platforms (including Windows), so the
+/// normalized form is also valid for filesystem access. Windows filenames
+/// cannot contain `\`, so swapping the platform separator never corrupts a
+/// name; on Unix `MAIN_SEPARATOR` is already `/`, making this a no-op.
+pub fn to_slash(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/")
+}
+
 /// Outcome of a file search: either the matching paths or nothing found.
 pub enum FindFileResult {
     Found(Vec<PathBuf>),
@@ -180,6 +193,20 @@ pub fn confine_to_dir(base: &Path, target: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn to_slash_renders_components_with_forward_slashes() {
+        // Built from components so the path uses the platform separator, which
+        // to_slash must normalize to `/` (this is the case that differs on
+        // Windows). A single relative join is enough to exercise it.
+        let p: PathBuf = ["user", "profile", "user.json"].iter().collect();
+        assert_eq!(to_slash(&p), "user/profile/user.json");
+    }
+
+    #[test]
+    fn to_slash_leaves_a_plain_name_untouched() {
+        assert_eq!(to_slash(Path::new("login.json")), "login.json");
+    }
 
     /// Creates a unique, empty temp directory for a single test.
     fn temp_dir(tag: &str) -> PathBuf {

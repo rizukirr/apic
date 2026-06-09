@@ -4,7 +4,7 @@
 //! current directory. The config records project metadata and the working
 //! directory that contract files are scanned from.
 
-use crate::file::{FindFileResult, find_file_downward, find_file_upward};
+use crate::file::{FindFileResult, find_file_downward, find_file_upward, to_slash};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -235,7 +235,8 @@ fn relative_to_root(root: &Path, dir: &Path) -> PathBuf {
     if rel.as_os_str().is_empty() {
         PathBuf::from(".")
     } else {
-        rel.to_path_buf()
+        // Store with `/` so the committed working_dir is portable across OSes.
+        PathBuf::from(to_slash(rel))
     }
 }
 

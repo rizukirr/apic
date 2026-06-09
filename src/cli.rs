@@ -1,7 +1,7 @@
 //! Command-line interface: argument parsing and subcommand handlers.
 
 use crate::config::{Config, InitOutcome, read_config_file};
-use crate::file::{confine_to_dir, read_file};
+use crate::file::{confine_to_dir, read_file, to_slash};
 use crate::fuzzy::{fuzzy_find, fuzzy_match_path};
 use crate::json::{json_get, scan_json_file, validate as validate_contract};
 use crate::picker;
@@ -255,10 +255,7 @@ fn classify(filename: &str, root: &Path, files: &[PathBuf]) -> Resolution {
     }
 
     // fuzzy fallback with tie detection on the top score.
-    let file_str: Vec<String> = files
-        .iter()
-        .map(|f| f.to_string_lossy().to_string())
-        .collect();
+    let file_str: Vec<String> = files.iter().map(|f| to_slash(f)).collect();
     match fuzzy_find(filename, &file_str) {
         Some(hits) => {
             let top = hits[0].1;
@@ -290,7 +287,7 @@ enum Resolved {
 /// Renders `path` relative to `root` for display, control characters stripped.
 fn rel_display(path: &Path, root: &Path) -> String {
     let shown = path.strip_prefix(root).unwrap_or(path);
-    sanitize(&shown.to_string_lossy())
+    sanitize(&to_slash(shown))
 }
 
 /// Reports a cancelled interactive pick; cancelling is not an error.
@@ -605,12 +602,12 @@ fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), String> {
                     .as_ref()
                     .and_then(|r| file.strip_prefix(r).ok())
                     .unwrap_or(file);
-                let rel = sanitize(&rel.to_string_lossy());
+                let rel = sanitize(&to_slash(rel));
                 let (score, indices) = match &filter {
                     Some(query) => fuzzy_match_path(query, &rel)?,
                     None => (0, Vec::new()),
                 };
-                let shown = sanitize(&file.to_string_lossy());
+                let shown = sanitize(&to_slash(file));
                 Some(Row {
                     rel,
                     indices,
@@ -633,7 +630,7 @@ fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), String> {
             }
             let root_label = if absolute {
                 root.as_ref()
-                    .map(|r| format!("{}/", sanitize(&r.to_string_lossy())))
+                    .map(|r| format!("{}/", sanitize(&to_slash(r))))
             } else {
                 None
             };
