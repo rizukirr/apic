@@ -106,7 +106,12 @@ enum Commands {
     Validate {
         /// Validate only this contract (path, extensionless, or fuzzy). Omit to
         /// check every contract.
-        #[arg(long, short = 'f', value_name = "FILENAME", conflicts_with = "template")]
+        #[arg(
+            long,
+            short = 'f',
+            value_name = "FILENAME",
+            conflicts_with = "template"
+        )]
         filename: Option<String>,
 
         /// Validate the project template (`.apic/template.json`) instead of

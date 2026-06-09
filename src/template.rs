@@ -72,7 +72,12 @@ fn resolve_at(apic_dir: &Path) -> Result<String, String> {
     let path = path(apic_dir);
     let overlay = match fs::read_to_string(&path) {
         Ok(content) => content,
-        Err(err) => return Ok(fallback(format!("failed to read {}: {err}", path.display()))),
+        Err(err) => {
+            return Ok(fallback(format!(
+                "failed to read {}: {err}",
+                path.display()
+            )));
+        }
     };
 
     match merge_onto_default(&overlay) {
