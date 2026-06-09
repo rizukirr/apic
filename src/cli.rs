@@ -106,8 +106,13 @@ enum Commands {
     Validate {
         /// Validate only this contract (path, extensionless, or fuzzy). Omit to
         /// check every contract.
-        #[arg(long, short = 'f', value_name = "FILENAME")]
+        #[arg(long, short = 'f', value_name = "FILENAME", conflicts_with = "template")]
         filename: Option<String>,
+
+        /// Validate the project template (`.apic/template.json`) instead of
+        /// contracts. Reports `ok`/`FAIL` and exits non-zero on failure.
+        #[arg(long, conflicts_with = "filename")]
+        template: bool,
     },
     /// Open an existing contract in your editor.
     ///
@@ -389,7 +394,11 @@ fn read(content: &str, status: Option<u16>, example: bool) -> Result<(), String>
 /// is checked. Each file is read (subject to the size cap) and parsed against
 /// the contract schema. Prints `ok`/`FAIL` per file and a summary, and exits
 /// the process non-zero if any contract is invalid so it can gate CI.
-fn validate_cmd(filename: Option<&str>) -> Result<(), String> {
+fn validate_cmd(template: bool, filename: Option<&str>) -> Result<(), String> {
+    if template {
+        return validate_template_cmd();
+    }
+
     let files = match list(true) {
         Some(files) => files,
         None => {
@@ -440,6 +449,29 @@ fn validate_cmd(filename: Option<&str>) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Validates the project template (`.apic/template.json`) for `apic validate
+/// --template`.
+///
+/// Prints `ok`/`FAIL` using the same convention as contract validation and
+/// exits non-zero when the template is invalid, so it can gate CI. A missing
+/// template is not a failure — `create` would use the built-in default.
+fn validate_template_cmd() -> Result<(), String> {
+    match crate::template::check_template() {
+        crate::template::TemplateCheck::Absent => {
+            println!("No project template found; create will use the built-in template");
+            Ok(())
+        }
+        crate::template::TemplateCheck::Valid => {
+            println!("ok   .apic/template.json");
+            Ok(())
+        }
+        crate::template::TemplateCheck::Invalid(reason) => {
+            println!("FAIL .apic/template.json: {}", sanitize(&reason));
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Creates a new contract file from the default template and opens it in the
@@ -669,7 +701,7 @@ pub fn run() {
             status,
             example,
         } => read_cmd(&filename, status, example),
-        Commands::Validate { filename } => validate_cmd(filename.as_deref()),
+        Commands::Validate { filename, template } => validate_cmd(template, filename.as_deref()),
         Commands::Open {
             filename,
             editor,
