@@ -4,7 +4,7 @@
 //! query, headers, request, responses). Colors are applied only when stdout is
 //! a terminal, so piped or redirected output stays clean.
 
-use crate::json::{JsonContent, Request, Schema, Url};
+use crate::json::{JsonContent, Method, Request, Schema, Url, method_str};
 use crossterm::style::Stylize;
 use std::io::IsTerminal;
 
@@ -31,51 +31,62 @@ impl Printer {
         }
     }
 
-    /// Prints the whole contract, skipping sections that are `None`.
+    /// Prints the whole contract. Every section is always shown; an empty one
+    /// renders a dim `(none)` placeholder rather than being skipped, matching
+    /// the TUI viewer so the two stay consistent.
     fn contract(&self, c: &JsonContent) {
-        println!(
-            " {} {} · {}",
-            self.method(&c.method),
-            sanitize(&build_url(&c.url)),
-            sanitize(&c.name)
-        );
+        println!(" {}", sanitize(&c.name).to_uppercase());
         if let Some(desc) = &c.description {
             println!(" {}", sanitize(desc));
         }
+        println!(
+            "\n {} {}",
+            self.method(&c.method),
+            sanitize(&build_url(&c.url)),
+        );
 
-        if let Some(variable) = &c.url.variable {
-            self.section("VARIABLE");
-            let rows: Vec<Vec<String>> = variable
-                .iter()
-                .map(|v| {
-                    vec![
-                        v.name.clone(),
-                        v.dtype.clone(),
-                        v.description.clone().unwrap_or_default(),
-                    ]
-                })
-                .collect();
-            self.table(Some(&["NAME", "TYPE", "DESCRIPTION"]), &rows);
+        self.section("VARIABLE");
+        match c.url.variable.as_deref() {
+            Some(variable) if !variable.is_empty() => {
+                let rows: Vec<Vec<String>> = variable
+                    .iter()
+                    .map(|v| {
+                        vec![
+                            v.name.clone(),
+                            v.dtype.clone(),
+                            req_mark(v.required),
+                            v.description.clone().unwrap_or_default(),
+                        ]
+                    })
+                    .collect();
+                self.table(Some(&["NAME", "TYPE", "REQ", "DESCRIPTION"]), &rows);
+            }
+            _ => self.none(),
         }
 
-        if let Some(query) = &c.url.query {
-            self.section("QUERY");
-            let rows: Vec<Vec<String>> = query
-                .iter()
-                .map(|q| {
-                    vec![
-                        q.name.clone(),
-                        q.value.clone(),
-                        req_mark(q.required),
-                        q.description.clone().unwrap_or_default(),
-                    ]
-                })
-                .collect();
-            self.table(Some(&["NAME", "VALUE", "REQ", "DESCRIPTION"]), &rows);
+        self.section("QUERY");
+        match c.url.query.as_deref() {
+            Some(query) if !query.is_empty() => {
+                let rows: Vec<Vec<String>> = query
+                    .iter()
+                    .map(|q| {
+                        vec![
+                            q.name.clone(),
+                            q.value.clone(),
+                            req_mark(q.required),
+                            q.description.clone().unwrap_or_default(),
+                        ]
+                    })
+                    .collect();
+                self.table(Some(&["NAME", "VALUE", "REQ", "DESCRIPTION"]), &rows);
+            }
+            _ => self.none(),
         }
 
-        if !c.headers.is_empty() {
-            self.section("HEADERS");
+        self.section("HEADERS");
+        if c.headers.is_empty() {
+            self.none();
+        } else {
             let rows: Vec<Vec<String>> = c
                 .headers
                 .iter()
@@ -84,37 +95,46 @@ impl Printer {
             self.table(None, &rows);
         }
 
-        if let Some(request) = &c.request {
-            self.section("REQUEST");
-            if self.example_mode {
-                self.example(request.example.as_ref());
-            } else if let Some(schema) = &request.schema {
-                let (headers, rows) = request_rows(schema);
-                self.table(Some(&headers), &rows);
-                // Keep the concrete payload adjacent to its schema.
-                if let Some(example) = &request.example {
-                    self.example_block(example);
+        self.section("REQUEST");
+        match &c.request {
+            Some(request) if self.example_mode => self.example(request.example.as_ref()),
+            Some(request) => match &request.schema {
+                Some(schema) if !schema.is_empty() => {
+                    let (headers, rows) = request_rows(schema);
+                    self.table(Some(&headers), &rows);
+                    // Keep the concrete payload adjacent to its schema.
+                    if let Some(example) = &request.example {
+                        self.example_block(example);
+                    }
                 }
-            } else {
-                // No schema — fall back to the example so the section is
-                // never silently empty.
-                self.example(request.example.as_ref());
-            }
+                // No schema — fall back to the example, or `(none)` when the
+                // request carries neither schema nor example.
+                _ => match &request.example {
+                    Some(example) => self.example(Some(example)),
+                    None => self.none(),
+                },
+            },
+            None => self.none(),
         }
 
-        for response in &c.responses {
-            self.response_title(response.code, &response.description);
-            if self.example_mode {
-                self.example(response.example.as_ref());
-            } else if !response.schema.is_empty() {
-                let mut rows = Vec::new();
-                schema_rows(&response.schema, 0, &mut rows);
-                self.table(Some(&["NAME", "TYPE", "REQ", "DESCRIPTION"]), &rows);
-                if let Some(example) = &response.example {
-                    self.example_block(example);
+        if c.responses.is_empty() {
+            self.section("RESPONSE");
+            self.none();
+        } else {
+            for response in &c.responses {
+                self.response_title(response.code, &response.description);
+                if self.example_mode {
+                    self.example(response.example.as_ref());
+                } else if !response.schema.is_empty() {
+                    let mut rows = Vec::new();
+                    schema_rows(&response.schema, 0, &mut rows);
+                    self.table(Some(&["NAME", "TYPE", "REQ", "DESCRIPTION"]), &rows);
+                    if let Some(example) = &response.example {
+                        self.example_block(example);
+                    }
+                } else {
+                    self.example(response.example.as_ref());
                 }
-            } else {
-                self.example(response.example.as_ref());
             }
         }
     }
@@ -149,6 +169,16 @@ impl Printer {
         }
     }
 
+    /// Prints a dim `(none)` placeholder for an empty section, mirroring the
+    /// TUI viewer's `none_line`.
+    fn none(&self) {
+        if self.color {
+            println!(" {}", "(none)".dark_grey());
+        } else {
+            println!(" (none)");
+        }
+    }
+
     /// Prints a blank line followed by a bold section title.
     fn section(&self, title: &str) {
         println!();
@@ -178,19 +208,18 @@ impl Printer {
     }
 
     /// Returns the HTTP method, colored by convention when output is a terminal.
-    fn method(&self, method: &str) -> String {
-        let method = sanitize(method);
-        let method = method.as_str();
+    fn method(&self, method: &Method) -> String {
         if !self.color {
-            return method.to_string();
+            return method_str(method);
         }
-        match method.to_uppercase().as_str() {
-            "GET" => method.green().bold().to_string(),
-            "POST" => method.blue().bold().to_string(),
-            "PUT" => method.yellow().bold().to_string(),
-            "PATCH" => method.magenta().bold().to_string(),
-            "DELETE" => method.red().bold().to_string(),
-            _ => method.bold().to_string(),
+        let method_str = method_str(method);
+
+        match method {
+            Method::GET => method_str.green().bold().to_string(),
+            Method::POST => method_str.blue().bold().to_string(),
+            Method::PUT => method_str.yellow().bold().to_string(),
+            Method::PATCH => method_str.magenta().bold().to_string(),
+            Method::DELETE => method_str.red().bold().to_string(),
         }
     }
 
@@ -320,7 +349,7 @@ fn req_mark(required: bool) -> String {
 /// the `/`-joined path segments. Each part is optional — an empty `host` yields
 /// a leading-slash path, an empty `protocol` drops the scheme, and an empty
 /// `path` yields the authority alone.
-fn build_url(url: &Url) -> String {
+pub(crate) fn build_url(url: &Url) -> String {
     let path = url.path.as_deref().unwrap_or(&[]).join("/");
 
     let authority = if url.host.is_empty() {
