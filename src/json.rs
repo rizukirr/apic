@@ -1,14 +1,23 @@
-//! Discovery of JSON contract files beneath a project root.
+//! Discovery of JSOj contract files beneath a project root.
 
 use crate::file::{FindFileResult, find_file_by_ext_downward};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum Method {
+    GET,
+    POST,
+    PUT,
+    PATCH,
+    DELETE,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JsonContent {
     pub(crate) name: String,
     pub(crate) description: Option<String>,
-    pub(crate) method: String,
+    pub(crate) method: Method,
     pub(crate) url: Url,
     pub(crate) headers: Vec<Header>,
     pub(crate) request: Option<RequestBody>,
@@ -37,14 +46,15 @@ pub struct Url {
 
 /// A path variable, e.g. `id` in `/resource/{id}`. The path segment carries the
 /// `{id}` placeholder; this documents what it means. `type` defaults to
-/// `string` and `required` is implied (a path variable is structurally
-/// mandatory), so neither is carried here.
+/// `string` when omitted, and `required` defaults to `false` when omitted.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Variable {
     pub(crate) name: String,
     #[serde(alias = "type", default = "default_variable_type")]
     pub(crate) dtype: String,
     pub(crate) description: Option<String>,
+    #[serde(default)]
+    pub(crate) required: bool,
 }
 
 /// Path variables default to `string` when `type` is omitted.
@@ -101,6 +111,27 @@ pub struct Schema {
     pub(crate) description: String,
     pub(crate) required: bool,
     pub(crate) properties: Option<Vec<Schema>>,
+}
+
+pub fn method_str(method: &Method) -> String {
+    match method {
+        Method::GET => "GET".to_string(),
+        Method::POST => "POST".to_string(),
+        Method::PUT => "PUT".to_string(),
+        Method::PATCH => "PATCH".to_string(),
+        Method::DELETE => "DELETE".to_string(),
+    }
+}
+
+pub fn method_from_str(method: &str) -> Method {
+    match method.to_uppercase().as_str() {
+        "GET" => Method::GET,
+        "POST" => Method::POST,
+        "PUT" => Method::PUT,
+        "PATCH" => Method::PATCH,
+        "DELETE" => Method::DELETE,
+        _ => Method::GET,
+    }
 }
 
 /// Finds `.json` files under `root`.
@@ -245,7 +276,7 @@ mod tests {
                 "protocol": "https", "host": "api.example.com", "path": ["u", "{id}"],
                 "variable": [
                     { "name": "id", "description": "User ID" },
-                    { "name": "slug", "type": "int", "description": "Slug" }
+                    { "name": "slug", "type": "int", "description": "Slug", "required": true }
                 ]
             },
             "headers": [], "responses": []
@@ -254,6 +285,9 @@ mod tests {
         let variable = c.url.variable.unwrap();
         assert_eq!(variable[0].dtype, "string");
         assert_eq!(variable[1].dtype, "int");
+        // `required` defaults to false when omitted, and parses an explicit true.
+        assert!(!variable[0].required);
+        assert!(variable[1].required);
     }
 
     #[test]
