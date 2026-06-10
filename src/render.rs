@@ -4,7 +4,7 @@
 //! query, headers, request, responses). Colors are applied only when stdout is
 //! a terminal, so piped or redirected output stays clean.
 
-use crate::json::{JsonContent, Method, Request, Schema, Url, method_str};
+use crate::json::{JsonContent, Method, Request, Schema, Url, Variable, method_str};
 use crossterm::style::Stylize;
 use std::io::IsTerminal;
 
@@ -48,18 +48,8 @@ impl Printer {
         self.section("VARIABLE");
         match c.url.variable.as_deref() {
             Some(variable) if !variable.is_empty() => {
-                let rows: Vec<Vec<String>> = variable
-                    .iter()
-                    .map(|v| {
-                        vec![
-                            v.name.clone(),
-                            v.dtype.clone(),
-                            req_mark(v.required),
-                            v.description.clone().unwrap_or_default(),
-                        ]
-                    })
-                    .collect();
-                self.table(Some(&["NAME", "TYPE", "REQ", "DESCRIPTION"]), &rows);
+                let (headers, rows) = variable_rows(variable);
+                self.table(Some(&headers), &rows);
             }
             _ => self.none(),
         }
@@ -280,6 +270,25 @@ impl Printer {
     }
 }
 
+/// Builds the VARIABLE table headers and rows. Kept as a pure helper (like
+/// `request_rows`) so the REQ column is testable without capturing terminal
+/// output.
+fn variable_rows(variables: &[Variable]) -> (Vec<&'static str>, Vec<Vec<String>>) {
+    let headers = vec!["NAME", "TYPE", "REQ", "DESCRIPTION"];
+    let rows = variables
+        .iter()
+        .map(|v| {
+            vec![
+                v.name.clone(),
+                v.dtype.clone(),
+                req_mark(v.required),
+                v.description.clone().unwrap_or_default(),
+            ]
+        })
+        .collect();
+    (headers, rows)
+}
+
 /// Builds the REQUEST table headers and rows.
 ///
 /// The ACCEPT column (allowed MIME types for `file` fields in multipart
@@ -481,6 +490,30 @@ mod tests {
         // The file field shows its accepted types; the plain field stays blank.
         assert_eq!(rows[0][3], "image/png, image/jpeg");
         assert_eq!(rows[1][3], "");
+    }
+
+    #[test]
+    fn variable_rows_includes_req_column_marking_only_required() {
+        let variables = vec![
+            Variable {
+                name: "id".to_string(),
+                dtype: "int".to_string(),
+                description: Some("User ID".to_string()),
+                required: true,
+            },
+            Variable {
+                name: "slug".to_string(),
+                dtype: "string".to_string(),
+                description: None,
+                required: false,
+            },
+        ];
+        let (headers, rows) = variable_rows(&variables);
+        assert_eq!(headers, vec!["NAME", "TYPE", "REQ", "DESCRIPTION"]);
+        assert_eq!(rows[0].len(), 4);
+        // REQ is column index 2; required shows the mark, optional stays blank.
+        assert_eq!(rows[0][2], req_mark(true));
+        assert_eq!(rows[1][2], "");
     }
 
     #[test]
