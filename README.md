@@ -1,31 +1,21 @@
 # apic
 
-A small CLI for **git-able API contracts**. Each endpoint is a plain JSON file
-that lives in your repository, so contracts are diffable, reviewable in pull
-requests, and versioned alongside the code they describe. `apic` discovers,
-renders, and scaffolds those files.`
+**API contracts, the Git way.** `apic` is a high-performance CLI/TUI designed for total freedom in contract collaboration. By storing your API contracts as plain JSON files in your repository, your architecture becomes natively diffable, reviewable, and versioned. No more silos—just your code and your contracts in perfect sync.
 
 https://github.com/user-attachments/assets/89b5fb4b-7942-49a1-9bee-41308d234236
 
-## Why
+## Why?
 
-Mainstream API tools like Postman and apidoc gate collaboration behind a
-paywall — you pay per team member to share workspaces, and seats add up fast as
-a team grows. `apic` takes a different approach: contracts are plain JSON files
-in your repository, so **your existing git workflow _is_ the collaboration
-layer**. No seats, no separate accounts — if someone can clone the repo, they
-can read, edit, and review contracts.
+Mainstream API tooling gates collaboration behind paywalls—forcing you to pay per team member just to share a workspace. Costs scale aggressively as teams grow. 
 
-That means contracts are:
+`apic` flips the script: because contracts live as plain JSON files in your repository, **your existing Git workflow *is* the collaboration layer**. No seats, no separate accounts—if a developer can clone the repo, they can collaborate on the contract.
 
-- **Free to collaborate on** — sharing is `git push`/`git pull`, not a billing
-  tier. Everyone with repo access already has full access.
-- **Version-controlled** — contracts change in the same commit as the code, with
-  full history and blame.
-- **Reviewable** — a contract change is a readable diff in a pull request,
-  reviewed by the same people on the same platform as the code.
-- **Readable** — `apic read` renders a contract as a clean, colorized table in
-  the terminal instead of raw JSON.
+This approach brings immediate advantages:
+
+*   **Zero-Cost Collaboration** — Sharing is a simple `git push`. Everyone with repository access already has full collaboration capabilities.
+*   **Atomic Versioning** — Contracts change in the exact same commit as the implementation, preserving full history and `git blame`.
+*   **Native Code Review** — Contract modifications show up as clean diffs in Pull Requests, reviewed by the same team, on the same platform.
+*   **Terminal-First Readability** — No raw JSON eye-strain. `apic read` renders your contracts into clean, colorized tables directly in your shell.
 
 ## Install
 
