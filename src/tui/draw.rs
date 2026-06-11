@@ -308,7 +308,7 @@ fn push_section(
                 *sel_line = lines.len();
             }
             let style = if selected && state.cell.is_none() {
-                title_style().bg(Color::Red).fg(Color::Black)
+                title_style().bg(Color::Red).fg(Color::White)
             } else {
                 title_style()
             };
@@ -504,7 +504,14 @@ fn table_line(
 /// focused cell is highlighted (see `cell_hl`).
 fn sel_style(state: &UiState, selected: bool) -> Style {
     if selected && state.cell.is_none() {
-        Style::default().bg(Color::Red).fg(Color::Black)
+        Style::default()
+            .bg(Color::Red)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    } else if selected && state.cell.is_some() {
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     }
@@ -513,7 +520,10 @@ fn sel_style(state: &UiState, selected: bool) -> Style {
 /// The highlight for the focused cell in cell-edit mode: red, regardless of the
 /// row base.
 fn cell_hl() -> Style {
-    Style::default().bg(Color::Red).fg(Color::Black)
+    Style::default()
+        .bg(Color::Red)
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD)
 }
 
 /// The text to show for a cell, accounting for an in-progress insert buffer.
@@ -582,6 +592,10 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ("i", "Insert — edit the focused text cell"),
         ("Esc", "Back · collapse · cancel"),
         ("a", "Add field — child if on an object field, else sibling"),
+        (
+            "g",
+            "Generate example from the schema (in a request/response)",
+        ),
         ("d", "Delete the selected row (asks to confirm)"),
         ("Ctrl-S", "Save"),
         ("q", "Quit"),

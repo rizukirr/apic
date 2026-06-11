@@ -237,6 +237,10 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
             append_here(state, model);
             Action::None
         }
+        (KeyCode::Char('g'), _) => {
+            generate_example_here(state, model);
+            Action::None
+        }
         (KeyCode::Char('d'), _) => {
             if let Some(f) = delete_field(state)
                 && is_deletable(&f)
@@ -247,6 +251,39 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
         }
         _ => Action::None,
     }
+}
+
+/// Generates an example JSON for the request/response body the cursor is in,
+/// from that body's schema fields, filling its example buffer.
+fn generate_example_here(state: &mut UiState, model: &mut EditModel) {
+    let loc = match state.sections.get(state.sec).and_then(|s| s.expand) {
+        Some(Expand::Request) => BodyLoc::Request,
+        Some(Expand::Response(i)) => BodyLoc::Response(i),
+        _ => return,
+    };
+    let schema = match &loc {
+        BodyLoc::Request => model.request.as_ref().map(|b| b.schema.clone()),
+        BodyLoc::Response(i) => model.responses.get(*i).map(|r| r.schema.clone()),
+    };
+    let Some(schema) = schema else { return };
+    let value = crate::tui::model::example_from_schema(&schema);
+    let Ok(text) = crate::template::render_pretty(&value) else {
+        return;
+    };
+    match &loc {
+        BodyLoc::Request => {
+            if let Some(b) = model.request.as_mut() {
+                b.example = text;
+            }
+        }
+        BodyLoc::Response(i) => {
+            if let Some(r) = model.responses.get_mut(*i) {
+                r.example = text;
+            }
+        }
+    }
+    state.dirty = true;
+    state.refresh(model);
 }
 
 /// Appends a row near the focused schema field — a child under an object field,
@@ -996,6 +1033,29 @@ mod tests {
             m.request.as_ref().unwrap().schema[0].properties.len(),
             before + 1
         );
+    }
+
+    #[test]
+    fn g_generates_example_for_request_body() {
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "request":{"type":"object","schema":[
+                    {"name":"status","type":"int","default":null,"description":"d","required":true}
+                 ]},
+                 "responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        // focus a row in the REQUEST body section (its schema field)
+        goto(&mut s, |f| {
+            matches!(f, Field::SchemaName(BodyLoc::Request, _))
+        });
+        s.cell = None;
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('g')));
+        assert!(m.request.as_ref().unwrap().example.contains("\"status\""));
     }
 
     #[test]

@@ -464,6 +464,40 @@ impl EditSchema {
     }
 }
 
+/// Builds an example JSON object from schema fields:
+/// string/file → "{name}", int-like → 0, float-like → 0.0, bool → false,
+/// object with properties → nested object, empty object → {} if required else null,
+/// arrays → a one-element array of the base type.
+pub(crate) fn example_from_schema(fields: &[EditSchema]) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for f in fields {
+        map.insert(f.name.clone(), gen_field_value(f));
+    }
+    serde_json::Value::Object(map)
+}
+
+fn gen_field_value(f: &EditSchema) -> serde_json::Value {
+    use serde_json::Value;
+    let (base, is_array) = crate::json::parse_type(&f.dtype);
+    let v = match base {
+        "string" | "file" => Value::String(format!("{{{}}}", f.name)),
+        "int" | "integer" | "number" | "long" | "short" => Value::Number(0.into()),
+        "float" | "double" | "decimal" => serde_json::json!(0.0),
+        "bool" | "boolean" => Value::Bool(false),
+        "object" => {
+            if !f.properties.is_empty() {
+                example_from_schema(&f.properties)
+            } else if f.required {
+                Value::Object(serde_json::Map::new())
+            } else {
+                Value::Null
+            }
+        }
+        _ => Value::Null,
+    };
+    if is_array { Value::Array(vec![v]) } else { v }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -573,6 +607,28 @@ mod tests {
         assert_eq!(node.name, "leaf");
         node.name = "renamed".to_string();
         assert_eq!(m.request.unwrap().schema[0].properties[0].name, "renamed");
+    }
+
+    #[test]
+    fn example_from_schema_generates_typed_placeholders() {
+        use serde_json::json;
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "request":{"type":"object","schema":[
+                    {"name":"status","type":"int","default":null,"description":"d","required":true},
+                    {"name":"message","type":"string","default":null,"description":"d","required":true},
+                    {"name":"data","type":"object","default":null,"description":"d","required":false}
+                 ]},
+                 "responses":[] }"#,
+            None,
+        ).unwrap();
+        let m = EditModel::from_contract(c);
+        let schema = &m.request.as_ref().unwrap().schema;
+        let v = example_from_schema(schema);
+        assert_eq!(v["status"], json!(0));
+        assert_eq!(v["message"], json!("{message}"));
+        assert_eq!(v["data"], serde_json::Value::Null); // object, not required -> null
     }
 
     #[test]
