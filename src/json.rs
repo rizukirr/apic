@@ -1,14 +1,24 @@
-//! Discovery of JSON contract files beneath a project root.
+//! Discovery of JSOj contract files beneath a project root.
 
 use crate::file::{FindFileResult, find_file_by_ext_downward};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(clippy::upper_case_acronyms)]
+pub enum Method {
+    GET,
+    POST,
+    PUT,
+    PATCH,
+    DELETE,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JsonContent {
     pub(crate) name: String,
     pub(crate) description: Option<String>,
-    pub(crate) method: String,
+    pub(crate) method: Method,
     pub(crate) url: Url,
     pub(crate) headers: Vec<Header>,
     pub(crate) request: Option<RequestBody>,
@@ -20,8 +30,11 @@ pub struct JsonContent {
 /// an example, formal ones only a schema.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RequestBody {
+    /// Body shape: `"object"` (default) or an array form like `"object[]"`.
+    #[serde(alias = "type", default = "default_body_type")]
+    pub(crate) dtype: String,
     #[serde(default)]
-    pub(crate) schema: Option<Vec<Request>>,
+    pub(crate) schema: Option<Vec<Schema>>,
     #[serde(default)]
     pub(crate) example: Option<serde_json::Value>,
 }
@@ -37,19 +50,25 @@ pub struct Url {
 
 /// A path variable, e.g. `id` in `/resource/{id}`. The path segment carries the
 /// `{id}` placeholder; this documents what it means. `type` defaults to
-/// `string` and `required` is implied (a path variable is structurally
-/// mandatory), so neither is carried here.
+/// `string` when omitted, and `required` defaults to `false` when omitted.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Variable {
     pub(crate) name: String,
     #[serde(alias = "type", default = "default_variable_type")]
     pub(crate) dtype: String,
     pub(crate) description: Option<String>,
+    #[serde(default)]
+    pub(crate) required: bool,
 }
 
 /// Path variables default to `string` when `type` is omitted.
 fn default_variable_type() -> String {
     "string".to_string()
+}
+
+/// Request/response bodies default to a single `object` when `type` is omitted.
+fn default_body_type() -> String {
+    "object".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -67,23 +86,12 @@ pub struct Header {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Request {
-    pub(crate) name: String,
-    #[serde(alias = "type")]
-    pub(crate) dtype: String,
-    pub(crate) default: Option<String>,
-    pub(crate) description: String,
-    pub(crate) required: bool,
-    /// Accepted MIME types for `file` fields in multipart requests,
-    /// e.g. `"image/png, image/jpeg"`. Omitted for ordinary fields.
-    #[serde(default)]
-    pub(crate) accept: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct Response {
     pub code: u16,
     pub description: String,
+    /// Body shape: `"object"` (default) or an array form like `"object[]"`.
+    #[serde(alias = "type", default = "default_body_type")]
+    pub dtype: String,
     /// Field-level schema; may be omitted when only an example is provided.
     #[serde(default)]
     pub schema: Vec<Schema>,
@@ -100,7 +108,52 @@ pub struct Schema {
     pub(crate) default: Option<String>,
     pub(crate) description: String,
     pub(crate) required: bool,
+    #[serde(default)]
     pub(crate) properties: Option<Vec<Schema>>,
+    /// Accepted MIME types for `file` fields in multipart requests, e.g.
+    /// `"image/png, image/jpeg"`. Omitted for ordinary fields.
+    #[serde(default)]
+    pub(crate) accept: Option<String>,
+}
+
+pub fn method_str(method: &Method) -> String {
+    match method {
+        Method::GET => "GET".to_string(),
+        Method::POST => "POST".to_string(),
+        Method::PUT => "PUT".to_string(),
+        Method::PATCH => "PATCH".to_string(),
+        Method::DELETE => "DELETE".to_string(),
+    }
+}
+
+/// Splits a type string into its base type and array-ness:
+/// `"object[]" -> ("object", true)`, `"string" -> ("string", false)`.
+pub fn parse_type(dtype: &str) -> (&str, bool) {
+    match dtype.strip_suffix("[]") {
+        Some(base) => (base, true),
+        None => (dtype, false),
+    }
+}
+
+/// True if any field — at any depth via `properties` — declares `accept`.
+/// Shared by the plain-text and TUI field-table renderers.
+pub(crate) fn any_accept(fields: &[Schema]) -> bool {
+    fields
+        .iter()
+        .any(|f| f.accept.is_some() || f.properties.as_deref().is_some_and(any_accept))
+}
+
+// Scaffolding for the upcoming `method set` command; not yet wired in.
+#[allow(dead_code)]
+pub fn method_from_str(method: &str) -> Method {
+    match method.to_uppercase().as_str() {
+        "GET" => Method::GET,
+        "POST" => Method::POST,
+        "PUT" => Method::PUT,
+        "PATCH" => Method::PATCH,
+        "DELETE" => Method::DELETE,
+        _ => Method::GET,
+    }
 }
 
 /// Finds `.json` files under `root`.
@@ -165,6 +218,44 @@ mod tests {
             { "code": 404, "description": "no", "schema": [] }
         ]
     }"#;
+
+    #[test]
+    fn parse_type_splits_the_array_suffix() {
+        assert_eq!(parse_type("object[]"), ("object", true));
+        assert_eq!(parse_type("string[]"), ("string", true));
+        assert_eq!(parse_type("object"), ("object", false));
+        assert_eq!(parse_type("string"), ("string", false));
+    }
+
+    #[test]
+    fn any_accept_detects_a_declared_accept_at_any_depth() {
+        // No field declares `accept`.
+        let plain = json_get(
+            r#"{ "name":"t","method":"GET",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "responses":[{"code":200,"description":"ok","schema":[
+                   {"name":"f","type":"string","default":null,"description":"d","required":true}
+                 ]}] }"#,
+            None,
+        )
+        .unwrap();
+        assert!(!any_accept(&plain.responses[0].schema));
+
+        // A nested `file` field declares `accept`.
+        let nested = json_get(
+            r#"{ "name":"t","method":"GET",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "responses":[{"code":200,"description":"ok","schema":[
+                   {"name":"wrap","type":"object","default":null,"description":"d","required":true,
+                    "properties":[
+                      {"name":"avatar","type":"file","default":null,"description":"d","required":true,"accept":"image/png"}
+                    ]}
+                 ]}] }"#,
+            None,
+        )
+        .unwrap();
+        assert!(any_accept(&nested.responses[0].schema));
+    }
 
     #[test]
     fn json_get_returns_all_responses_when_status_is_none() {
@@ -245,7 +336,7 @@ mod tests {
                 "protocol": "https", "host": "api.example.com", "path": ["u", "{id}"],
                 "variable": [
                     { "name": "id", "description": "User ID" },
-                    { "name": "slug", "type": "int", "description": "Slug" }
+                    { "name": "slug", "type": "int", "description": "Slug", "required": true }
                 ]
             },
             "headers": [], "responses": []
@@ -254,6 +345,56 @@ mod tests {
         let variable = c.url.variable.unwrap();
         assert_eq!(variable[0].dtype, "string");
         assert_eq!(variable[1].dtype, "int");
+        // `required` defaults to false when omitted, and parses an explicit true.
+        assert!(!variable[0].required);
+        assert!(variable[1].required);
+    }
+
+    #[test]
+    fn body_type_parses_array_and_defaults_to_object() {
+        let json = r#"{
+            "name": "t", "method": "POST",
+            "url": { "protocol": "https", "host": "h", "path": ["x"] },
+            "headers": [],
+            "request": { "type": "object[]", "schema": [
+                { "name": "id", "type": "string", "default": null, "description": "d", "required": true }
+            ] },
+            "responses": [ { "code": 200, "description": "ok" } ]
+        }"#;
+        let c = json_get(json, None).unwrap();
+        assert_eq!(c.request.as_ref().unwrap().dtype, "object[]");
+        // Response omits "type" -> defaults to "object".
+        assert_eq!(c.responses[0].dtype, "object");
+    }
+
+    #[test]
+    fn schema_properties_default_to_none_and_array_type_parses() {
+        let json = r#"{
+            "name": "t", "method": "GET",
+            "url": { "protocol": "https", "host": "h", "path": ["x"] },
+            "headers": [],
+            "responses": [ { "code": 200, "description": "ok", "schema": [
+                { "name": "f", "type": "string[]", "default": null, "description": "d", "required": true }
+            ] } ]
+        }"#;
+        let c = json_get(json, None).unwrap();
+        let s = &c.responses[0].schema[0];
+        assert_eq!(s.dtype, "string[]");
+        assert!(s.properties.is_none());
+    }
+
+    #[test]
+    fn schema_accept_defaults_to_none_when_omitted() {
+        let json = r#"{
+            "name": "t", "method": "GET",
+            "url": { "protocol": "https", "host": "h", "path": ["x"] },
+            "headers": [],
+            "responses": [ { "code": 200, "description": "ok", "schema": [
+                { "name": "f", "type": "string", "default": null, "description": "d", "required": true }
+            ] } ]
+        }"#;
+        let c = json_get(json, None).unwrap();
+        assert!(c.responses[0].schema[0].accept.is_none());
     }
 
     #[test]
