@@ -1,4 +1,4 @@
-use crate::json::{Header, JsonContent, Method, Query, Schema, Variable, method_str};
+use crate::json::{Header, JsonContent, Method, Query, Schema, Variable, method_str, parse_type};
 use crate::render::{build_url, sanitize};
 use crossterm::event::{self, KeyCode};
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -229,8 +229,12 @@ fn document(contract: &JsonContent, state: &State) -> Vec<Line<'static>> {
 
     // request section.
     doc.push(Line::from(""));
+    let request_label = match &contract.request {
+        Some(r) if parse_type(&r.dtype).1 => format!("REQUEST · {}", sanitize(&r.dtype)),
+        _ => "REQUEST".to_string(),
+    };
     doc.push(Line::from(
-        Span::from("REQUEST").style(Style::default().bold()),
+        Span::from(request_label).style(Style::default().bold()),
     ));
     doc.push(Line::from(""));
     match &contract.request {
@@ -274,10 +278,15 @@ fn response_section(contract: &JsonContent, selected: usize, focused: bool) -> V
     } else {
         Style::default().bold().fg(status_color(&code))
     };
+    let marker = if parse_type(&response.dtype).1 {
+        format!(" · {}", sanitize(&response.dtype))
+    } else {
+        String::new()
+    };
     let head = Line::from(vec![
         Span::from("RESPONSE ").style(Style::default().bold()),
         Span::from(code).style(code_style),
-        Span::from(format!(" — {}", sanitize(&response.description))).style(gray()),
+        Span::from(format!(" — {}{marker}", sanitize(&response.description))).style(gray()),
     ]);
 
     let mut lines = vec![head, Line::from("")];

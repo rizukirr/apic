@@ -126,6 +126,15 @@ pub fn method_str(method: &Method) -> String {
     }
 }
 
+/// Splits a type string into its base type and array-ness:
+/// `"object[]" -> ("object", true)`, `"string" -> ("string", false)`.
+pub fn parse_type(dtype: &str) -> (&str, bool) {
+    match dtype.strip_suffix("[]") {
+        Some(base) => (base, true),
+        None => (dtype, false),
+    }
+}
+
 // Scaffolding for the upcoming `method set` command; not yet wired in.
 #[allow(dead_code)]
 pub fn method_from_str(method: &str) -> Method {
@@ -201,6 +210,14 @@ mod tests {
             { "code": 404, "description": "no", "schema": [] }
         ]
     }"#;
+
+    #[test]
+    fn parse_type_splits_the_array_suffix() {
+        assert_eq!(parse_type("object[]"), ("object", true));
+        assert_eq!(parse_type("string[]"), ("string", true));
+        assert_eq!(parse_type("object"), ("object", false));
+        assert_eq!(parse_type("string"), ("string", false));
+    }
 
     #[test]
     fn json_get_returns_all_responses_when_status_is_none() {

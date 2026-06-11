@@ -4,7 +4,7 @@
 //! query, headers, request, responses). Colors are applied only when stdout is
 //! a terminal, so piped or redirected output stays clean.
 
-use crate::json::{JsonContent, Method, Schema, Url, Variable, method_str};
+use crate::json::{JsonContent, Method, Schema, Url, Variable, method_str, parse_type};
 use crossterm::style::Stylize;
 use std::io::IsTerminal;
 
@@ -85,7 +85,11 @@ impl Printer {
             self.table(None, &rows);
         }
 
-        self.section("REQUEST");
+        let request_label = match &c.request {
+            Some(r) if parse_type(&r.dtype).1 => format!("REQUEST · {}", sanitize(&r.dtype)),
+            _ => "REQUEST".to_string(),
+        };
+        self.section(&request_label);
         match &c.request {
             Some(request) if self.example_mode => self.example(request.example.as_ref()),
             Some(request) => match &request.schema {
@@ -112,7 +116,7 @@ impl Printer {
             self.none();
         } else {
             for response in &c.responses {
-                self.response_title(response.code, &response.description);
+                self.response_title(response.code, &response.description, &response.dtype);
                 if self.example_mode {
                     self.example(response.example.as_ref());
                 } else if !response.schema.is_empty() {
@@ -180,9 +184,14 @@ impl Printer {
 
     /// Prints the `RESPONSE <code> — <description>` section title, coloring
     /// the status code by its class (2xx green, 4xx/5xx red).
-    fn response_title(&self, code: u16, description: &str) {
+    fn response_title(&self, code: u16, description: &str, dtype: &str) {
         println!();
         let description = sanitize(description);
+        let marker = if parse_type(dtype).1 {
+            format!(" · {}", sanitize(dtype))
+        } else {
+            String::new()
+        };
         if self.color {
             let code = code.to_string();
             let code = match code.as_bytes()[0] {
@@ -190,9 +199,9 @@ impl Printer {
                 b'4' | b'5' => code.red().bold(),
                 _ => code.yellow().bold(),
             };
-            println!(" {} {code} — {description}", "RESPONSE".bold());
+            println!(" {} {code} — {description}{marker}", "RESPONSE".bold());
         } else {
-            println!(" RESPONSE {code} — {description}");
+            println!(" RESPONSE {code} — {description}{marker}");
         }
     }
 
