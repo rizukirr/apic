@@ -394,6 +394,17 @@ fn handle_cell(state: &mut UiState, model: &mut EditModel, key: KeyEvent) -> Act
             }
             Action::None
         }
+        KeyCode::Char('i') => {
+            // Vim-style: `i` enters insert mode on a focused text cell.
+            if let Some(cell) = state
+                .cell
+                .and_then(|c| state.current_row().and_then(|r| r.cells.get(c)))
+                && cell.kind == CellKind::Text
+            {
+                state.mode = Mode::Insert(cell.value.clone());
+            }
+            Action::None
+        }
         KeyCode::Enter => begin_cell_edit(state, model),
         _ => Action::None,
     }
@@ -782,6 +793,17 @@ mod tests {
         assert_eq!(s.expanded, Some(Expand::Url));
         handle_normal(&mut s, &mut m, key(KeyCode::Esc));
         assert_eq!(s.expanded, None);
+    }
+
+    #[test]
+    fn i_enters_insert_on_text_cell() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| matches!(f, Field::Name));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // -> cell-edit on the name cell
+        assert!(s.cell.is_some());
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('i'))); // i -> insert
+        assert!(matches!(s.mode, Mode::Insert(_)));
     }
 
     #[test]

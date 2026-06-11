@@ -579,6 +579,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ("↑/↓  j/k", "Select a row"),
         ("←/→  h/l", "Move between cells"),
         ("Enter", "Edit cell · expand url/title · open example"),
+        ("i", "Insert — edit the focused text cell"),
         ("Esc", "Back · collapse · cancel"),
         ("a", "Add field — child if on an object field, else sibling"),
         ("d", "Delete the selected row (asks to confirm)"),
