@@ -72,14 +72,22 @@ apic read -f login
 `apic create <file>` and `apic open <file>` open an interactive terminal editor
 (TUI) by default. It shows the contract exactly as `apic read` renders it — the
 same header, sections, tables, and inline JSON examples — and lets you edit in
-place: `↑/↓` select a row, `Enter` steps into a row's cells, `←/→` move between
-cells, and `Enter` edits a cell (type text, cycle the method, or toggle a
-boolean). `Enter` on the `METHOD url` line expands it so you can edit the
-protocol, host, and path, and `Enter` on a `REQUEST`/`RESPONSE` title expands it
-so you can edit its code, description, and type; `Esc` collapses either again.
-Press `a` to add a row to the current section, `d` to delete the selected row, and
-`Enter` on an example to edit its JSON in a pop-up. `Ctrl-S` saves; `Esc`/`q`
-exits; `?` shows the key map.
+place:
+
+- **Navigate:** `↑/↓` (or `j/k`) select a row; `Enter` steps into the row's cells;
+  `←/→` (or `h/l`) move between cells; `Esc` steps back out.
+- **Edit a cell:** `Enter` or `i` edits a text cell; `Enter` cycles the method,
+  toggles a `required` flag, or toggles a body `type` between `object` and
+  `object[]`. While typing, `Enter` commits and `Esc` cancels.
+- **Expand:** `Enter` on the `METHOD url` line reveals the protocol, host, and
+  path; `Enter` on a `REQUEST`/`RESPONSE` title reveals its code, description, and
+  type. `Esc` collapses either.
+- **Add / delete:** `a` adds a row to the current section — a nested field when
+  you're on an `object` field, or a new response on the `+ add response` line;
+  `d` deletes the selected row after a confirmation.
+- **Examples:** `Enter` on an example edits its JSON in a pop-up; `g` generates a
+  sample example from the body's schema (an array for `object[]` bodies).
+- **Save / quit:** `Ctrl-S` saves; `Esc`/`q` exits; `?` shows the full key map.
 
 Prefer your own editor? Pass `--editor` to open the file in `$VISUAL`/`$EDITOR`
 (or a specific one, e.g. `apic open login --editor "code --wait"`).

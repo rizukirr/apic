@@ -268,12 +268,22 @@ fn generate_example_here(state: &mut UiState, model: &mut EditModel) {
         Some(Expand::Response(i)) => BodyLoc::Response(i),
         _ => return,
     };
-    let schema = match &loc {
-        BodyLoc::Request => model.request.as_ref().map(|b| b.schema.clone()),
-        BodyLoc::Response(i) => model.responses.get(*i).map(|r| r.schema.clone()),
+    let body = match &loc {
+        BodyLoc::Request => model
+            .request
+            .as_ref()
+            .map(|b| (b.schema.clone(), b.dtype.clone())),
+        BodyLoc::Response(i) => model
+            .responses
+            .get(*i)
+            .map(|r| (r.schema.clone(), r.dtype.clone())),
     };
-    let Some(schema) = schema else { return };
-    let value = crate::tui::model::example_from_schema(&schema);
+    let Some((schema, dtype)) = body else { return };
+    let mut value = crate::tui::model::example_from_schema(&schema);
+    // An array body (e.g. `object[]`) generates a one-element array of the object.
+    if crate::json::parse_type(&dtype).1 {
+        value = serde_json::Value::Array(vec![value]);
+    }
     let Ok(text) = crate::template::render_pretty(&value) else {
         return;
     };
@@ -509,7 +519,10 @@ fn begin_cell_edit(state: &mut UiState, model: &mut EditModel) -> Action {
             Action::None
         }
         CellKind::Enum => {
-            cycle_method(state, model, true);
+            match &cell.field {
+                Field::BodyDtype(loc) => toggle_body_type(state, model, loc),
+                _ => cycle_method(state, model, true),
+            }
             Action::None
         }
         CellKind::Bool => {
@@ -533,6 +546,23 @@ fn cycle_method(state: &mut UiState, model: &mut EditModel, forward: bool) {
         (idx + all.len() - 1) % all.len()
     };
     model.method = all[next].clone();
+    state.dirty = true;
+    state.refresh(model);
+}
+
+/// Toggles a request/response body type between `object` and `object[]` — the
+/// only two shapes a body can take. Anything else normalizes to `object[]`.
+fn toggle_body_type(state: &mut UiState, model: &mut EditModel, loc: &BodyLoc) {
+    let cur = match loc {
+        BodyLoc::Request => model.request.as_ref().map(|b| b.dtype.clone()),
+        BodyLoc::Response(i) => model.responses.get(*i).map(|r| r.dtype.clone()),
+    };
+    let next = if cur.as_deref() == Some("object[]") {
+        "object"
+    } else {
+        "object[]"
+    };
+    set_field(model, &Field::BodyDtype(loc.clone()), next.to_string());
     state.dirty = true;
     state.refresh(model);
 }
@@ -1082,6 +1112,64 @@ mod tests {
         s.cell = None;
         handle_normal(&mut s, &mut m, key(KeyCode::Char('g')));
         assert!(m.request.as_ref().unwrap().example.contains("\"status\""));
+    }
+
+    #[test]
+    fn g_wraps_array_body_example_in_an_array() {
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "request":{"type":"object[]","schema":[
+                    {"name":"id","type":"int","default":null,"description":"d","required":true}
+                 ]},
+                 "responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| {
+            matches!(f, Field::SchemaName(BodyLoc::Request, _))
+        });
+        s.cell = None;
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('g')));
+        let ex = m.request.as_ref().unwrap().example.clone();
+        let v: serde_json::Value = serde_json::from_str(&ex).unwrap();
+        assert!(
+            v.is_array(),
+            "object[] body should generate an array example"
+        );
+        assert_eq!(v[0]["id"], serde_json::json!(0));
+    }
+
+    #[test]
+    fn body_type_toggles_between_object_and_array() {
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "request":{"type":"object","schema":[]},
+                 "responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        // Expand the REQUEST title so the `type` row exists, focus its enum cell.
+        s.expanded = Some(Expand::Request);
+        s.refresh(&m);
+        goto(&mut s, |f| matches!(f, Field::BodyDtype(BodyLoc::Request)));
+        let ti = s
+            .current_row()
+            .unwrap()
+            .cells
+            .iter()
+            .position(|c| matches!(c.field, Field::BodyDtype(_)))
+            .unwrap();
+        s.cell = Some(ti);
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // object -> object[]
+        assert_eq!(m.request.as_ref().unwrap().dtype, "object[]");
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // object[] -> object
+        assert_eq!(m.request.as_ref().unwrap().dtype, "object");
     }
 
     #[test]
