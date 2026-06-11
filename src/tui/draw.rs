@@ -21,10 +21,15 @@ pub(crate) fn draw(frame: &mut Frame, state: &UiState) {
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(area);
 
-    let (lines, sel, cursor) = build_lines(state);
-    // Simple top-anchored scroll: keep the selected line in view.
-    let height = chunks[0].height as usize;
-    let scroll = sel.saturating_sub(height.saturating_sub(2)) as u16;
+    let (lines, sel_start, sel_end, cursor) = build_lines(state);
+    // Keep the selected block's bottom visible, preferring its top when the
+    // block is taller than the viewport.
+    let view = chunks[0].height as usize;
+    let scroll: u16 = if sel_end + 1 > view {
+        ((sel_end + 1 - view).min(sel_start)) as u16
+    } else {
+        0
+    };
     frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), chunks[0]);
 
     // Place a real terminal cursor at the end of the insert buffer, if any.
@@ -107,25 +112,26 @@ fn col_widths(section: &Section, ncols: usize) -> Vec<usize> {
     w
 }
 
-/// Builds all display lines, returning them, the index of the line that carries
-/// the current selection (for scrolling), and the insert cursor position
-/// `(line, col)` where `col` is a char offset from the line start (if editing).
-fn build_lines(state: &UiState) -> (Vec<Line<'static>>, usize, Option<(usize, usize)>) {
+/// Builds all display lines, returning them, the FIRST and LAST line index of
+/// the selected row's rendered content (for scrolling), and the insert cursor
+/// position `(line, col)` where `col` is a char offset from the line start (if
+/// editing).
+fn build_lines(state: &UiState) -> (Vec<Line<'static>>, usize, usize, Option<(usize, usize)>) {
     let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut sel_line = 0usize;
+    let mut sel: (usize, usize) = (0, 0);
     let mut cursor: Option<(usize, usize)> = None;
 
     for (si, section) in state.sections.iter().enumerate() {
         match section.kind {
             SectionKind::Header => {
-                push_header(state, si, section, &mut lines, &mut sel_line, &mut cursor);
+                push_header(state, si, section, &mut lines, &mut sel, &mut cursor);
             }
             SectionKind::Table | SectionKind::Body => {
-                push_section(state, si, section, &mut lines, &mut sel_line, &mut cursor);
+                push_section(state, si, section, &mut lines, &mut sel, &mut cursor);
             }
         }
     }
-    (lines, sel_line, cursor)
+    (lines, sel.0, sel.1, cursor)
 }
 
 /// Emits the header block: ` NAME`, ` description` (when non-empty), a blank
@@ -135,7 +141,7 @@ fn push_header(
     si: usize,
     section: &Section,
     lines: &mut Vec<Line<'static>>,
-    sel_line: &mut usize,
+    sel: &mut (usize, usize),
     cursor: &mut Option<(usize, usize)>,
 ) {
     for (ri, row) in section.rows.iter().enumerate() {
@@ -145,7 +151,7 @@ fn push_header(
                 let (line, col) =
                     header_value_line(state, row, selected, |v| format!(" {}", v.to_uppercase()));
                 if selected {
-                    *sel_line = lines.len();
+                    *sel = (lines.len(), lines.len());
                 }
                 record_cursor(cursor, lines.len(), col);
                 lines.push(line);
@@ -158,13 +164,13 @@ fn push_header(
                 if value.is_empty() && !editing {
                     // Still track selection so scroll/navigation stays sane.
                     if selected {
-                        *sel_line = lines.len();
+                        *sel = (lines.len(), lines.len());
                     }
                     continue;
                 }
                 let (line, col) = header_value_line(state, row, selected, |v| format!(" {v}"));
                 if selected {
-                    *sel_line = lines.len();
+                    *sel = (lines.len(), lines.len());
                 }
                 record_cursor(cursor, lines.len(), col);
                 lines.push(line);
@@ -172,7 +178,7 @@ fn push_header(
             RowKind::UrlLine => {
                 lines.push(Line::raw("")); // blank line before the URL
                 if selected {
-                    *sel_line = lines.len();
+                    *sel = (lines.len(), lines.len());
                 }
                 lines.push(url_line(state, row, selected));
             }
@@ -182,7 +188,7 @@ fn push_header(
                     lines.push(Line::raw(""));
                 }
                 if selected {
-                    *sel_line = lines.len();
+                    *sel = (lines.len(), lines.len());
                 }
                 let (line, col) = kv_line(state, row, selected);
                 record_cursor(cursor, lines.len(), col);
@@ -289,7 +295,7 @@ fn push_section(
     si: usize,
     section: &Section,
     lines: &mut Vec<Line<'static>>,
-    sel_line: &mut usize,
+    sel: &mut (usize, usize),
     cursor: &mut Option<(usize, usize)>,
 ) {
     lines.push(Line::raw("")); // blank line before the title
@@ -305,7 +311,7 @@ fn push_section(
         Some((ri, row)) => {
             let selected = si == state.sec && ri == state.row;
             if selected {
-                *sel_line = lines.len();
+                *sel = (lines.len(), lines.len());
             }
             let style = if selected && state.cell.is_none() {
                 title_style().bg(Color::Red).fg(Color::White)
@@ -367,7 +373,7 @@ fn push_section(
         match row.kind {
             RowKind::Field => {
                 if selected {
-                    *sel_line = lines.len();
+                    *sel = (lines.len(), lines.len());
                 }
                 // Expanded title rows (label + value) render like URL kv rows.
                 let (line, col) = if ncols > 0 && row.cells.len() == ncols {
@@ -380,11 +386,14 @@ fn push_section(
             }
             RowKind::Example => {
                 lines.push(Line::raw("")); // blank line before Example:
+                let example_label = lines.len();
                 lines.push(Line::from(Span::styled(" Example:", dim())));
-                if selected {
-                    *sel_line = lines.len();
-                }
                 push_example(state, row, selected, lines);
+                if selected {
+                    // First line of the block is ` Example:`; last is the final
+                    // example-content line just pushed.
+                    *sel = (example_label, lines.len().saturating_sub(1));
+                }
             }
             _ => {}
         }
@@ -736,5 +745,51 @@ mod tests {
             .iter()
             .any(|cell| cell.style().bg == Some(Color::Red));
         assert!(any_red, "expected a red-highlighted focused cell");
+    }
+
+    #[test]
+    fn scroll_follows_cursor_to_example_at_bottom() {
+        // Many headers push the response example well below a short viewport.
+        let mut headers = String::new();
+        for i in 0..20 {
+            if i > 0 {
+                headers.push(',');
+            }
+            headers.push_str(&format!(r#"{{"name":"H{i}","value":"v{i}"}}"#));
+        }
+        let json = format!(
+            r#"{{ "name":"t","method":"GET",
+                 "url":{{"protocol":"https","host":"h","path":["x"]}},
+                 "headers":[{headers}],
+                 "responses":[{{"code":200,"description":"ok","schema":[],
+                    "example":{{"unique_marker_xyz":1}} }}] }}"#
+        );
+        let c = json_get(&json, None).unwrap();
+        let m = EditModel::from_contract(c);
+        let mut state = UiState::new(&m);
+        // place the cursor on the response example row
+        let (si, ri) = state
+            .sections
+            .iter()
+            .enumerate()
+            .find_map(|(si, s)| {
+                s.rows
+                    .iter()
+                    .position(|r| r.kind == crate::tui::rows::RowKind::Example)
+                    .map(|ri| (si, ri))
+            })
+            .unwrap();
+        state.sec = si;
+        state.row = ri;
+        state.cell = None;
+        let backend = TestBackend::new(80, 12); // short viewport
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &state)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(
+            text.contains("unique_marker_xyz"),
+            "example should be scrolled into view"
+        );
     }
 }
