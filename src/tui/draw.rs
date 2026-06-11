@@ -22,15 +22,16 @@ pub(crate) fn draw(frame: &mut Frame, state: &UiState) {
         .margin(1)
         .split(area);
 
-    let (lines, sel_start, sel_end, cursor) = build_lines(state);
-    // Keep the selected block's bottom visible, preferring its top when the
-    // block is taller than the viewport.
+    let (mut lines, sel_start, sel_end, cursor) = build_lines(state);
+    // Center the selected row in the viewport (neovim-style). Half a screen of
+    // blank padding is appended so even the very bottom row can sit centered.
+    // The scroll is clamped at the top so short contracts don't shift.
     let view = chunks[0].height as usize;
-    let scroll: u16 = if sel_end + 1 > view {
-        ((sel_end + 1 - view).min(sel_start)) as u16
-    } else {
-        0
-    };
+    let pad = view / 2;
+    lines.extend(std::iter::repeat_with(|| Line::raw("")).take(pad));
+    let max_scroll = lines.len().saturating_sub(view);
+    let center = (sel_start + sel_end) / 2;
+    let scroll = center.saturating_sub(view / 2).min(max_scroll) as u16;
     frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), chunks[0]);
 
     // Place a real terminal cursor at the end of the insert buffer, if any.
