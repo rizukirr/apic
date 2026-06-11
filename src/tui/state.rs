@@ -454,8 +454,16 @@ fn begin_row(state: &mut UiState, model: &mut EditModel) -> Action {
     };
     match row.kind {
         RowKind::UrlLine | RowKind::Title => {
-            let tgt = state.sections[state.sec].expand;
-            state.expanded = if state.expanded == tgt { None } else { tgt };
+            // Title rows on table sections (VARIABLE/QUERY/HEADERS/empty RESPONSE)
+            // have no expand target — Enter does nothing there.
+            let Some(tgt) = state.sections[state.sec].expand else {
+                return Action::None;
+            };
+            state.expanded = if state.expanded == Some(tgt) {
+                None
+            } else {
+                Some(tgt)
+            };
             state.cell = None;
             state.refresh(model);
             Action::None
@@ -1056,6 +1064,46 @@ mod tests {
         s.cell = None;
         handle_normal(&mut s, &mut m, key(KeyCode::Char('g')));
         assert!(m.request.as_ref().unwrap().example.contains("\"status\""));
+    }
+
+    #[test]
+    fn a_on_empty_query_title_adds_first_item() {
+        // model() has no query — the QUERY section is empty
+        let c = json_get(
+            r#"{ "name":"t","method":"GET",
+                 "url":{"protocol":"https","host":"h","path":["x"]},
+                 "headers":[],"responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        // land on the QUERY title row
+        let (si, ri) = s
+            .sections
+            .iter()
+            .enumerate()
+            .find_map(|(si, sec)| {
+                (sec.title == "QUERY").then(|| {
+                    (
+                        si,
+                        sec.rows
+                            .iter()
+                            .position(|r| r.kind == RowKind::Title)
+                            .unwrap(),
+                    )
+                })
+            })
+            .unwrap();
+        s.sec = si;
+        s.row = ri;
+        s.cell = None;
+        // Enter does nothing on the title
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter));
+        assert_eq!(m.url.query.len(), 0);
+        // a adds the first query
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
+        assert_eq!(m.url.query.len(), 1);
     }
 
     #[test]

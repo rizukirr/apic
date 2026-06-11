@@ -363,7 +363,7 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
     });
 
     // VARIABLE
-    let mut v_rows = Vec::new();
+    let mut v_rows = vec![title_row("VARIABLE".to_string())];
     for (i, v) in m.url.variable.iter().enumerate() {
         v_rows.push(field_row(vec![
             text(Field::VarName(i), v.name.clone()),
@@ -382,7 +382,7 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
     });
 
     // QUERY
-    let mut q_rows = Vec::new();
+    let mut q_rows = vec![title_row("QUERY".to_string())];
     for (i, q) in m.url.query.iter().enumerate() {
         q_rows.push(field_row(vec![
             text(Field::QueryName(i), q.name.clone()),
@@ -401,7 +401,7 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
     });
 
     // HEADERS (no column header, like read)
-    let mut h_rows = Vec::new();
+    let mut h_rows = vec![title_row("HEADERS".to_string())];
     for (i, h) in m.headers.iter().enumerate() {
         h_rows.push(field_row(vec![
             text(Field::HeaderName(i), h.name.clone()),
@@ -455,7 +455,7 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
             title: "RESPONSE".into(),
             kind: SectionKind::Table,
             headers: None,
-            rows: Vec::new(),
+            rows: vec![title_row("RESPONSE".to_string())],
             add: Some(Field::ResponseAdd),
             expand: None,
         });
@@ -618,6 +618,21 @@ mod tests {
                 .iter()
                 .any(|r| r.kind == RowKind::Example && r.raw.contains("status"))
         );
+    }
+
+    #[test]
+    fn table_sections_have_selectable_title_rows() {
+        let secs = flatten(&model(), None);
+        for t in ["VARIABLE", "QUERY", "HEADERS"] {
+            let s = secs.iter().find(|s| s.title == t).unwrap();
+            assert!(
+                s.rows
+                    .first()
+                    .map(|r| r.kind == RowKind::Title)
+                    .unwrap_or(false),
+                "{t} should start with a Title row"
+            );
+        }
     }
 
     #[test]
