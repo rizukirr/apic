@@ -315,7 +315,7 @@ fn push_section(
                 *sel = (lines.len(), lines.len());
             }
             let style = if selected && state.cell.is_none() {
-                title_style().bg(Color::Red).fg(Color::White)
+                title_style().bg(Color::Yellow).fg(Color::Black)
             } else {
                 title_style()
             };
@@ -509,14 +509,14 @@ fn table_line(
     (Line::from(trim_trailing(spans)), cursor_col)
 }
 
-/// The base style for a row: a red highlight when selected in row-select mode
+/// The base style for a row: a yellow highlight when selected in row-select mode
 /// (no cell focused). In cell-edit mode the row carries no base — only the
-/// focused cell is highlighted (see `cell_hl`).
+/// focused cell is highlighted in red (see `cell_hl`).
 fn sel_style(state: &UiState, selected: bool) -> Style {
     if selected && state.cell.is_none() {
         Style::default()
-            .bg(Color::Red)
-            .fg(Color::White)
+            .bg(Color::Yellow)
+            .fg(Color::Black)
             .add_modifier(Modifier::BOLD)
     } else if selected && state.cell.is_some() {
         Style::default()
