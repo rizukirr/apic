@@ -1,0 +1,61 @@
+{
+    "name": "list-items",
+    "description": "List items; the response body is an array of item objects.",
+    "method": "GET",
+    "url": {
+        "protocol": "https",
+        "host": "api.example.com",
+        "path": ["items"],
+        "query": [
+            {
+                "name": "page",
+                "value": "1",
+                "description": "Page number",
+                "required": false
+            }
+        ]
+    },
+    "headers": [
+        {
+            "name": "Authorization",
+            "value": "Bearer {token}"
+        }
+    ],
+    "responses": [
+        {
+            "code": 200,
+            "type": "object[]",
+            "description": "A page of items",
+            "schema": [
+                {
+                    "name": "id",
+                    "type": "string",
+                    "default": null,
+                    "description": "Item identifier",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "name",
+                    "type": "string",
+                    "default": null,
+                    "description": "Item name",
+                    "required": true,
+                    "properties": null
+                },
+                {
+                    "name": "tags",
+                    "type": "string[]",
+                    "default": null,
+                    "description": "Free-form labels",
+                    "required": false,
+                    "properties": null
+                }
+            ],
+            "example": [
+                { "id": "itm_1", "name": "Widget", "tags": ["new"] },
+                { "id": "itm_2", "name": "Gadget", "tags": [] }
+            ]
+        }
+    ]
+}
