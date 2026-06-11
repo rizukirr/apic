@@ -4,6 +4,7 @@
 //! so they can be unit-tested without a terminal, mirroring `picker.rs`.
 
 use crate::tui::model::EditModel;
+use crate::tui::model::{EditBody, EditHeader, EditQuery, EditResponse, EditSchema, EditVariable};
 use crate::tui::rows::{BodyLoc, Field, Row, RowKind, flatten};
 // Import crossterm via ratatui's re-export so KeyEvent matches the version
 // ratatui/tui-textarea use (0.28); the root `crossterm` crate is 0.29.
@@ -127,15 +128,19 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
             state.skip_to_editable(-1);
             Action::None
         }
-        (KeyCode::Enter, _) => begin_edit(state),
+        (KeyCode::Enter, _) => begin_edit(state, model),
         (KeyCode::Right, _) | (KeyCode::Char(' '), _) => handle_cycle(state, model, true),
         (KeyCode::Left, _) => handle_cycle(state, model, false),
+        (KeyCode::Char('d'), _) => {
+            delete_row(state, model, &state.current().field.clone());
+            Action::None
+        }
         _ => Action::None,
     }
 }
 
 /// Begins editing the focused row according to its kind.
-fn begin_edit(state: &mut UiState) -> Action {
+fn begin_edit(state: &mut UiState, model: &mut EditModel) -> Action {
     let row = state.current().clone();
     match row.kind {
         RowKind::Text => {
@@ -143,7 +148,11 @@ fn begin_edit(state: &mut UiState) -> Action {
             Action::None
         }
         RowKind::Example => Action::OpenExample(row.field.clone(), row.value_full_marker()),
-        RowKind::Bool | RowKind::Enum | RowKind::Add | RowKind::Header => Action::None,
+        RowKind::Add => {
+            add_row(state, model, &row.field);
+            Action::None
+        }
+        RowKind::Bool | RowKind::Enum | RowKind::Header => Action::None,
     }
 }
 
@@ -152,6 +161,92 @@ impl Row {
     /// event loop fetches the real buffer from the model via the field address.
     fn value_full_marker(&self) -> String {
         String::new()
+    }
+}
+
+fn add_row(state: &mut UiState, model: &mut EditModel, field: &Field) {
+    match field {
+        Field::PathAdd => model.url.path.push(String::new()),
+        Field::QueryAdd => model.url.query.push(EditQuery {
+            name: String::new(),
+            value: String::new(),
+            description: String::new(),
+            required: false,
+        }),
+        Field::VarAdd => model.url.variable.push(EditVariable {
+            name: String::new(),
+            dtype: "string".to_string(),
+            description: String::new(),
+            required: false,
+        }),
+        Field::HeaderAdd => model.headers.push(EditHeader {
+            name: String::new(),
+            value: String::new(),
+        }),
+        Field::ResponseAdd => model.responses.push(EditResponse::blank()),
+        Field::RequestToggle => {
+            model.request = if model.request.is_some() {
+                None
+            } else {
+                Some(EditBody::empty())
+            };
+        }
+        Field::SchemaAdd(BodyLoc::Request, path) => {
+            if let Some(children) = model.schema_children_mut_request(path) {
+                children.push(EditSchema::blank());
+            }
+        }
+        Field::SchemaAdd(BodyLoc::Response(r), path) => {
+            if let Some(children) = model.schema_children_mut_response(*r, path) {
+                children.push(EditSchema::blank());
+            }
+        }
+        _ => return,
+    }
+    state.dirty = true;
+    state.refresh(model);
+}
+
+fn delete_row(state: &mut UiState, model: &mut EditModel, field: &Field) {
+    let mut changed = true;
+    match field {
+        Field::PathSeg(i) => drop_at(&mut model.url.path, *i),
+        Field::QueryName(i)
+        | Field::QueryValue(i)
+        | Field::QueryDesc(i)
+        | Field::QueryRequired(i) => drop_at(&mut model.url.query, *i),
+        Field::VarName(i) | Field::VarType(i) | Field::VarDesc(i) | Field::VarRequired(i) => {
+            drop_at(&mut model.url.variable, *i)
+        }
+        Field::HeaderName(i) | Field::HeaderValue(i) => drop_at(&mut model.headers, *i),
+        Field::ResponseCode(i) | Field::ResponseDesc(i) => drop_at(&mut model.responses, *i),
+        Field::SchemaName(loc, path)
+        | Field::SchemaType(loc, path)
+        | Field::SchemaDefault(loc, path)
+        | Field::SchemaDesc(loc, path)
+        | Field::SchemaRequired(loc, path)
+        | Field::SchemaAccept(loc, path) => {
+            if let Some((last, parent)) = path.split_last() {
+                let children = match loc {
+                    BodyLoc::Request => model.schema_children_mut_request(parent),
+                    BodyLoc::Response(r) => model.schema_children_mut_response(*r, parent),
+                };
+                if let Some(c) = children {
+                    drop_at(c, *last);
+                }
+            }
+        }
+        _ => changed = false,
+    }
+    if changed {
+        state.dirty = true;
+        state.refresh(model);
+    }
+}
+
+fn drop_at<T>(v: &mut Vec<T>, i: usize) {
+    if i < v.len() {
+        v.remove(i);
     }
 }
 
@@ -442,5 +537,51 @@ mod tests {
         assert_ne!(crate::json::method_str(&m.method), "GET");
         // a bool: response has none; use a query bool after adding one is complex,
         // so toggle via a constructed model with a query.
+    }
+
+    #[test]
+    fn add_and_delete_rows() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+
+        // Add a header via the "+ add header" Add row.
+        s.cursor = s
+            .rows
+            .iter()
+            .position(|r| matches!(r.field, Field::HeaderAdd))
+            .unwrap();
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter));
+        assert_eq!(m.headers.len(), 1);
+        assert!(s.dirty);
+
+        // Add a response.
+        s.refresh(&m);
+        s.cursor = s
+            .rows
+            .iter()
+            .position(|r| matches!(r.field, Field::ResponseAdd))
+            .unwrap();
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter));
+        assert_eq!(m.responses.len(), 2);
+
+        // Toggle request body on.
+        s.refresh(&m);
+        s.cursor = s
+            .rows
+            .iter()
+            .position(|r| matches!(r.field, Field::RequestToggle))
+            .unwrap();
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter));
+        assert!(m.request.is_some());
+
+        // Delete the first header with 'd'.
+        s.refresh(&m);
+        s.cursor = s
+            .rows
+            .iter()
+            .position(|r| matches!(r.field, Field::HeaderName(0)))
+            .unwrap();
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('d')));
+        assert_eq!(m.headers.len(), 0);
     }
 }
