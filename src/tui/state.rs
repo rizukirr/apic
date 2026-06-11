@@ -572,7 +572,6 @@ pub(crate) fn handle_insert(state: &mut UiState, model: &mut EditModel, key: Key
                 state.dirty = true;
             }
             state.mode = Mode::Normal;
-            state.cell = None;
             state.refresh(model);
             Action::None
         }
@@ -816,7 +815,8 @@ mod tests {
         handle_insert(&mut s, &mut m, key(KeyCode::Char('1')));
         handle_insert(&mut s, &mut m, key(KeyCode::Enter));
         assert_eq!(m.responses[0].code, "201");
-        // esc collapses
+        // first esc exits cell-edit, second esc collapses
+        handle_normal(&mut s, &mut m, key(KeyCode::Esc));
         handle_normal(&mut s, &mut m, key(KeyCode::Esc));
         assert_eq!(s.expanded, None);
     }
@@ -839,11 +839,11 @@ mod tests {
         assert_eq!(m.headers.len(), 2);
         assert!(matches!(s.mode, Mode::Insert(_)));
         assert!(matches!(s.focused_field_pub(), Some(Field::HeaderName(1))));
-        // typing then Enter commits to the new header name and returns to row-select
+        // typing then Enter commits to the new header name and keeps cell focus
         handle_insert(&mut s, &mut m, key(KeyCode::Char('X')));
         handle_insert(&mut s, &mut m, key(KeyCode::Enter));
         assert_eq!(m.headers[1].name, "X");
-        assert_eq!(s.cell, None);
+        assert!(s.cell.is_some());
     }
 
     #[test]
