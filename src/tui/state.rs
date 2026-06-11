@@ -249,12 +249,44 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
     }
 }
 
-/// Appends a row to the current section's `add` target, via the existing
-/// `add_row` mutator.
+/// Appends a row near the focused schema field — a child under an object field,
+/// a sibling otherwise — falling back to the current section's `add` target.
 fn append_here(state: &mut UiState, model: &mut EditModel) {
+    if let Some((loc, path, is_object)) = focused_schema_target(state) {
+        let target = if is_object {
+            Field::SchemaAdd(loc, path) // add a child under the object field
+        } else {
+            let mut parent = path;
+            parent.pop();
+            Field::SchemaAdd(loc, parent) // add a sibling at this level
+        };
+        add_row(state, model, &target);
+        return;
+    }
     if let Some(field) = state.sections.get(state.sec).and_then(|s| s.add.clone()) {
         add_row(state, model, &field);
     }
+}
+
+/// If the focused row is a schema field, returns its (loc, path) and whether its
+/// declared type is an object (so `a` adds a child rather than a sibling).
+fn focused_schema_target(state: &UiState) -> Option<(BodyLoc, Vec<usize>, bool)> {
+    let row = state.current_row()?;
+    let (loc, path) = row.cells.iter().find_map(|c| match &c.field {
+        Field::SchemaName(l, p)
+        | Field::SchemaType(l, p)
+        | Field::SchemaRequired(l, p)
+        | Field::SchemaAccept(l, p)
+        | Field::SchemaDesc(l, p) => Some((l.clone(), p.clone())),
+        _ => None,
+    })?;
+    let dtype = row
+        .cells
+        .iter()
+        .find_map(|c| matches!(&c.field, Field::SchemaType(_, _)).then(|| c.value.clone()))
+        .unwrap_or_default();
+    let is_object = crate::json::parse_type(&dtype).0 == "object";
+    Some((loc, path, is_object))
 }
 
 /// Keys while a cell is focused (cell-edit mode).
@@ -833,5 +865,55 @@ mod tests {
         assert!(!s.dirty);
         assert!(path.exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_adds_child_under_object_field() {
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"https","host":"h","path":["x"]},"headers":[],
+                 "request":{"type":"object","schema":[
+                    {"name":"wrap","type":"object","default":null,"description":"d","required":true,
+                     "properties":[{"name":"a","type":"string","default":null,"description":"d","required":false}]}
+                 ]},
+                 "responses":[] }"#,
+            None,
+        ).unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        // focus the object field "wrap" (top-level schema field, path [0])
+        goto(
+            &mut s,
+            |f| matches!(f, Field::SchemaName(BodyLoc::Request, p) if p == &vec![0]),
+        );
+        let before = m.request.as_ref().unwrap().schema[0].properties.len();
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
+        assert_eq!(
+            m.request.as_ref().unwrap().schema[0].properties.len(),
+            before + 1
+        );
+    }
+
+    #[test]
+    fn a_adds_sibling_for_non_object_field() {
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"https","host":"h","path":["x"]},"headers":[],
+                 "request":{"type":"object","schema":[
+                    {"name":"s","type":"string","default":null,"description":"d","required":false}
+                 ]},
+                 "responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        goto(
+            &mut s,
+            |f| matches!(f, Field::SchemaName(BodyLoc::Request, p) if p == &vec![0]),
+        );
+        let before = m.request.as_ref().unwrap().schema.len();
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
+        assert_eq!(m.request.as_ref().unwrap().schema.len(), before + 1); // sibling at top level
     }
 }

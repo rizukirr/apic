@@ -488,7 +488,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ("←/→  h/l", "Move between cells"),
         ("Enter", "Edit cell · expand url/title · open example"),
         ("Esc", "Back · collapse · cancel"),
-        ("a", "Add a row to the section"),
+        ("a", "Add field — child if on an object field, else sibling"),
         ("d", "Delete the selected row (asks to confirm)"),
         ("Ctrl-S", "Save"),
         ("q", "Quit"),
