@@ -107,80 +107,92 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
             })
             .map_err(|e| format!("draw: {e}"))?;
 
-        let Event::Key(key) = event::read().map_err(|e| format!("read event: {e}"))? else {
-            continue;
-        };
-        if key.kind != KeyEventKind::Press {
-            continue;
-        }
-
-        // Modal editor takes all keys until closed.
-        if let Some((field, ta)) = &mut modal {
-            use ratatui::crossterm::event::KeyCode;
-            match key.code {
-                KeyCode::Esc => {
-                    let text = ta.lines().join("\n");
-                    set_example(&mut model, field, text);
-                    state.dirty = true;
-                    state.refresh(&model);
-                    modal = None;
-                }
-                _ => {
-                    ta.input(key);
-                }
-            }
-            continue;
-        }
-
-        let action = match &state.mode {
-            Mode::Normal => handle_normal(&mut state, &mut model, key),
-            Mode::Insert(_) => handle_insert(&mut state, &mut model, key),
-            Mode::ConfirmQuit => handle_confirm_quit(&mut state, key),
-            Mode::ConfirmDelete(_) => handle_confirm_delete(&mut state, &mut model, key),
-            Mode::Help => {
-                state.mode = Mode::Normal;
-                Action::None
-            }
-            Mode::Example => Action::None,
-        };
-
-        match action {
-            Action::None => {}
-            Action::OpenExample(field, _) => {
-                let text = example_text(&model, &field);
-                let mut ta =
-                    TextArea::from(text.lines().map(|l| l.to_string()).collect::<Vec<_>>());
-                ta.set_block(
-                    Block::bordered()
-                        .title(" JSON Example ")
-                        .title_bottom(" Ctrl-S Save • Esc Close "),
-                );
-                ta.set_line_number_style(Style::default());
-                modal = Some((field, ta));
-                state.mode = Mode::Example;
-            }
-            Action::Save => {
-                let was_confirm = state.mode == Mode::ConfirmQuit;
-                apply_save(&mut state, &model, path);
-                if was_confirm {
-                    if state.dirty {
-                        // save failed; stay open, return to normal so user can fix
-                        state.mode = Mode::Normal;
-                    } else {
-                        break;
+        // Block for the next event, then process EVERY event already queued
+        // (key repeats, paste, mouse) before looping back to redraw. This
+        // coalesces bursts of input into a single render instead of one render
+        // per event, which is what makes fast navigation/typing feel snappy.
+        let mut next = Some(event::read().map_err(|e| format!("read event: {e}"))?);
+        loop {
+            if let Some(Event::Key(key)) = next.take()
+                && key.kind == KeyEventKind::Press
+            {
+                // Modal editor takes all keys until closed.
+                if let Some((field, ta)) = &mut modal {
+                    use ratatui::crossterm::event::KeyCode;
+                    match key.code {
+                        KeyCode::Esc => {
+                            let text = ta.lines().join("\n");
+                            set_example(&mut model, field, text);
+                            state.dirty = true;
+                            state.refresh(&model);
+                            modal = None;
+                        }
+                        _ => {
+                            ta.input(key);
+                        }
                     }
                 } else {
-                    state.mode = Mode::Normal;
+                    let action = match &state.mode {
+                        Mode::Normal => handle_normal(&mut state, &mut model, key),
+                        Mode::Insert(_) => handle_insert(&mut state, &mut model, key),
+                        Mode::ConfirmQuit => handle_confirm_quit(&mut state, key),
+                        Mode::ConfirmDelete(_) => {
+                            handle_confirm_delete(&mut state, &mut model, key)
+                        }
+                        Mode::Help => {
+                            state.mode = Mode::Normal;
+                            Action::None
+                        }
+                        Mode::Example => Action::None,
+                    };
+
+                    match action {
+                        Action::None => {}
+                        Action::OpenExample(field, _) => {
+                            let text = example_text(&model, &field);
+                            let mut ta = TextArea::from(
+                                text.lines().map(|l| l.to_string()).collect::<Vec<_>>(),
+                            );
+                            ta.set_block(
+                                Block::bordered()
+                                    .title(" JSON Example ")
+                                    .title_bottom(" Ctrl-S Save • Esc Close "),
+                            );
+                            ta.set_line_number_style(Style::default());
+                            modal = Some((field, ta));
+                            state.mode = Mode::Example;
+                        }
+                        Action::Save => {
+                            let was_confirm = state.mode == Mode::ConfirmQuit;
+                            apply_save(&mut state, &model, path);
+                            if was_confirm {
+                                if state.dirty {
+                                    // save failed; stay open so the user can fix
+                                    state.mode = Mode::Normal;
+                                } else {
+                                    return Ok(());
+                                }
+                            } else {
+                                state.mode = Mode::Normal;
+                            }
+                        }
+                        Action::Quit => return Ok(()),
+                    }
+
+                    // Leaving Example mode is handled by the modal branch.
+                    if modal.is_none() && state.mode == Mode::Example {
+                        state.mode = Mode::Normal;
+                    }
                 }
             }
-            Action::Quit => break,
-        }
 
-        // Leaving Example mode is handled by the modal branch; keep mode synced.
-        if modal.is_none() && state.mode == Mode::Example {
-            state.mode = Mode::Normal;
+            // Pull the next already-queued event without blocking; once the
+            // queue is drained, break out and redraw a single time.
+            if event::poll(std::time::Duration::from_millis(0)).map_err(|e| format!("poll: {e}"))? {
+                next = Some(event::read().map_err(|e| format!("read event: {e}"))?);
+            } else {
+                break;
+            }
         }
     }
-
-    Ok(())
 }
