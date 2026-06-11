@@ -1,5 +1,5 @@
-use crate::json::{Header, JsonContent, Method, Query, Schema, Variable, method_str, parse_type};
-use crate::render::{build_url, sanitize};
+use crate::json::{Header, JsonContent, Method, Query, Schema, Variable, any_accept, method_str};
+use crate::render::{array_marker, build_url, sanitize};
 use crossterm::event::{self, KeyCode};
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
@@ -230,8 +230,8 @@ fn document(contract: &JsonContent, state: &State) -> Vec<Line<'static>> {
     // request section.
     doc.push(Line::from(""));
     let request_label = match &contract.request {
-        Some(r) if parse_type(&r.dtype).1 => format!("REQUEST · {}", sanitize(&r.dtype)),
-        _ => "REQUEST".to_string(),
+        Some(r) => format!("REQUEST{}", array_marker(&r.dtype)),
+        None => "REQUEST".to_string(),
     };
     doc.push(Line::from(
         Span::from(request_label).style(Style::default().bold()),
@@ -278,11 +278,7 @@ fn response_section(contract: &JsonContent, selected: usize, focused: bool) -> V
     } else {
         Style::default().bold().fg(status_color(&code))
     };
-    let marker = if parse_type(&response.dtype).1 {
-        format!(" · {}", sanitize(&response.dtype))
-    } else {
-        String::new()
-    };
+    let marker = array_marker(&response.dtype);
     let head = Line::from(vec![
         Span::from("RESPONSE ").style(Style::default().bold()),
         Span::from(code).style(code_style),
@@ -385,13 +381,6 @@ fn param_table(variables: &[Variable]) -> Vec<Line<'static>> {
         })
         .collect();
     table(&["NAME", "TYPE", "REQ", "DESCRIPTION"], &rows)
-}
-
-/// True if any field — at any depth — declares `accept`.
-fn any_accept(fields: &[Schema]) -> bool {
-    fields
-        .iter()
-        .any(|f| f.accept.is_some() || f.properties.as_deref().is_some_and(any_accept))
 }
 
 /// Renders a request/response field list as an aligned table. The ACCEPT

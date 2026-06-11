@@ -135,6 +135,14 @@ pub fn parse_type(dtype: &str) -> (&str, bool) {
     }
 }
 
+/// True if any field — at any depth via `properties` — declares `accept`.
+/// Shared by the plain-text and TUI field-table renderers.
+pub(crate) fn any_accept(fields: &[Schema]) -> bool {
+    fields
+        .iter()
+        .any(|f| f.accept.is_some() || f.properties.as_deref().is_some_and(any_accept))
+}
+
 // Scaffolding for the upcoming `method set` command; not yet wired in.
 #[allow(dead_code)]
 pub fn method_from_str(method: &str) -> Method {
@@ -217,6 +225,36 @@ mod tests {
         assert_eq!(parse_type("string[]"), ("string", true));
         assert_eq!(parse_type("object"), ("object", false));
         assert_eq!(parse_type("string"), ("string", false));
+    }
+
+    #[test]
+    fn any_accept_detects_a_declared_accept_at_any_depth() {
+        // No field declares `accept`.
+        let plain = json_get(
+            r#"{ "name":"t","method":"GET",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "responses":[{"code":200,"description":"ok","schema":[
+                   {"name":"f","type":"string","default":null,"description":"d","required":true}
+                 ]}] }"#,
+            None,
+        )
+        .unwrap();
+        assert!(!any_accept(&plain.responses[0].schema));
+
+        // A nested `file` field declares `accept`.
+        let nested = json_get(
+            r#"{ "name":"t","method":"GET",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "responses":[{"code":200,"description":"ok","schema":[
+                   {"name":"wrap","type":"object","default":null,"description":"d","required":true,
+                    "properties":[
+                      {"name":"avatar","type":"file","default":null,"description":"d","required":true,"accept":"image/png"}
+                    ]}
+                 ]}] }"#,
+            None,
+        )
+        .unwrap();
+        assert!(any_accept(&nested.responses[0].schema));
     }
 
     #[test]

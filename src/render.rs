@@ -4,7 +4,7 @@
 //! query, headers, request, responses). Colors are applied only when stdout is
 //! a terminal, so piped or redirected output stays clean.
 
-use crate::json::{JsonContent, Method, Schema, Url, Variable, method_str, parse_type};
+use crate::json::{JsonContent, Method, Schema, Url, Variable, any_accept, method_str, parse_type};
 use crossterm::style::Stylize;
 use std::io::IsTerminal;
 
@@ -86,8 +86,8 @@ impl Printer {
         }
 
         let request_label = match &c.request {
-            Some(r) if parse_type(&r.dtype).1 => format!("REQUEST · {}", sanitize(&r.dtype)),
-            _ => "REQUEST".to_string(),
+            Some(r) => format!("REQUEST{}", array_marker(&r.dtype)),
+            None => "REQUEST".to_string(),
         };
         self.section(&request_label);
         match &c.request {
@@ -187,11 +187,7 @@ impl Printer {
     fn response_title(&self, code: u16, description: &str, dtype: &str) {
         println!();
         let description = sanitize(description);
-        let marker = if parse_type(dtype).1 {
-            format!(" · {}", sanitize(dtype))
-        } else {
-            String::new()
-        };
+        let marker = array_marker(dtype);
         if self.color {
             let code = code.to_string();
             let code = match code.as_bytes()[0] {
@@ -297,11 +293,15 @@ fn variable_rows(variables: &[Variable]) -> (Vec<&'static str>, Vec<Vec<String>>
     (headers, rows)
 }
 
-/// True if any field — at any depth — declares `accept`.
-fn any_accept(fields: &[Schema]) -> bool {
-    fields
-        .iter()
-        .any(|f| f.accept.is_some() || f.properties.as_deref().is_some_and(any_accept))
+/// The ` · <type>` suffix shown on a section title when the body is an array
+/// (e.g. `object[]`), or an empty string for a plain object body. The type is
+/// sanitized for display. Shared by the plain-text and TUI renderers.
+pub(crate) fn array_marker(dtype: &str) -> String {
+    if parse_type(dtype).1 {
+        format!(" · {}", sanitize(dtype))
+    } else {
+        String::new()
+    }
 }
 
 /// Builds the headers and rows for a request/response field table. The ACCEPT
@@ -450,6 +450,14 @@ mod tests {
     fn req_mark_renders_check_only_when_required() {
         assert_eq!(req_mark(true), "✓");
         assert_eq!(req_mark(false), "");
+    }
+
+    #[test]
+    fn array_marker_only_decorates_array_bodies() {
+        assert_eq!(array_marker("object[]"), " · object[]");
+        assert_eq!(array_marker("string[]"), " · string[]");
+        assert_eq!(array_marker("object"), "");
+        assert_eq!(array_marker("string"), "");
     }
 
     fn field(name: &str, properties: Option<Vec<Schema>>) -> Schema {
