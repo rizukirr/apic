@@ -678,6 +678,27 @@ pub(crate) fn handle_insert(state: &mut UiState, model: &mut EditModel, key: Key
             state.refresh(model);
             Action::None
         }
+        // Tab / Shift-Tab commit the current value, then jump to the next /
+        // previous cell — and keep typing there when it is a text cell, for a
+        // fast tab-through-the-row entry flow.
+        KeyCode::Tab | KeyCode::BackTab => {
+            let value = buf.clone();
+            let dir = if key.code == KeyCode::BackTab { -1 } else { 1 };
+            if let Some(field) = state.focused_field_pub() {
+                set_field(model, &field, value);
+                state.dirty = true;
+            }
+            state.mode = Mode::Normal;
+            state.refresh(model);
+            state.move_cell(dir);
+            if let Some(c) = state.cell
+                && let Some(cell) = state.current_row().and_then(|r| r.cells.get(c))
+                && cell.kind == CellKind::Text
+            {
+                state.mode = Mode::Insert(cell.value.clone());
+            }
+            Action::None
+        }
         KeyCode::Esc => {
             state.mode = Mode::Normal;
             Action::None
@@ -1011,6 +1032,35 @@ mod tests {
         handle_insert(&mut s, &mut m, key(KeyCode::Char('x')));
         handle_insert(&mut s, &mut m, key(KeyCode::Enter));
         assert_eq!(m.name, "tx");
+    }
+
+    #[test]
+    fn tab_commits_and_jumps_to_next_text_cell_in_insert() {
+        let c = json_get(
+            r#"{ "name":"t","method":"GET",
+                 "url":{"protocol":"https","host":"h","path":["x"],
+                        "query":[{"name":"page","value":"1","description":"d","required":false}]},
+                 "headers":[],"responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| matches!(f, Field::QueryName(_)));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cell-edit on query name
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert (prefilled "page")
+        assert!(matches!(s.mode, Mode::Insert(_)));
+        handle_insert(&mut s, &mut m, key(KeyCode::Tab)); // commit + jump to the value cell
+        assert_eq!(m.url.query[0].name, "page"); // committed unchanged
+        assert!(matches!(s.focused_field_pub(), Some(Field::QueryValue(_))));
+        assert!(
+            matches!(s.mode, Mode::Insert(_)),
+            "stays in insert on the next text cell"
+        );
+        // typing continues into the value cell (prefilled "1")
+        handle_insert(&mut s, &mut m, key(KeyCode::Char('2')));
+        handle_insert(&mut s, &mut m, key(KeyCode::Enter));
+        assert_eq!(m.url.query[0].value, "12");
     }
 
     #[test]
