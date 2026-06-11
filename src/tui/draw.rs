@@ -243,6 +243,10 @@ fn url_line(state: &UiState, row: &TableRow, selected: bool) -> Line<'static> {
 
     let method_style = if method_focused {
         cell_hl()
+    } else if selected {
+        // On the selected (cursor) line, the method follows the row highlight
+        // (white bold) instead of its GET/POST color.
+        base
     } else {
         base.fg(method_color(&method.value))
             .add_modifier(Modifier::BOLD)
@@ -273,7 +277,9 @@ fn kv_line(state: &UiState, row: &TableRow, selected: bool) -> (Line<'static>, O
             let val = cell_text(state, c, focused);
             let style = if focused {
                 cell_hl()
-            } else if c.kind == CellKind::Label {
+            } else if c.kind == CellKind::Label && !selected {
+                // Labels are dim only when the row is not selected; when the
+                // cursor is on the row, keep the consistent white-bold highlight.
                 base.fg(Color::DarkGray)
             } else {
                 base
@@ -315,7 +321,7 @@ fn push_section(
                 *sel = (lines.len(), lines.len());
             }
             let style = if selected && state.cell.is_none() {
-                title_style().bg(Color::Yellow).fg(Color::Black)
+                title_style().bg(Color::Red).fg(Color::White)
             } else {
                 title_style()
             };
@@ -515,8 +521,8 @@ fn table_line(
 fn sel_style(state: &UiState, selected: bool) -> Style {
     if selected && state.cell.is_none() {
         Style::default()
-            .bg(Color::Yellow)
-            .fg(Color::Black)
+            .bg(Color::Red)
+            .fg(Color::White)
             .add_modifier(Modifier::BOLD)
     } else if selected && state.cell.is_some() {
         Style::default()
@@ -531,7 +537,7 @@ fn sel_style(state: &UiState, selected: bool) -> Style {
 /// row base.
 fn cell_hl() -> Style {
     Style::default()
-        .bg(Color::Red)
+        .bg(Color::Yellow)
         .fg(Color::White)
         .add_modifier(Modifier::BOLD)
 }
