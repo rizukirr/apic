@@ -13,7 +13,7 @@ use serde_json::Value;
 fn seed_value(overlay: Option<&str>) -> Result<Value, String> {
     let mut base: Value = serde_json::from_str(crate::template::DEFAULT)
         .map_err(|err| format!("builtin template invalid: {err}"))?;
-    blank_scalars(&mut base);
+    strip_to_seed_defaults(&mut base);
 
     if let Some(overlay) = overlay {
         let over: Value = serde_json::from_str(overlay)
@@ -23,22 +23,23 @@ fn seed_value(overlay: Option<&str>) -> Result<Value, String> {
     Ok(base)
 }
 
-/// Recursively empties scalar leaves: strings -> "", numbers/bools/null left as
-/// structurally-valid placeholders the contract schema still accepts. Keys named
-/// `type` and `method` carry structural enum values the schema rejects when
-/// empty, so they retain their builtin value.
-fn blank_scalars(v: &mut Value) {
+/// Prepares the builtin template as a create seed: keeps scalar default values
+/// (name, description, method, protocol, host, types) but EMPTIES every array so
+/// a new contract starts with no leftover items, and clears every `example`.
+/// The project `.apic/template.json` overlay then replaces any arrays/values it
+/// defines.
+fn strip_to_seed_defaults(v: &mut Value) {
     match v {
-        Value::String(s) => s.clear(),
-        Value::Array(items) => items.iter_mut().for_each(blank_scalars),
+        Value::Array(items) => items.clear(),
         Value::Object(map) => {
             for (k, val) in map.iter_mut() {
-                if k != "type" && k != "method" {
-                    blank_scalars(val);
+                if k == "example" {
+                    *val = Value::Null;
+                } else {
+                    strip_to_seed_defaults(val);
                 }
             }
         }
-        // numbers/bools/null are left as-is; they are valid structural defaults
         _ => {}
     }
 }
@@ -74,11 +75,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn no_overlay_blanks_builtin_string_values() {
+    fn no_overlay_keeps_scalars_empties_arrays() {
         let m = seed_model(None).unwrap();
-        // The builtin template's `name` placeholder ("endpoint-name") is blanked.
-        assert_eq!(m.name, "");
-        assert_eq!(m.url.host, "");
+        // The builtin template's scalar defaults are kept.
+        assert_eq!(m.name, "endpoint-name");
+        assert_eq!(m.url.protocol, "https");
+        assert_eq!(m.url.host, "api.example.com");
+        // Every array starts empty.
+        assert!(m.url.path.is_empty());
+        assert!(m.url.query.is_empty());
+        assert!(m.url.variable.is_empty());
+        assert!(m.headers.is_empty());
+        assert!(m.responses.is_empty());
+        assert!(m.request.as_ref().unwrap().schema.is_empty());
     }
 
     #[test]
@@ -88,9 +97,9 @@ mod tests {
         let m = seed_model(Some(overlay)).unwrap();
         assert_eq!(m.name, "real-endpoint");
         assert_eq!(m.url.host, "api.real.com");
-        // A field only the builtin has (e.g. method exists in both, but
-        // protocol value comes only from builtin) stays blank.
-        assert_eq!(m.url.protocol, "");
+        // A scalar only the builtin defines (protocol) is kept, NOT blanked.
+        assert_eq!(m.url.protocol, "https");
+        assert!(m.url.path.is_empty());
     }
 
     #[test]

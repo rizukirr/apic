@@ -350,17 +350,92 @@ fn push_section(
         .collect();
     let has_example = section.rows.iter().any(|r| r.kind == RowKind::Example);
 
-    if field_rows.is_empty() && !has_example {
-        lines.push(Line::from(Span::styled(" (none)", dim())));
-        return;
-    }
-
     let ncols = section.headers.as_ref().map(|h| h.len()).unwrap_or(0);
     let widths = if ncols > 0 {
         col_widths(section, ncols)
     } else {
         Vec::new()
     };
+
+    // BODY sections (REQUEST/RESPONSE) match `apic read`: show `(none)` when
+    // there are no schema fields and no example; show only the example when it
+    // is example-only; otherwise show the schema table plus its example.
+    if section.kind == SectionKind::Body {
+        // The real schema fields are the `Field` rows whose cell count equals
+        // the column count (NAME/TYPE/REQ/DESCRIPTION); the 2-cell `label value`
+        // rows are the expanded `type`/`code`/`description` lead rows.
+        let schema_rows_exist = field_rows
+            .iter()
+            .any(|r| ncols > 0 && r.cells.len() == ncols);
+        let example_nonempty = section
+            .rows
+            .iter()
+            .any(|r| r.kind == RowKind::Example && !r.raw.trim().is_empty());
+
+        // Always render the lead kv rows (expanded type/code/description).
+        for (ri, row) in section.rows.iter().enumerate() {
+            if row.kind != RowKind::Field || (ncols > 0 && row.cells.len() == ncols) {
+                continue;
+            }
+            let selected = si == state.sec && ri == state.row;
+            if selected {
+                *sel = (lines.len(), lines.len());
+            }
+            let (line, col) = kv_line(state, row, selected);
+            record_cursor(cursor, lines.len(), col);
+            lines.push(line);
+        }
+
+        if schema_rows_exist {
+            // Column header line + schema rows, then the example row (always, so
+            // it stays editable / openable even when empty).
+            if let Some(h) = &section.headers {
+                let mut spans = vec![Span::raw(" ")];
+                for (i, head) in h.iter().enumerate() {
+                    spans.push(Span::styled(pad(head, widths[i]), dim()));
+                    if i + 1 < h.len() {
+                        spans.push(Span::raw(" ".repeat(GAP)));
+                    }
+                }
+                lines.push(Line::from(trim_trailing(spans)));
+            }
+            for (ri, row) in section.rows.iter().enumerate() {
+                let selected = si == state.sec && ri == state.row;
+                match row.kind {
+                    RowKind::Field if ncols > 0 && row.cells.len() == ncols => {
+                        if selected {
+                            *sel = (lines.len(), lines.len());
+                        }
+                        let (line, col) = table_line(state, row, &widths, ncols, selected);
+                        record_cursor(cursor, lines.len(), col);
+                        lines.push(line);
+                    }
+                    RowKind::Example => {
+                        push_example_block(state, row, selected, lines, sel);
+                    }
+                    _ => {}
+                }
+            }
+        } else if example_nonempty {
+            // Example-only body, like `apic read`.
+            for (ri, row) in section.rows.iter().enumerate() {
+                if row.kind == RowKind::Example {
+                    let selected = si == state.sec && ri == state.row;
+                    push_example_block(state, row, selected, lines, sel);
+                }
+            }
+        } else {
+            // No schema fields and an empty example: render `(none)` and nothing
+            // else (no header line, no example row).
+            lines.push(Line::from(Span::styled(" (none)", dim())));
+        }
+        return;
+    }
+
+    if field_rows.is_empty() && !has_example {
+        lines.push(Line::from(Span::styled(" (none)", dim())));
+        return;
+    }
 
     // Only schema field rows (cell count == ncols) feed the column-header line;
     // expanded kv rows (label + value) are rendered ` label  value`.
@@ -397,18 +472,30 @@ fn push_section(
                 lines.push(line);
             }
             RowKind::Example => {
-                lines.push(Line::raw("")); // blank line before Example:
-                let example_label = lines.len();
-                lines.push(Line::from(Span::styled(" Example:", dim())));
-                push_example(state, row, selected, lines);
-                if selected {
-                    // First line of the block is ` Example:`; last is the final
-                    // example-content line just pushed.
-                    *sel = (example_label, lines.len().saturating_sub(1));
-                }
+                push_example_block(state, row, selected, lines, sel);
             }
             _ => {}
         }
+    }
+}
+
+/// Renders the ` Example:` label + the example payload (or ` (no example
+/// provided)`), tracking the row's selection span over the whole block.
+fn push_example_block(
+    state: &UiState,
+    row: &TableRow,
+    selected: bool,
+    lines: &mut Vec<Line<'static>>,
+    sel: &mut (usize, usize),
+) {
+    lines.push(Line::raw("")); // blank line before Example:
+    let example_label = lines.len();
+    lines.push(Line::from(Span::styled(" Example:", dim())));
+    push_example(state, row, selected, lines);
+    if selected {
+        // First line of the block is ` Example:`; last is the final
+        // example-content line just pushed.
+        *sel = (example_label, lines.len().saturating_sub(1));
     }
 }
 
@@ -725,6 +812,37 @@ mod tests {
         for g in ['│', '┌', '┐', '┘', '┤', '┬', '┴', '┼'] {
             assert!(!text.contains(g), "found border glyph {g:?}");
         }
+    }
+
+    #[test]
+    fn empty_request_body_renders_none_not_example() {
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"https","host":"h","path":["x"]},
+                 "headers":[],
+                 "request":{"type":"object","schema":[]},
+                 "responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let m = EditModel::from_contract(c);
+        let state = UiState::new(&m);
+        let backend = TestBackend::new(100, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &state)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect();
+        // The REQUEST section shows `(none)` with no empty example/header line.
+        let req_idx = text.find("REQUEST").expect("REQUEST section present");
+        assert!(
+            text[req_idx..].trim_start().starts_with("REQUEST"),
+            "REQUEST present"
+        );
+        assert!(text.contains("(none)"), "empty body shows (none)");
+        assert!(
+            !text.contains("no example provided"),
+            "empty body should not render an Example row"
+        );
     }
 
     #[test]

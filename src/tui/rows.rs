@@ -148,7 +148,7 @@ fn bool_cell(field: Field, v: bool) -> Cell {
     Cell {
         field,
         kind: CellKind::Bool,
-        value: v.to_string(),
+        value: if v { "✓".to_string() } else { String::new() },
     }
 }
 fn field_row(cells: Vec<Cell>) -> TableRow {
