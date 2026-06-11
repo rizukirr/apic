@@ -21,11 +21,22 @@ pub(crate) fn draw(frame: &mut Frame, state: &UiState) {
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(area);
 
-    let (lines, sel) = build_lines(state);
+    let (lines, sel, cursor) = build_lines(state);
     // Simple top-anchored scroll: keep the selected line in view.
     let height = chunks[0].height as usize;
     let scroll = sel.saturating_sub(height.saturating_sub(2)) as u16;
     frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), chunks[0]);
+
+    // Place a real terminal cursor at the end of the insert buffer, if any.
+    if let Some((line, col)) = cursor
+        && line >= scroll as usize
+    {
+        let y = chunks[0].y + (line - scroll as usize) as u16;
+        let x = chunks[0].x + col as u16;
+        if y < chunks[0].y + chunks[0].height && x < chunks[0].x + chunks[0].width {
+            frame.set_cursor_position((x, y));
+        }
+    }
 
     draw_status(frame, chunks[1], state);
 
@@ -96,23 +107,25 @@ fn col_widths(section: &Section, ncols: usize) -> Vec<usize> {
     w
 }
 
-/// Builds all display lines, returning them and the index of the line that
-/// carries the current selection (for scrolling).
-fn build_lines(state: &UiState) -> (Vec<Line<'static>>, usize) {
+/// Builds all display lines, returning them, the index of the line that carries
+/// the current selection (for scrolling), and the insert cursor position
+/// `(line, col)` where `col` is a char offset from the line start (if editing).
+fn build_lines(state: &UiState) -> (Vec<Line<'static>>, usize, Option<(usize, usize)>) {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut sel_line = 0usize;
+    let mut cursor: Option<(usize, usize)> = None;
 
     for (si, section) in state.sections.iter().enumerate() {
         match section.kind {
             SectionKind::Header => {
-                push_header(state, si, section, &mut lines, &mut sel_line);
+                push_header(state, si, section, &mut lines, &mut sel_line, &mut cursor);
             }
             SectionKind::Table | SectionKind::Body => {
-                push_section(state, si, section, &mut lines, &mut sel_line);
+                push_section(state, si, section, &mut lines, &mut sel_line, &mut cursor);
             }
         }
     }
-    (lines, sel_line)
+    (lines, sel_line, cursor)
 }
 
 /// Emits the header block: ` NAME`, ` description` (when non-empty), a blank
@@ -123,16 +136,18 @@ fn push_header(
     section: &Section,
     lines: &mut Vec<Line<'static>>,
     sel_line: &mut usize,
+    cursor: &mut Option<(usize, usize)>,
 ) {
     for (ri, row) in section.rows.iter().enumerate() {
         let selected = si == state.sec && ri == state.row;
         match row.kind {
             RowKind::Name => {
-                let line =
+                let (line, col) =
                     header_value_line(state, row, selected, |v| format!(" {}", v.to_uppercase()));
                 if selected {
                     *sel_line = lines.len();
                 }
+                record_cursor(cursor, lines.len(), col);
                 lines.push(line);
             }
             RowKind::Desc => {
@@ -147,10 +162,11 @@ fn push_header(
                     }
                     continue;
                 }
-                let line = header_value_line(state, row, selected, |v| format!(" {v}"));
+                let (line, col) = header_value_line(state, row, selected, |v| format!(" {v}"));
                 if selected {
                     *sel_line = lines.len();
                 }
+                record_cursor(cursor, lines.len(), col);
                 lines.push(line);
             }
             RowKind::UrlLine => {
@@ -168,10 +184,20 @@ fn push_header(
                 if selected {
                     *sel_line = lines.len();
                 }
-                lines.push(kv_line(state, row, selected));
+                let (line, col) = kv_line(state, row, selected);
+                record_cursor(cursor, lines.len(), col);
+                lines.push(line);
             }
             RowKind::Title | RowKind::Example => {}
         }
+    }
+}
+
+/// Records the insert cursor at `(line, col)` when a line builder reported a
+/// cursor column.
+fn record_cursor(cursor: &mut Option<(usize, usize)>, line: usize, col: Option<usize>) {
+    if let Some(c) = col {
+        *cursor = Some((line, c));
     }
 }
 
@@ -182,23 +208,27 @@ fn header_value_line(
     row: &TableRow,
     selected: bool,
     fmt: impl Fn(&str) -> String,
-) -> Line<'static> {
+) -> (Line<'static>, Option<usize>) {
     let cell = &row.cells[0];
     let focused = selected && state.cell == Some(0);
     let base = sel_style(selected);
     if focused && let Mode::Insert(buf) = &state.mode {
-        // Insert edits the raw value; show it verbatim with a cursor.
-        return Line::from(Span::styled(
-            format!(" {buf}_"),
-            base.fg(Color::Black).bg(Color::Yellow),
+        // Insert edits the raw value; show it as plain bold text and place a
+        // real terminal cursor at its end (no yellow highlight while typing).
+        let line = Line::from(Span::styled(
+            format!(" {buf}"),
+            base.add_modifier(Modifier::BOLD),
         ));
+        // One leading space precedes the buffer.
+        let col = 1 + buf.chars().count();
+        return (line, Some(col));
     }
     let style = if focused {
         base.fg(Color::Black).bg(Color::Yellow)
     } else {
         base
     };
-    Line::from(Span::styled(fmt(&cell.value), style))
+    (Line::from(Span::styled(fmt(&cell.value), style)), None)
 }
 
 /// The collapsed ` METHOD <built-url>` line.
@@ -224,25 +254,36 @@ fn url_line(state: &UiState, row: &TableRow, selected: bool) -> Line<'static> {
 
 /// A ` label  value` key/value line (expanded URL rows). The label is dim; the
 /// value cell honors focus and the insert buffer.
-fn kv_line(state: &UiState, row: &TableRow, selected: bool) -> Line<'static> {
+fn kv_line(state: &UiState, row: &TableRow, selected: bool) -> (Line<'static>, Option<usize>) {
     let base = sel_style(selected);
     let mut spans = vec![Span::styled(" ", base)];
+    let mut emitted = 1usize; // leading space
+    let mut cursor_col = None;
     for (i, c) in row.cells.iter().enumerate() {
         let focused = selected && state.cell == Some(i);
-        let val = cell_text(state, c, focused);
-        let style = if focused {
-            base.fg(Color::Black).bg(Color::Yellow)
-        } else if c.kind == CellKind::Label {
-            base.fg(Color::DarkGray)
+        if focused && let Mode::Insert(buf) = &state.mode {
+            // Plain text + real cursor while typing (no yellow highlight).
+            spans.push(Span::styled(buf.clone(), base.add_modifier(Modifier::BOLD)));
+            cursor_col = Some(emitted + buf.chars().count());
+            emitted += buf.chars().count();
         } else {
-            base
-        };
-        spans.push(Span::styled(val, style));
+            let val = cell_text(state, c, focused);
+            let style = if focused {
+                base.fg(Color::Black).bg(Color::Yellow)
+            } else if c.kind == CellKind::Label {
+                base.fg(Color::DarkGray)
+            } else {
+                base
+            };
+            emitted += val.chars().count();
+            spans.push(Span::styled(val, style));
+        }
         if i + 1 < row.cells.len() {
             spans.push(Span::styled("  ", base));
+            emitted += 2;
         }
     }
-    Line::from(spans)
+    (Line::from(spans), cursor_col)
 }
 
 /// Emits a read-style section: a blank line, the bold title, then either the
@@ -253,6 +294,7 @@ fn push_section(
     section: &Section,
     lines: &mut Vec<Line<'static>>,
     sel_line: &mut usize,
+    cursor: &mut Option<(usize, usize)>,
 ) {
     lines.push(Line::raw("")); // blank line before the title
 
@@ -332,11 +374,13 @@ fn push_section(
                     *sel_line = lines.len();
                 }
                 // Expanded title rows (label + value) render like URL kv rows.
-                if ncols > 0 && row.cells.len() == ncols {
-                    lines.push(table_line(state, row, &widths, ncols, selected));
+                let (line, col) = if ncols > 0 && row.cells.len() == ncols {
+                    table_line(state, row, &widths, ncols, selected)
                 } else {
-                    lines.push(kv_line(state, row, selected));
-                }
+                    kv_line(state, row, selected)
+                };
+                record_cursor(cursor, lines.len(), col);
+                lines.push(line);
             }
             RowKind::Example => {
                 lines.push(Line::raw("")); // blank line before Example:
@@ -372,36 +416,54 @@ fn table_line(
     widths: &[usize],
     ncols: usize,
     selected: bool,
-) -> Line<'static> {
+) -> (Line<'static>, Option<usize>) {
     let base = sel_style(selected);
     let editing_here = selected && state.cell.is_some();
     let mut spans = vec![Span::styled(" ", base)];
+    let mut emitted = 1usize; // leading space
+    let mut cursor_col = None;
 
     if row.cells.len() == ncols && ncols > 0 {
         let last = row.cells.len() - 1;
         for (i, c) in row.cells.iter().enumerate() {
             let focused = editing_here && state.cell == Some(i);
-            let mut val = cell_text(state, c, focused);
-            // Column 0 carries the tree prefix at display time only (the edited
-            // buffer stays bare, so `cell_text` shows `{buf}_` without prefix).
-            if i == 0 && !row.prefix.is_empty() {
-                val = format!("{}{val}", row.prefix);
-            }
-            // A focused but empty last cell renders a single space so its
-            // highlight is visible (e.g. editing an empty description).
-            if i == last && focused && val.is_empty() {
-                val = " ".to_string();
-            }
-            // Last column is not padded (its trailing space would be trimmed).
-            let cell_str = if i == last { val } else { pad(&val, widths[i]) };
-            let style = if focused {
-                base.fg(Color::Black).bg(Color::Yellow)
+            // Column 0 carries the tree prefix at display time only.
+            let prefix = if i == 0 { row.prefix.as_str() } else { "" };
+            if focused && let Mode::Insert(buf) = &state.mode {
+                // Plain text + real cursor (no yellow highlight). The prefix is
+                // shown but the cursor sits after the buffer.
+                let shown = format!("{prefix}{buf}");
+                let cell_str = if i == last {
+                    shown
+                } else {
+                    pad(&shown, widths[i])
+                };
+                cursor_col = Some(emitted + prefix.chars().count() + buf.chars().count());
+                emitted += cell_str.chars().count();
+                spans.push(Span::styled(cell_str, base.add_modifier(Modifier::BOLD)));
             } else {
-                base
-            };
-            spans.push(Span::styled(cell_str, style));
+                let mut val = cell_text(state, c, focused);
+                if i == 0 && !prefix.is_empty() {
+                    val = format!("{prefix}{val}");
+                }
+                // A focused but empty last cell renders a single space so its
+                // highlight is visible (e.g. editing an empty description).
+                if i == last && focused && val.is_empty() {
+                    val = " ".to_string();
+                }
+                // Last column is not padded (its trailing space would trim).
+                let cell_str = if i == last { val } else { pad(&val, widths[i]) };
+                let style = if focused {
+                    base.fg(Color::Black).bg(Color::Yellow)
+                } else {
+                    base
+                };
+                emitted += cell_str.chars().count();
+                spans.push(Span::styled(cell_str, style));
+            }
             if i + 1 < row.cells.len() {
                 spans.push(Span::styled(" ".repeat(GAP), base));
+                emitted += GAP;
             }
         }
     } else {
@@ -410,26 +472,39 @@ fn table_line(
         let hdr_widths = !widths.is_empty();
         for (i, c) in row.cells.iter().enumerate() {
             let focused = editing_here && state.cell == Some(i);
-            let val = cell_text(state, c, focused);
-            let cell_str = if hdr_widths && i < widths.len() && i != last {
-                pad(&val, widths[i])
+            if focused && let Mode::Insert(buf) = &state.mode {
+                let cell_str = if hdr_widths && i < widths.len() && i != last {
+                    pad(buf, widths[i])
+                } else {
+                    buf.clone()
+                };
+                cursor_col = Some(emitted + buf.chars().count());
+                emitted += cell_str.chars().count();
+                spans.push(Span::styled(cell_str, base.add_modifier(Modifier::BOLD)));
             } else {
-                val
-            };
-            let style = if focused {
-                base.fg(Color::Black).bg(Color::Yellow)
-            } else if c.kind == CellKind::Label {
-                base.fg(Color::DarkGray)
-            } else {
-                base
-            };
-            spans.push(Span::styled(cell_str, style));
+                let val = cell_text(state, c, focused);
+                let cell_str = if hdr_widths && i < widths.len() && i != last {
+                    pad(&val, widths[i])
+                } else {
+                    val
+                };
+                let style = if focused {
+                    base.fg(Color::Black).bg(Color::Yellow)
+                } else if c.kind == CellKind::Label {
+                    base.fg(Color::DarkGray)
+                } else {
+                    base
+                };
+                emitted += cell_str.chars().count();
+                spans.push(Span::styled(cell_str, style));
+            }
             if i + 1 < row.cells.len() {
                 spans.push(Span::styled(" ".repeat(GAP), base));
+                emitted += GAP;
             }
         }
     }
-    Line::from(trim_trailing(spans))
+    (Line::from(trim_trailing(spans)), cursor_col)
 }
 
 /// The base style for a row: a subtle background highlight when selected.

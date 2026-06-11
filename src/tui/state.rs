@@ -251,20 +251,86 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
 
 /// Appends a row near the focused schema field — a child under an object field,
 /// a sibling otherwise — falling back to the current section's `add` target.
+/// After the add, focuses the new row's name cell and enters insert mode so the
+/// user can start typing immediately (except `RequestToggle`, which has no name).
 fn append_here(state: &mut UiState, model: &mut EditModel) {
-    if let Some((loc, path, is_object)) = focused_schema_target(state) {
-        let target = if is_object {
+    let target = if let Some((loc, path, is_object)) = focused_schema_target(state) {
+        if is_object {
             Field::SchemaAdd(loc, path) // add a child under the object field
         } else {
             let mut parent = path;
             parent.pop();
             Field::SchemaAdd(loc, parent) // add a sibling at this level
-        };
-        add_row(state, model, &target);
+        }
+    } else if let Some(field) = state.sections.get(state.sec).and_then(|s| s.add.clone()) {
+        field
+    } else {
         return;
+    };
+    add_row(state, model, &target);
+    if let Some(nf) = new_name_field(model, &target) {
+        focus_and_insert(state, &nf);
     }
-    if let Some(field) = state.sections.get(state.sec).and_then(|s| s.add.clone()) {
-        add_row(state, model, &field);
+}
+
+/// The "name" field of the just-added entity for `target`, used to auto-focus
+/// and enter insert mode after `add_row`. Returns `None` for `RequestToggle`
+/// (no name) or when the add did not produce a row.
+fn new_name_field(model: &EditModel, target: &Field) -> Option<Field> {
+    match target {
+        Field::QueryAdd => model.url.query.len().checked_sub(1).map(Field::QueryName),
+        Field::VarAdd => model.url.variable.len().checked_sub(1).map(Field::VarName),
+        Field::HeaderAdd => model.headers.len().checked_sub(1).map(Field::HeaderName),
+        Field::PathAdd => model.url.path.len().checked_sub(1).map(Field::PathSeg),
+        Field::ResponseAdd => model
+            .responses
+            .len()
+            .checked_sub(1)
+            .map(Field::ResponseCode),
+        Field::SchemaAdd(loc, path) => {
+            let len = schema_children_len(model, loc, path)?;
+            let new_index = len.checked_sub(1)?;
+            let mut p = path.clone();
+            p.push(new_index);
+            Some(Field::SchemaName(loc.clone(), p))
+        }
+        _ => None,
+    }
+}
+
+/// Number of children at `path` for `loc` (the vector a `SchemaAdd` appends to),
+/// after the add. `None` if the path does not resolve.
+fn schema_children_len(model: &EditModel, loc: &BodyLoc, path: &[usize]) -> Option<usize> {
+    let root = match loc {
+        BodyLoc::Request => model.request.as_ref()?.schema.as_slice(),
+        BodyLoc::Response(r) => model.responses.get(*r)?.schema.as_slice(),
+    };
+    schema_children_len_at(root, path)
+}
+
+/// Walks `fields` along `path`, returning the length of the child vector to
+/// append into ([] = the top-level `fields`). Mirrors `model::schema_node_mut`.
+fn schema_children_len_at(fields: &[EditSchema], path: &[usize]) -> Option<usize> {
+    match path.split_first() {
+        None => Some(fields.len()),
+        Some((&first, rest)) => schema_children_len_at(&fields.get(first)?.properties, rest),
+    }
+}
+
+/// Focuses the row+cell whose field equals `name_field` and enters insert mode
+/// seeded with that cell's current value (empty for a fresh row). No-op if not
+/// found.
+fn focus_and_insert(state: &mut UiState, name_field: &Field) {
+    for (si, sec) in state.sections.iter().enumerate() {
+        for (ri, row) in sec.rows.iter().enumerate() {
+            if let Some(ci) = row.cells.iter().position(|c| &c.field == name_field) {
+                state.sec = si;
+                state.row = ri;
+                state.cell = Some(ci);
+                state.mode = Mode::Insert(row.cells[ci].value.clone());
+                return;
+            }
+        }
     }
 }
 
@@ -762,6 +828,22 @@ mod tests {
         goto(&mut s, |f| matches!(f, Field::HeaderName(_)));
         handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
         assert_eq!(m.headers.len(), 2);
+    }
+
+    #[test]
+    fn a_auto_enters_insert_on_new_name() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| matches!(f, Field::HeaderName(_)));
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
+        assert_eq!(m.headers.len(), 2);
+        assert!(matches!(s.mode, Mode::Insert(_)));
+        assert!(matches!(s.focused_field_pub(), Some(Field::HeaderName(1))));
+        // typing then Enter commits to the new header name and returns to row-select
+        handle_insert(&mut s, &mut m, key(KeyCode::Char('X')));
+        handle_insert(&mut s, &mut m, key(KeyCode::Enter));
+        assert_eq!(m.headers[1].name, "X");
+        assert_eq!(s.cell, None);
     }
 
     #[test]
