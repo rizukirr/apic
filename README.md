@@ -70,14 +70,16 @@ apic read -f login
 ### Editing contracts
 
 `apic create <file>` and `apic open <file>` open an interactive terminal editor
-(TUI) by default. The contract is shown as borderless tables — one per section
-(meta, url, query, variables, headers, request, responses). Use `↑/↓` to select a
-row, `Enter` to step into that row's cells, `←/→` to move between cells, and
-`Enter` again to edit a cell (type text, cycle the method/type, or toggle a
-boolean). `Esc` steps back out to row selection. Press `Enter` on a `+ add` row to
-insert an entry, `d` to delete the selected row, and `Enter` on an `example` row to
-edit its JSON payload in a pop-up editor. `Ctrl-S` saves; `?` shows the full key
-map.
+(TUI) by default. It shows the contract exactly as `apic read` renders it — the
+same header, sections, tables, and inline JSON examples — and lets you edit in
+place: `↑/↓` select a row, `Enter` steps into a row's cells, `←/→` move between
+cells, and `Enter` edits a cell (type text, cycle the method, or toggle a
+boolean). `Enter` on the `METHOD url` line expands it so you can edit the
+protocol, host, and path, and `Enter` on a `REQUEST`/`RESPONSE` title expands it
+so you can edit its code, description, and type; `Esc` collapses either again.
+Press `a` to add a row to the current section, `d` to delete the selected row, and
+`Enter` on an example to edit its JSON in a pop-up. `Ctrl-S` saves; `Esc`/`q`
+exits; `?` shows the key map.
 
 Prefer your own editor? Pass `--editor` to open the file in `$VISUAL`/`$EDITOR`
 (or a specific one, e.g. `apic open login --editor "code --wait"`).
