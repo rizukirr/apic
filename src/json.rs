@@ -30,6 +30,9 @@ pub struct JsonContent {
 /// an example, formal ones only a schema.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RequestBody {
+    /// Body shape: `"object"` (default) or an array form like `"object[]"`.
+    #[serde(alias = "type", default = "default_body_type")]
+    pub(crate) dtype: String,
     #[serde(default)]
     pub(crate) schema: Option<Vec<Request>>,
     #[serde(default)]
@@ -61,6 +64,11 @@ pub struct Variable {
 /// Path variables default to `string` when `type` is omitted.
 fn default_variable_type() -> String {
     "string".to_string()
+}
+
+/// Request/response bodies default to a single `object` when `type` is omitted.
+fn default_body_type() -> String {
+    "object".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -95,6 +103,9 @@ pub struct Request {
 pub struct Response {
     pub code: u16,
     pub description: String,
+    /// Body shape: `"object"` (default) or an array form like `"object[]"`.
+    #[serde(alias = "type", default = "default_body_type")]
+    pub dtype: String,
     /// Field-level schema; may be omitted when only an example is provided.
     #[serde(default)]
     pub schema: Vec<Schema>,
@@ -111,6 +122,7 @@ pub struct Schema {
     pub(crate) default: Option<String>,
     pub(crate) description: String,
     pub(crate) required: bool,
+    #[serde(default)]
     pub(crate) properties: Option<Vec<Schema>>,
 }
 
@@ -291,6 +303,39 @@ mod tests {
         // `required` defaults to false when omitted, and parses an explicit true.
         assert!(!variable[0].required);
         assert!(variable[1].required);
+    }
+
+    #[test]
+    fn body_type_parses_array_and_defaults_to_object() {
+        let json = r#"{
+            "name": "t", "method": "POST",
+            "url": { "protocol": "https", "host": "h", "path": ["x"] },
+            "headers": [],
+            "request": { "type": "object[]", "schema": [
+                { "name": "id", "type": "string", "default": null, "description": "d", "required": true }
+            ] },
+            "responses": [ { "code": 200, "description": "ok" } ]
+        }"#;
+        let c = json_get(json, None).unwrap();
+        assert_eq!(c.request.as_ref().unwrap().dtype, "object[]");
+        // Response omits "type" -> defaults to "object".
+        assert_eq!(c.responses[0].dtype, "object");
+    }
+
+    #[test]
+    fn schema_properties_default_to_none_and_array_type_parses() {
+        let json = r#"{
+            "name": "t", "method": "GET",
+            "url": { "protocol": "https", "host": "h", "path": ["x"] },
+            "headers": [],
+            "responses": [ { "code": 200, "description": "ok", "schema": [
+                { "name": "f", "type": "string[]", "default": null, "description": "d", "required": true }
+            ] } ]
+        }"#;
+        let c = json_get(json, None).unwrap();
+        let s = &c.responses[0].schema[0];
+        assert_eq!(s.dtype, "string[]");
+        assert!(s.properties.is_none());
     }
 
     #[test]
