@@ -3,11 +3,6 @@
 //! The default authoring surface for `apic create` and `apic open`. The
 //! external-editor path remains available behind `--editor`.
 
-// Retained during construction: `run`, `seed_model`, and `EditModel::from_contract`
-// are not consumed until the CLI wiring in Tasks 16-17. Task 18 removes this and
-// confirms nothing is left genuinely dead or unused.
-#![allow(dead_code, unused_imports)]
-
 mod draw;
 pub(crate) mod model;
 mod rows;

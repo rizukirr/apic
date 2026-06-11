@@ -82,19 +82,21 @@ enum Commands {
         #[arg(long, short = 'e')]
         example: bool,
     },
-    /// Scaffold a new contract from a template and open it in your editor.
+    /// Scaffold a new contract and edit it in the interactive TUI.
     ///
-    /// The path is resolved against the working directory and confined to it;
-    /// a `..` escape or an absolute path elsewhere is rejected. Refuses to
-    /// overwrite an existing file.
+    /// Opens a full-screen editor seeded from the project template's structure;
+    /// the file is written when you save. Pass `--editor` to scaffold the file
+    /// to disk and open it in `$VISUAL`/`$EDITOR` instead. The path is resolved
+    /// against the working directory and confined to it; a `..` escape or an
+    /// absolute path elsewhere is rejected. Refuses to overwrite an existing file.
     Create {
         /// Path for the new contract, relative to the working directory
         /// (e.g. `auth/login.json`).
         #[arg(long, short = 'f', value_name = "FILENAME")]
         filename: Option<String>,
 
-        /// Editor to open the new contract with (e.g. `nvim` or
-        /// `"code --wait"`), overriding `$VISUAL` and `$EDITOR`.
+        /// Edit in this external editor (e.g. `nvim` or `"code --wait"`) instead
+        /// of the built-in TUI, overriding `$VISUAL` and `$EDITOR`.
         #[arg(long, short = 'e', value_name = "EDITOR")]
         editor: Option<String>,
     },
@@ -119,11 +121,11 @@ enum Commands {
         #[arg(long, conflicts_with = "filename")]
         template: bool,
     },
-    /// Open an existing contract in your editor.
+    /// Edit an existing contract in the interactive TUI.
     ///
-    /// The filename is resolved like `read`: an exact path (`user/user.json`),
-    /// without the `.json` extension (`user/user`), or a fuzzy fragment
-    /// (`user`). Uses the same editor resolution as `create`.
+    /// Resolves the filename like `read` (exact, extensionless, or fuzzy) and
+    /// opens it in the full-screen editor. Pass `--editor` to use your external
+    /// editor instead. Uses the same editor resolution as `create`.
     ///
     /// Pass `--template` instead of a filename to edit the project template
     /// (`.apic/template.json`) that `apic create` scaffolds from.
@@ -139,8 +141,8 @@ enum Commands {
         )]
         filename: Option<String>,
 
-        /// Editor to open the contract with (e.g. `nvim` or `"code --wait"`),
-        /// overriding `$VISUAL` and `$EDITOR`.
+        /// Edit in this external editor (e.g. `nvim` or `"code --wait"`) instead
+        /// of the built-in TUI, overriding `$VISUAL` and `$EDITOR`.
         #[arg(long, short = 'e', value_name = "EDITOR")]
         editor: Option<String>,
 

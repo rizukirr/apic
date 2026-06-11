@@ -127,7 +127,6 @@ pub fn method_str(method: &Method) -> String {
 }
 
 /// All HTTP methods in a fixed order, for cycling through choices in the TUI.
-#[allow(dead_code)]
 pub(crate) fn method_all() -> [Method; 5] {
     [
         Method::GET,

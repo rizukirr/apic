@@ -10,7 +10,7 @@ use crate::tui::rows::{BodyLoc, Field, Row, RowKind, flatten};
 // ratatui/tui-textarea use (0.28); the root `crossterm` crate is 0.29.
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::json::{Method, method_all, method_str};
+use crate::json::{method_all, method_str};
 use std::path::Path;
 
 /// Whether keystrokes navigate or edit.
