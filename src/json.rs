@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum Method {
     GET,
     POST,
@@ -123,6 +124,8 @@ pub fn method_str(method: &Method) -> String {
     }
 }
 
+// Scaffolding for the upcoming `method set` command; not yet wired in.
+#[allow(dead_code)]
 pub fn method_from_str(method: &str) -> Method {
     match method.to_uppercase().as_str() {
         "GET" => Method::GET,
