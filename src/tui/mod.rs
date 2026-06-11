@@ -29,9 +29,9 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use ratatui_textarea::TextArea;
 use std::io::{self, Stdout};
 use std::path::Path;
-use tui_textarea::TextArea;
 
 /// Restores the terminal (raw mode + alternate screen) on every exit path.
 struct TermGuard;

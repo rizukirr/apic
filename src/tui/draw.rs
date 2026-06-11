@@ -9,7 +9,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Row, Table};
-use tui_textarea::TextArea;
+use ratatui_textarea::TextArea;
 
 const GAP: usize = 2; // spaces between table columns
 
