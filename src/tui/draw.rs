@@ -5,10 +5,10 @@
 use crate::tui::rows::{Cell, CellKind, RowKind, Section, SectionKind, TableRow};
 use crate::tui::state::{Mode, UiState};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Row, Table};
 use tui_textarea::TextArea;
 
 const GAP: usize = 2; // spaces between table columns
@@ -19,6 +19,7 @@ pub(crate) fn draw(frame: &mut Frame, state: &UiState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .margin(1)
         .split(area);
 
     let (lines, sel_start, sel_end, cursor) = build_lines(state);
@@ -578,55 +579,61 @@ fn draw_status(frame: &mut Frame, area: Rect, state: &UiState) {
 /// A bordered, centered confirmation popup showing a prompt and the key legend.
 fn draw_confirm(frame: &mut Frame, area: Rect, title: &str, prompt: &str, keys: &str) {
     let popup = centered(area, 50, 20);
+
     frame.render_widget(Clear, popup);
-    let body = format!("{prompt}\n\n{keys}");
-    frame.render_widget(
-        Paragraph::new(body)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title.to_string()),
-            )
-            .wrap(Wrap { trim: false }),
-        popup,
+
+    let content = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            prompt,
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(keys),
+    ];
+
+    let dialog = Paragraph::new(content).alignment(Alignment::Center).block(
+        Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .padding(Padding::new(2, 2, 1, 1)),
     );
+
+    frame.render_widget(dialog, popup);
 }
 
 /// A bordered help popup with an aligned `KEY  ACTION` two-column table.
 fn draw_help(frame: &mut Frame, area: Rect) {
-    let rows = [
-        ("↑/↓  j/k", "Select a row"),
-        ("←/→  h/l", "Move between cells"),
-        ("Enter", "Edit cell · expand url/title · open example"),
-        ("i", "Insert — edit the focused text cell"),
-        ("Esc", "Back · collapse · cancel"),
-        ("a", "Add field — child if on an object field, else sibling"),
-        (
-            "g",
-            "Generate example from the schema (in a request/response)",
-        ),
-        ("d", "Delete the selected row (asks to confirm)"),
-        ("Ctrl-S", "Save"),
-        ("q", "Quit"),
-        ("?", "Toggle this help"),
+    let rows = vec![
+        Row::new(vec!["↑/↓  j/k", "Select a row"]),
+        Row::new(vec!["←/→  h/l", "Move between cells"]),
+        Row::new(vec!["Enter", "Edit cell · expand url/title · open example"]),
+        Row::new(vec!["i", "Insert — edit the focused text cell"]),
+        Row::new(vec!["Esc", "Back · collapse · cancel"]),
+        Row::new(vec![
+            "a",
+            "Add field — child if on an object field, else sibling",
+        ]),
+        Row::new(vec!["g", "Generate example from the schema"]),
+        Row::new(vec!["d", "Delete the selected row"]),
+        Row::new(vec!["Ctrl-S", "Save"]),
+        Row::new(vec!["q", "Quit"]),
+        Row::new(vec!["?", "Toggle this help"]),
     ];
-    let key_w = rows
-        .iter()
-        .map(|(k, _)| k.chars().count())
-        .max()
-        .unwrap_or(0);
-    let body: Vec<Line<'static>> = rows
-        .iter()
-        .map(|(k, a)| Line::raw(format!(" {}  {}", pad(k, key_w), a)))
-        .collect();
-    let popup = centered(area, 64, 50);
+
+    let popup = centered(area, 70, 50);
+
+    let table = Table::new(rows, [Constraint::Length(12), Constraint::Min(10)])
+        .block(
+            Block::default()
+                .title(" help ")
+                .borders(Borders::ALL)
+                .padding(Padding::uniform(1)),
+        )
+        .column_spacing(2);
+
     frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(body)
-            .block(Block::default().borders(Borders::ALL).title(" help "))
-            .wrap(Wrap { trim: false }),
-        popup,
-    );
+    frame.render_widget(table, popup);
 }
 
 /// Renders the borderless example-editor modal.
