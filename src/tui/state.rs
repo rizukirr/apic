@@ -42,6 +42,9 @@ pub(crate) struct UiState {
     pub dirty: bool,
     pub status: String,
     pub expanded: Option<Expand>,
+    /// Baseline snapshot (last loaded/saved model) against which `dirty` is
+    /// computed, so the unsaved indicator reflects real differences.
+    pub original: EditModel,
 }
 
 impl UiState {
@@ -56,6 +59,7 @@ impl UiState {
             dirty: false,
             status: HINT.to_string(),
             expanded: None,
+            original: model.clone(),
         };
         s.snap_to_first_row();
         s
@@ -82,6 +86,9 @@ impl UiState {
                 self.cell = None;
             }
         }
+        // Authoritative dirty signal: compare against the baseline snapshot.
+        // `refresh` runs after every mutation, so this is always accurate.
+        self.dirty = model != &self.original;
     }
 
     fn snap_to_first_row(&mut self) {
@@ -760,6 +767,7 @@ fn set_schema(
 pub(crate) fn apply_save(state: &mut UiState, model: &EditModel, path: &Path) {
     match model.save(path) {
         Ok(()) => {
+            state.original = model.clone();
             state.dirty = false;
             state.status = format!("saved {}", path.display());
         }
@@ -1165,6 +1173,48 @@ mod tests {
         handle_insert(&mut s, &mut m, key(KeyCode::Char('9')));
         handle_insert(&mut s, &mut m, key(KeyCode::Enter));
         assert_eq!(m.responses[1].code, "429");
+    }
+
+    #[test]
+    fn dirty_tracks_real_changes_against_baseline() {
+        let mut m = model(); // name == "t"
+        let mut s = UiState::new(&m);
+        assert!(!s.dirty);
+        // edit name "t" -> "tx"
+        goto(&mut s, |f| matches!(f, Field::Name));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cell
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert (prefilled "t")
+        handle_insert(&mut s, &mut m, key(KeyCode::Char('x')));
+        handle_insert(&mut s, &mut m, key(KeyCode::Enter));
+        assert!(s.dirty);
+        // revert "tx" -> "t" clears dirty
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cell
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert (prefilled "tx")
+        handle_insert(&mut s, &mut m, key(KeyCode::Backspace));
+        handle_insert(&mut s, &mut m, key(KeyCode::Enter));
+        assert!(!s.dirty, "reverting to the original value clears dirty");
+    }
+
+    #[test]
+    fn save_updates_baseline() {
+        let dir = std::env::temp_dir().join("apic_tui_baseline");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("c.json");
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| matches!(f, Field::Name));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter));
+        handle_insert(&mut s, &mut m, key(KeyCode::Char('z')));
+        handle_insert(&mut s, &mut m, key(KeyCode::Enter));
+        assert!(s.dirty);
+        apply_save(&mut s, &m, &path);
+        assert!(!s.dirty);
+        // a subsequent refresh with no change keeps it clean (baseline moved)
+        s.refresh(&m);
+        assert!(!s.dirty);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

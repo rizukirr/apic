@@ -579,12 +579,17 @@ fn trim_trailing(mut spans: Vec<Span<'static>>) -> Vec<Span<'static>> {
 }
 
 fn draw_status(frame: &mut Frame, area: Rect, state: &UiState) {
-    let dirty = if state.dirty { "*" } else { " " };
-    frame.render_widget(
-        Paragraph::new(format!("{dirty} {}", state.status))
-            .style(Style::default().fg(Color::Yellow)),
-        area,
-    );
+    let marker = if state.dirty { "● unsaved  " } else { "" };
+    let line = Line::from(vec![
+        Span::styled(
+            marker,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(state.status.clone(), Style::default().fg(Color::DarkGray)),
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 /// A bordered, centered confirmation popup showing a prompt and the key legend.
