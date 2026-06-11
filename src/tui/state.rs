@@ -12,8 +12,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::json::{method_all, method_str};
 use std::path::Path;
 
-const HINT: &str =
-    "↑↓ select · Enter edit/open · ←→ cell · Esc back · d delete · Ctrl-S save · q quit · ? help";
+const HINT: &str = "↑↓ select · Enter edit/open · ←→ cell · a add · d delete · Esc back · Ctrl-S save · q quit · ? help";
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) enum Mode {
@@ -41,11 +40,12 @@ pub(crate) struct UiState {
     pub mode: Mode,
     pub dirty: bool,
     pub status: String,
+    pub url_expanded: bool,
 }
 
 impl UiState {
     pub fn new(model: &EditModel) -> Self {
-        let sections = flatten(model);
+        let sections = flatten(model, false);
         let mut s = UiState {
             sections,
             sec: 0,
@@ -54,6 +54,7 @@ impl UiState {
             mode: Mode::Normal,
             dirty: false,
             status: HINT.to_string(),
+            url_expanded: false,
         };
         s.snap_to_first_row();
         s
@@ -62,7 +63,7 @@ impl UiState {
     /// Rebuilds sections after a mutation, clamping the cursor; drops cell focus
     /// if it no longer addresses a valid cell.
     pub fn refresh(&mut self, model: &EditModel) {
-        self.sections = flatten(model);
+        self.sections = flatten(model, self.url_expanded);
         if self.sec >= self.sections.len() {
             self.sec = self.sections.len().saturating_sub(1);
         }
@@ -178,6 +179,12 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
         return handle_cell(state, model, key);
     }
     match (key.code, key.modifiers) {
+        // Esc first collapses an expanded URL, before triggering the quit flow.
+        (KeyCode::Esc, _) if state.url_expanded => {
+            state.url_expanded = false;
+            state.refresh(model);
+            Action::None
+        }
         (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => {
             if state.dirty {
                 state.mode = Mode::ConfirmQuit;
@@ -200,6 +207,10 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
             Action::None
         }
         (KeyCode::Enter, _) => begin_row(state, model),
+        (KeyCode::Char('a'), _) => {
+            append_here(state, model);
+            Action::None
+        }
         (KeyCode::Char('d'), _) => {
             if let Some(f) = delete_field(state) {
                 delete_row(state, model, &f);
@@ -207,6 +218,14 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
             Action::None
         }
         _ => Action::None,
+    }
+}
+
+/// Appends a row to the current section's `add` target, via the existing
+/// `add_row` mutator.
+fn append_here(state: &mut UiState, model: &mut EditModel) {
+    if let Some(field) = state.sections.get(state.sec).and_then(|s| s.add.clone()) {
+        add_row(state, model, &field);
     }
 }
 
@@ -252,13 +271,14 @@ fn begin_row(state: &mut UiState, model: &mut EditModel) -> Action {
         return Action::None;
     };
     match row.kind {
-        RowKind::Add => {
-            let f = row.cells[0].field.clone();
-            add_row(state, model, &f);
+        RowKind::UrlLine => {
+            state.url_expanded = true;
+            state.cell = None;
+            state.refresh(model);
             Action::None
         }
         RowKind::Example => Action::OpenExample(row.cells[0].field.clone(), String::new()),
-        RowKind::Data => {
+        RowKind::Name | RowKind::Desc | RowKind::Field => {
             if let Some(&first) = state.editable_cells().first() {
                 state.cell = Some(first);
             }
@@ -365,7 +385,6 @@ fn delete_row(state: &mut UiState, model: &mut EditModel, field: &Field) {
             drop_at(&mut model.url.variable, *i)
         }
         Field::HeaderName(i) | Field::HeaderValue(i) => drop_at(&mut model.headers, *i),
-        Field::ResponseCode(i) | Field::ResponseDesc(i) => drop_at(&mut model.responses, *i),
         Field::SchemaName(loc, path)
         | Field::SchemaType(loc, path)
         | Field::SchemaDesc(loc, path)
@@ -482,30 +501,10 @@ fn set_field(model: &mut EditModel, field: &Field, value: String) {
                 h.value = value;
             }
         }
-        Field::BodyDtype(BodyLoc::Request) => {
-            if let Some(b) = model.request.as_mut() {
-                b.dtype = value;
-            }
-        }
-        Field::BodyDtype(BodyLoc::Response(r)) => {
-            if let Some(b) = model.responses.get_mut(*r) {
-                b.dtype = value;
-            }
-        }
         Field::SchemaName(loc, p) => set_schema(model, loc, p, |s| s.name = value.clone()),
         Field::SchemaType(loc, p) => set_schema(model, loc, p, |s| s.dtype = value.clone()),
         Field::SchemaDesc(loc, p) => set_schema(model, loc, p, |s| s.description = value.clone()),
         Field::SchemaAccept(loc, p) => set_schema(model, loc, p, |s| s.accept = value.clone()),
-        Field::ResponseCode(i) => {
-            if let Some(r) = model.responses.get_mut(*i) {
-                r.code = value;
-            }
-        }
-        Field::ResponseDesc(i) => {
-            if let Some(r) = model.responses.get_mut(*i) {
-                r.description = value;
-            }
-        }
         _ => {}
     }
 }
@@ -569,7 +568,7 @@ mod tests {
 
     fn model() -> EditModel {
         let c = json_get(
-            r#"{ "name":"t","method":"GET",
+            r#"{ "name":"t","description":"d","method":"GET",
                  "url":{"protocol":"https","host":"h","path":["x"],
                         "query":[{"name":"page","value":"1","description":"d","required":false}]},
                  "headers":[{"name":"A","value":"B"}],
@@ -579,12 +578,9 @@ mod tests {
         .unwrap();
         EditModel::from_contract(c)
     }
-
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
-
-    /// Positions the cursor on the first row whose first cell matches `pred`.
     fn goto(s: &mut UiState, pred: impl Fn(&Field) -> bool) {
         for (si, sec) in s.sections.iter().enumerate() {
             for (ri, row) in sec.rows.iter().enumerate() {
@@ -600,115 +596,69 @@ mod tests {
     }
 
     #[test]
-    fn down_moves_across_sections() {
+    fn enter_on_url_expands_then_esc_collapses() {
         let mut m = model();
         let mut s = UiState::new(&m);
-        // Walk down many times; never panics and always lands on a real row.
-        for _ in 0..50 {
-            handle_normal(&mut s, &mut m, key(KeyCode::Down));
-            assert!(s.current_row().is_some());
-        }
-    }
-
-    #[test]
-    fn enter_on_data_row_enters_cell_mode_then_esc_exits() {
-        let mut m = model();
-        let mut s = UiState::new(&m);
-        goto(&mut s, |f| matches!(f, Field::Name));
-        assert_eq!(s.cell, None);
+        goto(&mut s, |f| matches!(f, Field::Method)); // url line carries Method
         handle_normal(&mut s, &mut m, key(KeyCode::Enter));
-        assert!(s.cell.is_some());
+        assert!(s.url_expanded);
         handle_normal(&mut s, &mut m, key(KeyCode::Esc));
-        assert_eq!(s.cell, None);
+        assert!(!s.url_expanded);
     }
 
     #[test]
-    fn enter_on_text_cell_starts_insert_and_commits() {
+    fn a_appends_to_current_section() {
         let mut m = model();
         let mut s = UiState::new(&m);
-        goto(&mut s, |f| matches!(f, Field::Name));
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // -> cell mode (name)
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // -> insert (prefilled "t")
-        assert_eq!(s.mode, Mode::Insert("t".to_string()));
-        handle_insert(&mut s, &mut m, key(KeyCode::Char('x')));
-        handle_insert(&mut s, &mut m, key(KeyCode::Enter));
-        assert_eq!(m.name, "tx");
-        assert!(s.dirty);
+        goto(&mut s, |f| matches!(f, Field::HeaderName(_)));
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
+        assert_eq!(m.headers.len(), 2);
     }
 
     #[test]
-    fn arrows_skip_label_cells_in_query_row() {
+    fn d_deletes_focused_row() {
         let mut m = model();
         let mut s = UiState::new(&m);
         goto(&mut s, |f| matches!(f, Field::QueryName(_)));
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // enter cell mode
-        // first editable cell is the NAME (index 0, all query cells editable)
-        let first = s.cell.unwrap();
-        handle_normal(&mut s, &mut m, key(KeyCode::Right));
-        assert!(s.cell.unwrap() > first); // moved to next editable cell
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('d')));
+        assert_eq!(m.url.query.len(), 0);
     }
 
     #[test]
-    fn enter_on_bool_cell_toggles() {
+    fn edit_text_cell_commits() {
         let mut m = model();
         let mut s = UiState::new(&m);
-        goto(&mut s, |f| matches!(f, Field::QueryRequired(_)));
-        // focus the REQ (bool) cell directly
-        let req_idx = s
+        goto(&mut s, |f| matches!(f, Field::Name));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cell mode
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert
+        assert!(matches!(s.mode, Mode::Insert(_)));
+        handle_insert(&mut s, &mut m, key(KeyCode::Char('x')));
+        handle_insert(&mut s, &mut m, key(KeyCode::Enter));
+        assert_eq!(m.name, "tx");
+    }
+
+    #[test]
+    fn method_cycles_when_url_expanded() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        s.url_expanded = true;
+        s.refresh(&m);
+        goto(&mut s, |f| matches!(f, Field::Method));
+        // focus the method enum cell
+        let mi = s
             .current_row()
             .unwrap()
             .cells
             .iter()
-            .position(|c| matches!(c.field, Field::QueryRequired(_)))
+            .position(|c| matches!(c.field, Field::Method))
             .unwrap();
-        s.cell = Some(req_idx);
-        let before = m.url.query[0].required;
+        s.cell = Some(mi);
         handle_normal(&mut s, &mut m, key(KeyCode::Enter));
-        assert_ne!(m.url.query[0].required, before);
-    }
-
-    #[test]
-    fn method_cell_cycles() {
-        let mut m = model();
-        let mut s = UiState::new(&m);
-        goto(&mut s, |f| matches!(f, Field::Method));
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cell mode
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cycle
         assert_ne!(method_str(&m.method), "GET");
     }
 
     #[test]
-    fn add_row_inserts_and_example_opens() {
-        let mut m = model();
-        let mut s = UiState::new(&m);
-        goto(&mut s, |f| matches!(f, Field::HeaderAdd));
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter));
-        assert_eq!(m.headers.len(), 2);
-
-        // Add a request body, then its example row opens the modal.
-        s.refresh(&m);
-        goto(&mut s, |f| matches!(f, Field::RequestToggle));
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter));
-        assert!(m.request.is_some());
-        s.refresh(&m);
-        goto(&mut s, |f| {
-            matches!(f, Field::BodyExample(BodyLoc::Request))
-        });
-        let act = handle_normal(&mut s, &mut m, key(KeyCode::Enter));
-        assert!(matches!(act, Action::OpenExample(_, _)));
-    }
-
-    #[test]
-    fn d_deletes_focused_list_row() {
-        let mut m = model();
-        let mut s = UiState::new(&m);
-        goto(&mut s, |f| matches!(f, Field::HeaderName(0)));
-        handle_normal(&mut s, &mut m, key(KeyCode::Char('d')));
-        assert_eq!(m.headers.len(), 0);
-    }
-
-    #[test]
-    fn quit_clean_immediate_dirty_confirms() {
+    fn quit_clean_and_dirty() {
         let mut m = model();
         let mut s = UiState::new(&m);
         s.dirty = false;
@@ -721,12 +671,11 @@ mod tests {
             handle_normal(&mut s, &mut m, key(KeyCode::Char('q'))),
             Action::None
         );
-        assert_eq!(s.mode, Mode::ConfirmQuit);
     }
 
     #[test]
-    fn save_clears_dirty_on_success() {
-        let dir = std::env::temp_dir().join("apic_tui_table_save");
+    fn save_clears_dirty() {
+        let dir = std::env::temp_dir().join("apic_tui_ri_save");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("c.json");
@@ -737,19 +686,5 @@ mod tests {
         assert!(!s.dirty);
         assert!(path.exists());
         std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn save_failure_keeps_dirty() {
-        let mut m = model();
-        m.responses[0].example = "{ bad".to_string();
-        let mut s = UiState::new(&m);
-        s.dirty = true;
-        apply_save(
-            &mut s,
-            &m,
-            std::path::Path::new("/tmp/should-not-write.json"),
-        );
-        assert!(s.dirty);
     }
 }

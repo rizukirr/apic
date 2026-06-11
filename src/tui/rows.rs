@@ -1,11 +1,14 @@
-//! Table model derived from `EditModel`.
+//! Read-shaped table model derived from `EditModel`.
 //!
-//! The TUI renders a list of `Section`s; each is a titled, optionally-columned
-//! table of `TableRow`s of `Cell`s. Every `Cell` carries a `Field` address that
-//! the edit handlers in `state.rs` use to locate the target in the model
-//! (including the path through nested schema `properties`).
+//! `flatten` emits a `Vec<Section>` that mirrors exactly what `apic read`
+//! prints (see `crate::render::Printer`): a bespoke header block followed by the
+//! `VARIABLE`/`QUERY`/`HEADERS`/`REQUEST`/`RESPONSE` sections, each carrying an
+//! `add: Option<Field>` so the `a` key knows what to append. Every editable
+//! `Cell` carries a `Field` address that the handlers in `state.rs` use to
+//! locate the target in the model (including the path through nested schema
+//! `properties`).
 
-use crate::tui::model::{EditModel, EditSchema};
+use crate::tui::model::{EditModel, EditSchema, EditUrl};
 
 /// Where a request/response schema lives.
 #[derive(Debug, Clone, PartialEq)]
@@ -39,7 +42,6 @@ pub(crate) enum Field {
     HeaderValue(usize),
     HeaderAdd,
     RequestToggle,
-    BodyDtype(BodyLoc),
     BodyExample(BodyLoc),
     SchemaName(BodyLoc, Vec<usize>),
     SchemaType(BodyLoc, Vec<usize>),
@@ -47,8 +49,6 @@ pub(crate) enum Field {
     SchemaRequired(BodyLoc, Vec<usize>),
     SchemaAccept(BodyLoc, Vec<usize>),
     SchemaAdd(BodyLoc, Vec<usize>),
-    ResponseCode(usize),
-    ResponseDesc(usize),
     ResponseAdd,
     SectionHeader,
 }
@@ -56,7 +56,7 @@ pub(crate) enum Field {
 /// How a cell is edited.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum CellKind {
-    Label, // non-editable (column-1 field names, add/example prompts)
+    Label, // non-editable (column-1 field labels, built-url, example prompt)
     Text,
     Enum,
     Bool,
@@ -70,12 +70,22 @@ pub(crate) struct Cell {
     pub value: String,
 }
 
-/// Row behavior on Enter.
+/// What kind of section this is, for drawing.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum SectionKind {
+    Header,
+    Table,
+    Body,
+}
+
+/// Row behavior / how a row is drawn.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum RowKind {
-    Data,    // enter cell-edit mode
-    Add,     // Enter inserts a new entity (uses cells[0].field)
-    Example, // Enter opens the JSON modal (uses cells[0].field)
+    Name,    // header name line (drawn uppercased)
+    Desc,    // header description line (drawn only when non-empty)
+    UrlLine, // collapsed ` METHOD <built-url>`; Enter expands
+    Field,   // an editable table / key-value row
+    Example, // inline ` Example:` + raw JSON; Enter opens the modal
 }
 
 /// One displayable table row.
@@ -84,15 +94,19 @@ pub(crate) struct TableRow {
     pub kind: RowKind,
     pub indent: u16,
     pub cells: Vec<Cell>,
+    pub raw: String, // example buffer for RowKind::Example; empty otherwise
 }
 
-/// A titled table. `headers: Some(cols)` renders a column-header line and aligns
-/// `Data` rows whose cell count equals `cols.len()`; `None` is a key/value table.
+/// A titled section. `headers: Some(cols)` renders a dim column-header line and
+/// aligns `Field` rows whose cell count equals `cols.len()`; `None` is a
+/// key/value or header-less table. `add` is the target the `a` key appends to.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Section {
     pub title: String,
+    pub kind: SectionKind,
     pub headers: Option<Vec<&'static str>>,
     pub rows: Vec<TableRow>,
+    pub add: Option<Field>,
 }
 
 fn label(text: &str) -> Cell {
@@ -102,7 +116,7 @@ fn label(text: &str) -> Cell {
         value: text.to_string(),
     }
 }
-fn text_cell(field: Field, value: String) -> Cell {
+fn text(field: Field, value: String) -> Cell {
     Cell {
         field,
         kind: CellKind::Text,
@@ -123,58 +137,49 @@ fn bool_cell(field: Field, v: bool) -> Cell {
         value: v.to_string(),
     }
 }
-fn data(cells: Vec<Cell>) -> TableRow {
+fn field_row(cells: Vec<Cell>) -> TableRow {
     TableRow {
-        kind: RowKind::Data,
+        kind: RowKind::Field,
         indent: 0,
         cells,
+        raw: String::new(),
     }
 }
-fn data_i(indent: u16, cells: Vec<Cell>) -> TableRow {
+fn field_row_i(indent: u16, cells: Vec<Cell>) -> TableRow {
     TableRow {
-        kind: RowKind::Data,
+        kind: RowKind::Field,
         indent,
         cells,
+        raw: String::new(),
     }
 }
-fn add_row(field: Field, prompt: &str) -> TableRow {
-    TableRow {
-        kind: RowKind::Add,
-        indent: 0,
-        cells: vec![Cell {
-            field,
-            kind: CellKind::Label,
-            value: prompt.to_string(),
-        }],
-    }
-}
-fn add_row_i(indent: u16, field: Field, prompt: &str) -> TableRow {
-    TableRow {
-        kind: RowKind::Add,
-        indent,
-        cells: vec![Cell {
-            field,
-            kind: CellKind::Label,
-            value: prompt.to_string(),
-        }],
-    }
-}
-fn example_row(field: Field, preview: String) -> TableRow {
+fn example_row(loc: BodyLoc, raw: String) -> TableRow {
     TableRow {
         kind: RowKind::Example,
         indent: 0,
-        cells: vec![
-            Cell {
-                field: field.clone(),
-                kind: CellKind::Label,
-                value: "example".to_string(),
-            },
-            Cell {
-                field,
-                kind: CellKind::Label,
-                value: preview,
-            },
-        ],
+        cells: vec![Cell {
+            field: Field::BodyExample(loc),
+            kind: CellKind::Label,
+            value: String::new(),
+        }],
+        raw,
+    }
+}
+
+/// Inverse-free display URL, matching `render::build_url`'s rules over EditUrl.
+fn built_url(u: &EditUrl) -> String {
+    let path = u.path.join("/");
+    let authority = if u.host.is_empty() {
+        String::new()
+    } else if u.protocol.is_empty() {
+        u.host.clone()
+    } else {
+        format!("{}://{}", u.protocol, u.host)
+    };
+    match (authority.is_empty(), path.is_empty()) {
+        (true, _) => format!("/{path}"),
+        (false, true) => authority,
+        (false, false) => format!("{}/{path}", authority.trim_end_matches('/')),
     }
 }
 
@@ -194,7 +199,7 @@ fn schema_columns(has_accept: bool) -> Vec<&'static str> {
 }
 
 /// Pushes schema field rows (recursively) into `rows`, with `├─`/`└─` prefixes
-/// in the NAME cell for nested levels.
+/// in the NAME cell for nested levels. Mirrors `render::push_field_rows`.
 fn push_schema(
     rows: &mut Vec<TableRow>,
     loc: &BodyLoc,
@@ -216,233 +221,200 @@ fn push_schema(
             format!("{}{branch}", "  ".repeat(depth - 1))
         };
         let mut cells = vec![
-            text_cell(
+            text(
                 Field::SchemaName(loc.clone(), path.clone()),
                 format!("{prefix}{}", f.name),
             ),
-            text_cell(
+            text(
                 Field::SchemaType(loc.clone(), path.clone()),
                 f.dtype.clone(),
             ),
             bool_cell(Field::SchemaRequired(loc.clone(), path.clone()), f.required),
         ];
         if has_accept {
-            cells.push(text_cell(
+            cells.push(text(
                 Field::SchemaAccept(loc.clone(), path.clone()),
                 f.accept.clone(),
             ));
         }
-        cells.push(text_cell(
+        cells.push(text(
             Field::SchemaDesc(loc.clone(), path.clone()),
             f.description.clone(),
         ));
-        rows.push(data_i(depth as u16, cells));
+        rows.push(field_row_i(depth as u16, cells));
 
         push_schema(rows, loc, &f.properties, path, depth + 1, has_accept);
-        rows.push(add_row_i(
-            (depth + 1) as u16,
-            Field::SchemaAdd(loc.clone(), path.clone()),
-            "+ add nested field",
-        ));
         path.pop();
     }
-    rows.push(add_row_i(
-        depth as u16,
-        Field::SchemaAdd(loc.clone(), path.clone()),
-        "+ add field",
-    ));
 }
 
-/// Builds the schema-fields section for a request/response body.
-fn fields_section(title: String, loc: &BodyLoc, fields: &[EditSchema]) -> Section {
+/// Builds the schema field rows + the inline example row for a body section.
+fn body_rows(loc: BodyLoc, fields: &[EditSchema], example: &str) -> Vec<TableRow> {
     let has_accept = any_accept(fields);
     let mut rows = Vec::new();
     let mut path = Vec::new();
-    push_schema(&mut rows, loc, fields, &mut path, 0, has_accept);
-    Section {
-        title,
-        headers: Some(schema_columns(has_accept)),
-        rows,
-    }
+    push_schema(&mut rows, &loc, fields, &mut path, 0, has_accept);
+    rows.push(example_row(loc, example.to_string()));
+    rows
 }
 
-/// One-line preview of an example buffer.
-fn example_preview(raw: &str) -> String {
-    if raw.trim().is_empty() {
-        "(empty)".to_string()
-    } else {
-        format!("{} …", raw.lines().next().unwrap_or("").trim())
-    }
-}
-
-/// The ` · object[]` suffix on an array body title (reuses render::array_marker).
-fn body_title(base: &str, dtype: &str) -> String {
-    format!("{base}{}", crate::render::array_marker(dtype))
-}
-
-/// Flattens the model into display sections, in schema order.
-pub(crate) fn flatten(m: &EditModel) -> Vec<Section> {
+/// Flattens the model into read-shaped display sections.
+pub(crate) fn flatten(m: &EditModel, url_expanded: bool) -> Vec<Section> {
     let mut out = Vec::new();
 
-    // META — key/value
-    out.push(Section {
-        title: "META".into(),
-        headers: None,
-        rows: vec![
-            data(vec![label("name"), text_cell(Field::Name, m.name.clone())]),
-            data(vec![
-                label("description"),
-                text_cell(Field::Description, m.description.clone()),
-            ]),
-            data(vec![
-                label("method"),
-                enum_cell(Field::Method, crate::json::method_str(&m.method)),
-            ]),
-        ],
-    });
-
-    // URL — key/value + path rows
-    let mut url_rows = vec![
-        data(vec![
-            label("protocol"),
-            text_cell(Field::Protocol, m.url.protocol.clone()),
-        ]),
-        data(vec![
-            label("host"),
-            text_cell(Field::Host, m.url.host.clone()),
-        ]),
+    // Header block: name, description, URL.
+    let method_s = crate::json::method_str(&m.method);
+    let mut head_rows = vec![
+        TableRow {
+            kind: RowKind::Name,
+            indent: 0,
+            cells: vec![text(Field::Name, m.name.clone())],
+            raw: String::new(),
+        },
+        TableRow {
+            kind: RowKind::Desc,
+            indent: 0,
+            cells: vec![text(Field::Description, m.description.clone())],
+            raw: String::new(),
+        },
     ];
-    for (i, seg) in m.url.path.iter().enumerate() {
-        url_rows.push(data(vec![
-            label("path"),
-            text_cell(Field::PathSeg(i), seg.clone()),
+    let mut head_add = None;
+    if url_expanded {
+        head_rows.push(field_row(vec![
+            label("method"),
+            enum_cell(Field::Method, method_s.clone()),
         ]));
+        head_rows.push(field_row(vec![
+            label("protocol"),
+            text(Field::Protocol, m.url.protocol.clone()),
+        ]));
+        head_rows.push(field_row(vec![
+            label("host"),
+            text(Field::Host, m.url.host.clone()),
+        ]));
+        for (i, seg) in m.url.path.iter().enumerate() {
+            head_rows.push(field_row(vec![
+                label("path"),
+                text(Field::PathSeg(i), seg.clone()),
+            ]));
+        }
+        head_add = Some(Field::PathAdd);
+    } else {
+        head_rows.push(TableRow {
+            kind: RowKind::UrlLine,
+            indent: 0,
+            cells: vec![
+                enum_cell(Field::Method, method_s),
+                Cell {
+                    field: Field::Protocol,
+                    kind: CellKind::Label,
+                    value: built_url(&m.url),
+                },
+            ],
+            raw: String::new(),
+        });
     }
-    url_rows.push(add_row(Field::PathAdd, "+ add path segment"));
     out.push(Section {
-        title: "URL".into(),
+        title: String::new(),
+        kind: SectionKind::Header,
         headers: None,
-        rows: url_rows,
+        rows: head_rows,
+        add: head_add,
     });
 
-    // QUERY — NAME VALUE REQ DESCRIPTION
-    let mut q_rows = Vec::new();
-    for (i, q) in m.url.query.iter().enumerate() {
-        q_rows.push(data(vec![
-            text_cell(Field::QueryName(i), q.name.clone()),
-            text_cell(Field::QueryValue(i), q.value.clone()),
-            bool_cell(Field::QueryRequired(i), q.required),
-            text_cell(Field::QueryDesc(i), q.description.clone()),
-        ]));
-    }
-    q_rows.push(add_row(Field::QueryAdd, "+ add query"));
-    out.push(Section {
-        title: "QUERY".into(),
-        headers: Some(vec!["NAME", "VALUE", "REQ", "DESCRIPTION"]),
-        rows: q_rows,
-    });
-
-    // VARIABLES — NAME TYPE REQ DESCRIPTION
+    // VARIABLE
     let mut v_rows = Vec::new();
     for (i, v) in m.url.variable.iter().enumerate() {
-        v_rows.push(data(vec![
-            text_cell(Field::VarName(i), v.name.clone()),
-            text_cell(Field::VarType(i), v.dtype.clone()),
+        v_rows.push(field_row(vec![
+            text(Field::VarName(i), v.name.clone()),
+            text(Field::VarType(i), v.dtype.clone()),
             bool_cell(Field::VarRequired(i), v.required),
-            text_cell(Field::VarDesc(i), v.description.clone()),
+            text(Field::VarDesc(i), v.description.clone()),
         ]));
     }
-    v_rows.push(add_row(Field::VarAdd, "+ add variable"));
     out.push(Section {
-        title: "VARIABLES".into(),
+        title: "VARIABLE".into(),
+        kind: SectionKind::Table,
         headers: Some(vec!["NAME", "TYPE", "REQ", "DESCRIPTION"]),
         rows: v_rows,
+        add: Some(Field::VarAdd),
     });
 
-    // HEADERS — NAME VALUE
-    let mut h_rows = Vec::new();
-    for (i, h) in m.headers.iter().enumerate() {
-        h_rows.push(data(vec![
-            text_cell(Field::HeaderName(i), h.name.clone()),
-            text_cell(Field::HeaderValue(i), h.value.clone()),
+    // QUERY
+    let mut q_rows = Vec::new();
+    for (i, q) in m.url.query.iter().enumerate() {
+        q_rows.push(field_row(vec![
+            text(Field::QueryName(i), q.name.clone()),
+            text(Field::QueryValue(i), q.value.clone()),
+            bool_cell(Field::QueryRequired(i), q.required),
+            text(Field::QueryDesc(i), q.description.clone()),
         ]));
     }
-    h_rows.push(add_row(Field::HeaderAdd, "+ add header"));
+    out.push(Section {
+        title: "QUERY".into(),
+        kind: SectionKind::Table,
+        headers: Some(vec!["NAME", "VALUE", "REQ", "DESCRIPTION"]),
+        rows: q_rows,
+        add: Some(Field::QueryAdd),
+    });
+
+    // HEADERS (no column header, like read)
+    let mut h_rows = Vec::new();
+    for (i, h) in m.headers.iter().enumerate() {
+        h_rows.push(field_row(vec![
+            text(Field::HeaderName(i), h.name.clone()),
+            text(Field::HeaderValue(i), h.value.clone()),
+        ]));
+    }
     out.push(Section {
         title: "HEADERS".into(),
-        headers: Some(vec!["NAME", "VALUE"]),
+        kind: SectionKind::Table,
+        headers: None,
         rows: h_rows,
+        add: Some(Field::HeaderAdd),
     });
 
-    // REQUEST — key/value (type, example, toggle) + a separate FIELDS section
+    // REQUEST. With no body, `a` toggles one on (RequestToggle); with a body,
+    // `a` appends a top-level schema field (SchemaAdd).
     match &m.request {
-        None => out.push(Section {
-            title: "REQUEST".into(),
-            headers: None,
-            rows: vec![add_row(
-                Field::RequestToggle,
-                "(no request body) — Enter to add",
-            )],
+        Some(req) => out.push(Section {
+            title: format!("REQUEST{}", crate::render::array_marker(&req.dtype)),
+            kind: SectionKind::Body,
+            headers: Some(schema_columns(any_accept(&req.schema))),
+            rows: body_rows(BodyLoc::Request, &req.schema, &req.example),
+            add: Some(Field::SchemaAdd(BodyLoc::Request, Vec::new())),
         }),
-        Some(req) => {
+        None => out.push(Section {
+            title: "REQUEST".to_string(),
+            kind: SectionKind::Body,
+            headers: None,
+            rows: Vec::new(),
+            add: Some(Field::RequestToggle),
+        }),
+    }
+
+    // RESPONSE(s)
+    if m.responses.is_empty() {
+        out.push(Section {
+            title: "RESPONSE".into(),
+            kind: SectionKind::Table,
+            headers: None,
+            rows: Vec::new(),
+            add: Some(Field::ResponseAdd),
+        });
+    } else {
+        for (i, r) in m.responses.iter().enumerate() {
+            let marker = crate::render::array_marker(&r.dtype);
+            let title = format!("RESPONSE {} — {}{marker}", r.code, r.description);
             out.push(Section {
-                title: body_title("REQUEST", &req.dtype),
-                headers: None,
-                rows: vec![
-                    data(vec![
-                        label("type"),
-                        text_cell(Field::BodyDtype(BodyLoc::Request), req.dtype.clone()),
-                    ]),
-                    example_row(
-                        Field::BodyExample(BodyLoc::Request),
-                        example_preview(&req.example),
-                    ),
-                    add_row(Field::RequestToggle, "(remove request body)"),
-                ],
+                title,
+                kind: SectionKind::Body,
+                headers: Some(schema_columns(any_accept(&r.schema))),
+                rows: body_rows(BodyLoc::Response(i), &r.schema, &r.example),
+                add: Some(Field::SchemaAdd(BodyLoc::Response(i), Vec::new())),
             });
-            out.push(fields_section(
-                "REQUEST · FIELDS".into(),
-                &BodyLoc::Request,
-                &req.schema,
-            ));
         }
     }
-
-    // RESPONSES — per response: key/value section + FIELDS section
-    for (i, r) in m.responses.iter().enumerate() {
-        out.push(Section {
-            title: body_title(&format!("RESPONSE {}", r.code), &r.dtype),
-            headers: None,
-            rows: vec![
-                data(vec![
-                    label("code"),
-                    text_cell(Field::ResponseCode(i), r.code.clone()),
-                ]),
-                data(vec![
-                    label("description"),
-                    text_cell(Field::ResponseDesc(i), r.description.clone()),
-                ]),
-                data(vec![
-                    label("type"),
-                    text_cell(Field::BodyDtype(BodyLoc::Response(i)), r.dtype.clone()),
-                ]),
-                example_row(
-                    Field::BodyExample(BodyLoc::Response(i)),
-                    example_preview(&r.example),
-                ),
-            ],
-        });
-        out.push(fields_section(
-            format!("RESPONSE {} · FIELDS", r.code),
-            &BodyLoc::Response(i),
-            &r.schema,
-        ));
-    }
-    out.push(Section {
-        title: "RESPONSES".into(),
-        headers: None,
-        rows: vec![add_row(Field::ResponseAdd, "+ add response")],
-    });
 
     out
 }
@@ -454,15 +426,14 @@ mod tests {
 
     fn model() -> EditModel {
         let c = json_get(
-            r#"{ "name":"t","method":"GET",
-                 "url":{"protocol":"https","host":"h","path":["x"],
-                        "query":[{"name":"page","value":"1","description":"d","required":false}]},
-                 "headers":[{"name":"A","value":"B"}],
-                 "request":{"type":"object","schema":[
-                    {"name":"f","type":"object","default":null,"description":"d","required":true,
-                     "properties":[{"name":"g","type":"string","default":null,"description":"d","required":false}]}
-                 ]},
-                 "responses":[{"code":200,"description":"ok","schema":[]}] }"#,
+            r#"{ "name":"user","description":"User management","method":"GET",
+                 "url":{"protocol":"https","host":"api.example.com","path":["user"],
+                        "variable":[{"name":"id","type":"int","description":"User ID","required":false}]},
+                 "headers":[{"name":"Content-Type","value":"application/json"}],
+                 "responses":[{"code":200,"description":"ok","schema":[
+                    {"name":"data","type":"object","default":null,"description":"d","required":false,
+                     "properties":[{"name":"id","type":"int","default":null,"description":"d","required":true}]}
+                 ],"example":{"status":200}}] }"#,
             None,
         )
         .unwrap();
@@ -470,51 +441,79 @@ mod tests {
     }
 
     #[test]
-    fn flatten_lists_section_titles_in_order() {
-        let secs = flatten(&model());
-        let titles: Vec<String> = secs.iter().map(|s| s.title.clone()).collect();
-        assert_eq!(titles[0], "META");
-        assert_eq!(titles[1], "URL");
-        assert_eq!(titles[2], "QUERY");
-        assert_eq!(titles[3], "VARIABLES");
-        assert_eq!(titles[4], "HEADERS");
-        assert!(titles.iter().any(|t| t == "REQUEST"));
-        assert!(titles.iter().any(|t| t == "REQUEST · FIELDS"));
-        assert!(titles.iter().any(|t| t.starts_with("RESPONSE 200")));
-    }
-
-    #[test]
-    fn query_row_has_four_cells() {
-        let secs = flatten(&model());
-        let q = secs.iter().find(|s| s.title == "QUERY").unwrap();
-        let data_row = q.rows.iter().find(|r| r.kind == RowKind::Data).unwrap();
-        assert_eq!(data_row.cells.len(), 4);
-        assert_eq!(q.headers.as_ref().unwrap().len(), 4);
-    }
-
-    #[test]
-    fn nested_field_has_indent_and_tree_prefix() {
-        let secs = flatten(&model());
-        let f = secs.iter().find(|s| s.title == "REQUEST · FIELDS").unwrap();
-        let nested = f.rows.iter().find(|r| {
-            r.indent == 1
-                && matches!(&r.cells[0].field, Field::SchemaName(BodyLoc::Request, p) if p.len() == 2)
-        });
-        let nested = nested.expect("nested field row present");
-        assert!(nested.cells[0].value.contains("└─") || nested.cells[0].value.contains("├─"));
-    }
-
-    #[test]
-    fn example_and_add_rows_present() {
-        let secs = flatten(&model());
-        let req = secs.iter().find(|s| s.title == "REQUEST").unwrap();
-        assert!(req.rows.iter().any(|r| r.kind == RowKind::Example));
-        let resp_add = secs.iter().find(|s| s.title == "RESPONSES").unwrap();
+    fn header_block_has_name_desc_and_collapsed_url() {
+        let secs = flatten(&model(), false);
+        let head = &secs[0];
+        assert_eq!(head.kind, SectionKind::Header);
+        assert!(head.rows.iter().any(|r| r.kind == RowKind::Name));
+        assert!(head.rows.iter().any(|r| r.kind == RowKind::Desc));
+        let url = head
+            .rows
+            .iter()
+            .find(|r| r.kind == RowKind::UrlLine)
+            .unwrap();
+        // The built URL cell shows the assembled URL.
         assert!(
-            resp_add
-                .rows
+            url.cells
                 .iter()
-                .any(|r| matches!(r.cells[0].field, Field::ResponseAdd))
+                .any(|c| c.value.contains("https://api.example.com/user"))
+        );
+    }
+
+    #[test]
+    fn url_expands_to_editable_parts() {
+        let secs = flatten(&model(), true);
+        let head = &secs[0];
+        assert!(head.rows.iter().all(|r| r.kind != RowKind::UrlLine));
+        assert!(
+            head.rows
+                .iter()
+                .any(|r| matches!(r.cells.last().map(|c| &c.field), Some(Field::Protocol)))
+        );
+        assert!(
+            head.rows
+                .iter()
+                .any(|r| matches!(r.cells.last().map(|c| &c.field), Some(Field::Host)))
+        );
+        assert_eq!(head.add, Some(Field::PathAdd));
+    }
+
+    #[test]
+    fn section_titles_match_read() {
+        let secs = flatten(&model(), false);
+        let titles: Vec<&str> = secs.iter().map(|s| s.title.as_str()).collect();
+        assert!(titles.contains(&"VARIABLE"));
+        assert!(titles.contains(&"QUERY"));
+        assert!(titles.contains(&"HEADERS"));
+        assert!(titles.contains(&"REQUEST"));
+        assert!(titles.iter().any(|t| t.starts_with("RESPONSE 200 — ok")));
+    }
+
+    #[test]
+    fn add_targets_are_set() {
+        let secs = flatten(&model(), false);
+        let q = secs.iter().find(|s| s.title == "QUERY").unwrap();
+        assert_eq!(q.add, Some(Field::QueryAdd));
+        let h = secs.iter().find(|s| s.title == "HEADERS").unwrap();
+        assert_eq!(h.add, Some(Field::HeaderAdd));
+        assert!(h.headers.is_none()); // HEADERS has no column header, like read
+    }
+
+    #[test]
+    fn nested_field_has_tree_prefix_and_response_has_example_row() {
+        let secs = flatten(&model(), false);
+        let resp = secs
+            .iter()
+            .find(|s| s.title.starts_with("RESPONSE 200"))
+            .unwrap();
+        assert!(resp.rows.iter().any(|r| {
+            r.kind == RowKind::Field
+                && (r.cells[0].value.contains("├─") || r.cells[0].value.contains("└─"))
+        }));
+        assert!(
+            resp.rows
+                .iter()
+                .any(|r| r.kind == RowKind::Example && r.raw.contains("status"))
         );
     }
 }
