@@ -42,6 +42,9 @@ pub(crate) enum Field {
     HeaderValue(usize),
     HeaderAdd,
     RequestToggle,
+    BodyDtype(BodyLoc),
+    ResponseCode(usize),
+    ResponseDesc(usize),
     BodyExample(BodyLoc),
     SchemaName(BodyLoc, Vec<usize>),
     SchemaType(BodyLoc, Vec<usize>),
@@ -78,12 +81,21 @@ pub(crate) enum SectionKind {
     Body,
 }
 
+/// Which collapsible region (if any) is currently expanded.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Expand {
+    Url,
+    Request,
+    Response(usize),
+}
+
 /// Row behavior / how a row is drawn.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum RowKind {
     Name,    // header name line (drawn uppercased)
     Desc,    // header description line (drawn only when non-empty)
     UrlLine, // collapsed ` METHOD <built-url>`; Enter expands
+    Title,   // a Body section's bold title line; Enter expands code/desc/type
     Field,   // an editable table / key-value row
     Example, // inline ` Example:` + raw JSON; Enter opens the modal
 }
@@ -107,6 +119,7 @@ pub(crate) struct Section {
     pub headers: Option<Vec<&'static str>>,
     pub rows: Vec<TableRow>,
     pub add: Option<Field>,
+    pub expand: Option<Expand>,
 }
 
 fn label(text: &str) -> Cell {
@@ -150,6 +163,20 @@ fn field_row_i(indent: u16, cells: Vec<Cell>) -> TableRow {
         kind: RowKind::Field,
         indent,
         cells,
+        raw: String::new(),
+    }
+}
+/// A Body section's title row, drawn as the bold section title. Its single
+/// non-editable `Label` cell carries the read title string.
+fn title_row(title: String) -> TableRow {
+    TableRow {
+        kind: RowKind::Title,
+        indent: 0,
+        cells: vec![Cell {
+            field: Field::SectionHeader,
+            kind: CellKind::Label,
+            value: title,
+        }],
         raw: String::new(),
     }
 }
@@ -248,10 +275,16 @@ fn push_schema(
     }
 }
 
-/// Builds the schema field rows + the inline example row for a body section.
-fn body_rows(loc: BodyLoc, fields: &[EditSchema], example: &str) -> Vec<TableRow> {
+/// Builds a body section's rows: `lead` (its Title row + any expanded editable
+/// rows) followed by the schema field rows + the inline example row.
+fn body_rows(
+    lead: Vec<TableRow>,
+    loc: BodyLoc,
+    fields: &[EditSchema],
+    example: &str,
+) -> Vec<TableRow> {
     let has_accept = any_accept(fields);
-    let mut rows = Vec::new();
+    let mut rows = lead;
     let mut path = Vec::new();
     push_schema(&mut rows, &loc, fields, &mut path, 0, has_accept);
     rows.push(example_row(loc, example.to_string()));
@@ -259,11 +292,12 @@ fn body_rows(loc: BodyLoc, fields: &[EditSchema], example: &str) -> Vec<TableRow
 }
 
 /// Flattens the model into read-shaped display sections.
-pub(crate) fn flatten(m: &EditModel, url_expanded: bool) -> Vec<Section> {
+pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
     let mut out = Vec::new();
 
     // Header block: name, description, URL.
     let method_s = crate::json::method_str(&m.method);
+    let url_expanded = expanded == Some(Expand::Url);
     let mut head_rows = vec![
         TableRow {
             kind: RowKind::Name,
@@ -320,6 +354,7 @@ pub(crate) fn flatten(m: &EditModel, url_expanded: bool) -> Vec<Section> {
         headers: None,
         rows: head_rows,
         add: head_add,
+        expand: Some(Expand::Url),
     });
 
     // VARIABLE
@@ -338,6 +373,7 @@ pub(crate) fn flatten(m: &EditModel, url_expanded: bool) -> Vec<Section> {
         headers: Some(vec!["NAME", "TYPE", "REQ", "DESCRIPTION"]),
         rows: v_rows,
         add: Some(Field::VarAdd),
+        expand: None,
     });
 
     // QUERY
@@ -356,6 +392,7 @@ pub(crate) fn flatten(m: &EditModel, url_expanded: bool) -> Vec<Section> {
         headers: Some(vec!["NAME", "VALUE", "REQ", "DESCRIPTION"]),
         rows: q_rows,
         add: Some(Field::QueryAdd),
+        expand: None,
     });
 
     // HEADERS (no column header, like read)
@@ -372,24 +409,38 @@ pub(crate) fn flatten(m: &EditModel, url_expanded: bool) -> Vec<Section> {
         headers: None,
         rows: h_rows,
         add: Some(Field::HeaderAdd),
+        expand: None,
     });
 
     // REQUEST. With no body, `a` toggles one on (RequestToggle); with a body,
-    // `a` appends a top-level schema field (SchemaAdd).
+    // `a` appends a top-level schema field (SchemaAdd). The title row expands
+    // into an editable `type` row.
     match &m.request {
-        Some(req) => out.push(Section {
-            title: format!("REQUEST{}", crate::render::array_marker(&req.dtype)),
-            kind: SectionKind::Body,
-            headers: Some(schema_columns(any_accept(&req.schema))),
-            rows: body_rows(BodyLoc::Request, &req.schema, &req.example),
-            add: Some(Field::SchemaAdd(BodyLoc::Request, Vec::new())),
-        }),
+        Some(req) => {
+            let title = format!("REQUEST{}", crate::render::array_marker(&req.dtype));
+            let mut lead = vec![title_row(title)];
+            if expanded == Some(Expand::Request) {
+                lead.push(field_row(vec![
+                    label("type"),
+                    text(Field::BodyDtype(BodyLoc::Request), req.dtype.clone()),
+                ]));
+            }
+            out.push(Section {
+                title: String::new(),
+                kind: SectionKind::Body,
+                headers: Some(schema_columns(any_accept(&req.schema))),
+                rows: body_rows(lead, BodyLoc::Request, &req.schema, &req.example),
+                add: Some(Field::SchemaAdd(BodyLoc::Request, Vec::new())),
+                expand: Some(Expand::Request),
+            });
+        }
         None => out.push(Section {
             title: "REQUEST".to_string(),
             kind: SectionKind::Body,
             headers: None,
-            rows: Vec::new(),
+            rows: vec![title_row("REQUEST".to_string())],
             add: Some(Field::RequestToggle),
+            expand: Some(Expand::Request),
         }),
     }
 
@@ -401,17 +452,34 @@ pub(crate) fn flatten(m: &EditModel, url_expanded: bool) -> Vec<Section> {
             headers: None,
             rows: Vec::new(),
             add: Some(Field::ResponseAdd),
+            expand: None,
         });
     } else {
         for (i, r) in m.responses.iter().enumerate() {
             let marker = crate::render::array_marker(&r.dtype);
             let title = format!("RESPONSE {} — {}{marker}", r.code, r.description);
+            let mut lead = vec![title_row(title)];
+            if expanded == Some(Expand::Response(i)) {
+                lead.push(field_row(vec![
+                    label("code"),
+                    text(Field::ResponseCode(i), r.code.clone()),
+                ]));
+                lead.push(field_row(vec![
+                    label("description"),
+                    text(Field::ResponseDesc(i), r.description.clone()),
+                ]));
+                lead.push(field_row(vec![
+                    label("type"),
+                    text(Field::BodyDtype(BodyLoc::Response(i)), r.dtype.clone()),
+                ]));
+            }
             out.push(Section {
-                title,
+                title: String::new(),
                 kind: SectionKind::Body,
                 headers: Some(schema_columns(any_accept(&r.schema))),
-                rows: body_rows(BodyLoc::Response(i), &r.schema, &r.example),
+                rows: body_rows(lead, BodyLoc::Response(i), &r.schema, &r.example),
                 add: Some(Field::SchemaAdd(BodyLoc::Response(i), Vec::new())),
+                expand: Some(Expand::Response(i)),
             });
         }
     }
@@ -440,9 +508,19 @@ mod tests {
         EditModel::from_contract(c)
     }
 
+    /// The displayed title of a section: its `title` field, or for Body
+    /// sections the value of the leading `Title` row.
+    fn shown_title(s: &Section) -> String {
+        if let Some(row) = s.rows.iter().find(|r| r.kind == RowKind::Title) {
+            row.cells[0].value.clone()
+        } else {
+            s.title.clone()
+        }
+    }
+
     #[test]
     fn header_block_has_name_desc_and_collapsed_url() {
-        let secs = flatten(&model(), false);
+        let secs = flatten(&model(), None);
         let head = &secs[0];
         assert_eq!(head.kind, SectionKind::Header);
         assert!(head.rows.iter().any(|r| r.kind == RowKind::Name));
@@ -462,7 +540,7 @@ mod tests {
 
     #[test]
     fn url_expands_to_editable_parts() {
-        let secs = flatten(&model(), true);
+        let secs = flatten(&model(), Some(Expand::Url));
         let head = &secs[0];
         assert!(head.rows.iter().all(|r| r.kind != RowKind::UrlLine));
         assert!(
@@ -480,18 +558,39 @@ mod tests {
 
     #[test]
     fn section_titles_match_read() {
-        let secs = flatten(&model(), false);
-        let titles: Vec<&str> = secs.iter().map(|s| s.title.as_str()).collect();
-        assert!(titles.contains(&"VARIABLE"));
-        assert!(titles.contains(&"QUERY"));
-        assert!(titles.contains(&"HEADERS"));
-        assert!(titles.contains(&"REQUEST"));
+        let secs = flatten(&model(), None);
+        let titles: Vec<String> = secs.iter().map(shown_title).collect();
+        assert!(titles.iter().any(|t| t == "VARIABLE"));
+        assert!(titles.iter().any(|t| t == "QUERY"));
+        assert!(titles.iter().any(|t| t == "HEADERS"));
+        assert!(titles.iter().any(|t| t == "REQUEST"));
         assert!(titles.iter().any(|t| t.starts_with("RESPONSE 200 — ok")));
     }
 
     #[test]
+    fn response_title_expands_to_editable_code_desc_type() {
+        let secs = flatten(&model(), Some(Expand::Response(0)));
+        let resp = secs
+            .iter()
+            .find(|s| s.expand == Some(Expand::Response(0)))
+            .unwrap();
+        assert!(resp.rows.iter().any(|r| matches!(
+            r.cells.last().map(|c| &c.field),
+            Some(Field::ResponseCode(0))
+        )));
+        assert!(resp.rows.iter().any(|r| matches!(
+            r.cells.last().map(|c| &c.field),
+            Some(Field::ResponseDesc(0))
+        )));
+        assert!(resp.rows.iter().any(|r| matches!(
+            r.cells.last().map(|c| &c.field),
+            Some(Field::BodyDtype(BodyLoc::Response(0)))
+        )));
+    }
+
+    #[test]
     fn add_targets_are_set() {
-        let secs = flatten(&model(), false);
+        let secs = flatten(&model(), None);
         let q = secs.iter().find(|s| s.title == "QUERY").unwrap();
         assert_eq!(q.add, Some(Field::QueryAdd));
         let h = secs.iter().find(|s| s.title == "HEADERS").unwrap();
@@ -501,10 +600,10 @@ mod tests {
 
     #[test]
     fn nested_field_has_tree_prefix_and_response_has_example_row() {
-        let secs = flatten(&model(), false);
+        let secs = flatten(&model(), None);
         let resp = secs
             .iter()
-            .find(|s| s.title.starts_with("RESPONSE 200"))
+            .find(|s| s.expand == Some(Expand::Response(0)))
             .unwrap();
         assert!(resp.rows.iter().any(|r| {
             r.kind == RowKind::Field

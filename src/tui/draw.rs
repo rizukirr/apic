@@ -150,7 +150,7 @@ fn push_header(
                 }
                 lines.push(kv_line(state, row, selected));
             }
-            RowKind::Example => {}
+            RowKind::Title | RowKind::Example => {}
         }
     }
 }
@@ -235,10 +235,37 @@ fn push_section(
     sel_line: &mut usize,
 ) {
     lines.push(Line::raw("")); // blank line before the title
-    lines.push(Line::from(Span::styled(
-        format!(" {}", section.title),
-        title_style(),
-    )));
+
+    // For Body sections the title is carried by a `RowKind::Title` row (so the
+    // expand selection lands on it); Table sections print `section.title`.
+    let title_row = section
+        .rows
+        .iter()
+        .enumerate()
+        .find(|(_, r)| r.kind == RowKind::Title);
+    match title_row {
+        Some((ri, row)) => {
+            let selected = si == state.sec && ri == state.row;
+            if selected {
+                *sel_line = lines.len();
+            }
+            let style = if selected {
+                title_style().bg(Color::Rgb(40, 40, 60))
+            } else {
+                title_style()
+            };
+            lines.push(Line::from(Span::styled(
+                format!(" {}", row.cells[0].value),
+                style,
+            )));
+        }
+        None => {
+            lines.push(Line::from(Span::styled(
+                format!(" {}", section.title),
+                title_style(),
+            )));
+        }
+    }
 
     let field_rows: Vec<&TableRow> = section
         .rows
@@ -259,8 +286,14 @@ fn push_section(
         Vec::new()
     };
 
-    // Column header line (dim), when the section carries headers and has rows.
-    if let (Some(h), false) = (&section.headers, field_rows.is_empty()) {
+    // Only schema field rows (cell count == ncols) feed the column-header line;
+    // expanded kv rows (label + value) are rendered ` label  value`.
+    let has_schema_rows = field_rows
+        .iter()
+        .any(|r| ncols > 0 && r.cells.len() == ncols);
+
+    // Column header line (dim), when the section carries headers and schema rows.
+    if let (Some(h), true) = (&section.headers, has_schema_rows) {
         let mut spans = vec![Span::raw(" ")];
         for (i, head) in h.iter().enumerate() {
             spans.push(Span::styled(pad(head, widths[i]), dim()));
@@ -278,7 +311,12 @@ fn push_section(
                 if selected {
                     *sel_line = lines.len();
                 }
-                lines.push(table_line(state, row, &widths, ncols, selected));
+                // Expanded title rows (label + value) render like URL kv rows.
+                if ncols > 0 && row.cells.len() == ncols {
+                    lines.push(table_line(state, row, &widths, ncols, selected));
+                } else {
+                    lines.push(kv_line(state, row, selected));
+                }
             }
             RowKind::Example => {
                 lines.push(Line::raw("")); // blank line before Example:

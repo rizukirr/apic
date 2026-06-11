@@ -6,7 +6,7 @@
 
 use crate::tui::model::EditModel;
 use crate::tui::model::{EditBody, EditHeader, EditQuery, EditResponse, EditSchema, EditVariable};
-use crate::tui::rows::{BodyLoc, CellKind, Field, RowKind, Section, TableRow, flatten};
+use crate::tui::rows::{BodyLoc, CellKind, Expand, Field, RowKind, Section, TableRow, flatten};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::json::{method_all, method_str};
@@ -40,12 +40,12 @@ pub(crate) struct UiState {
     pub mode: Mode,
     pub dirty: bool,
     pub status: String,
-    pub url_expanded: bool,
+    pub expanded: Option<Expand>,
 }
 
 impl UiState {
     pub fn new(model: &EditModel) -> Self {
-        let sections = flatten(model, false);
+        let sections = flatten(model, None);
         let mut s = UiState {
             sections,
             sec: 0,
@@ -54,7 +54,7 @@ impl UiState {
             mode: Mode::Normal,
             dirty: false,
             status: HINT.to_string(),
-            url_expanded: false,
+            expanded: None,
         };
         s.snap_to_first_row();
         s
@@ -63,7 +63,7 @@ impl UiState {
     /// Rebuilds sections after a mutation, clamping the cursor; drops cell focus
     /// if it no longer addresses a valid cell.
     pub fn refresh(&mut self, model: &EditModel) {
-        self.sections = flatten(model, self.url_expanded);
+        self.sections = flatten(model, self.expanded);
         if self.sec >= self.sections.len() {
             self.sec = self.sections.len().saturating_sub(1);
         }
@@ -179,9 +179,9 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
         return handle_cell(state, model, key);
     }
     match (key.code, key.modifiers) {
-        // Esc first collapses an expanded URL, before triggering the quit flow.
-        (KeyCode::Esc, _) if state.url_expanded => {
-            state.url_expanded = false;
+        // Esc first collapses any expanded region, before the quit flow.
+        (KeyCode::Esc, _) if state.expanded.is_some() => {
+            state.expanded = None;
             state.refresh(model);
             Action::None
         }
@@ -271,8 +271,9 @@ fn begin_row(state: &mut UiState, model: &mut EditModel) -> Action {
         return Action::None;
     };
     match row.kind {
-        RowKind::UrlLine => {
-            state.url_expanded = true;
+        RowKind::UrlLine | RowKind::Title => {
+            let tgt = state.sections[state.sec].expand;
+            state.expanded = if state.expanded == tgt { None } else { tgt };
             state.cell = None;
             state.refresh(model);
             Action::None
@@ -385,6 +386,7 @@ fn delete_row(state: &mut UiState, model: &mut EditModel, field: &Field) {
             drop_at(&mut model.url.variable, *i)
         }
         Field::HeaderName(i) | Field::HeaderValue(i) => drop_at(&mut model.headers, *i),
+        Field::ResponseCode(i) | Field::ResponseDesc(i) => drop_at(&mut model.responses, *i),
         Field::SchemaName(loc, path)
         | Field::SchemaType(loc, path)
         | Field::SchemaDesc(loc, path)
@@ -436,6 +438,7 @@ pub(crate) fn handle_insert(state: &mut UiState, model: &mut EditModel, key: Key
                 state.dirty = true;
             }
             state.mode = Mode::Normal;
+            state.cell = None;
             state.refresh(model);
             Action::None
         }
@@ -499,6 +502,26 @@ fn set_field(model: &mut EditModel, field: &Field, value: String) {
         Field::HeaderValue(i) => {
             if let Some(h) = model.headers.get_mut(*i) {
                 h.value = value;
+            }
+        }
+        Field::BodyDtype(BodyLoc::Request) => {
+            if let Some(b) = model.request.as_mut() {
+                b.dtype = value;
+            }
+        }
+        Field::BodyDtype(BodyLoc::Response(r)) => {
+            if let Some(b) = model.responses.get_mut(*r) {
+                b.dtype = value;
+            }
+        }
+        Field::ResponseCode(i) => {
+            if let Some(r) = model.responses.get_mut(*i) {
+                r.code = value;
+            }
+        }
+        Field::ResponseDesc(i) => {
+            if let Some(r) = model.responses.get_mut(*i) {
+                r.description = value;
             }
         }
         Field::SchemaName(loc, p) => set_schema(model, loc, p, |s| s.name = value.clone()),
@@ -601,9 +624,45 @@ mod tests {
         let mut s = UiState::new(&m);
         goto(&mut s, |f| matches!(f, Field::Method)); // url line carries Method
         handle_normal(&mut s, &mut m, key(KeyCode::Enter));
-        assert!(s.url_expanded);
+        assert_eq!(s.expanded, Some(Expand::Url));
         handle_normal(&mut s, &mut m, key(KeyCode::Esc));
-        assert!(!s.url_expanded);
+        assert_eq!(s.expanded, None);
+    }
+
+    #[test]
+    fn response_title_expands_and_code_is_editable() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        // find the RESPONSE title row (RowKind::Title in a Response section)
+        let (si, ri) = s
+            .sections
+            .iter()
+            .enumerate()
+            .find_map(|(si, sec)| {
+                sec.rows
+                    .iter()
+                    .position(|r| r.kind == RowKind::Title)
+                    .filter(|_| matches!(sec.expand, Some(Expand::Response(_))))
+                    .map(|ri| (si, ri))
+            })
+            .unwrap();
+        s.sec = si;
+        s.row = ri;
+        s.cell = None;
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // expand
+        assert!(matches!(s.expanded, Some(Expand::Response(_))));
+        // a code row now exists and is editable
+        s.refresh(&m);
+        goto(&mut s, |f| matches!(f, Field::ResponseCode(_)));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cell mode
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert (prefilled "200")
+        handle_insert(&mut s, &mut m, key(KeyCode::Backspace));
+        handle_insert(&mut s, &mut m, key(KeyCode::Char('1')));
+        handle_insert(&mut s, &mut m, key(KeyCode::Enter));
+        assert_eq!(m.responses[0].code, "201");
+        // esc collapses
+        handle_normal(&mut s, &mut m, key(KeyCode::Esc));
+        assert_eq!(s.expanded, None);
     }
 
     #[test]
@@ -641,7 +700,7 @@ mod tests {
     fn method_cycles_when_url_expanded() {
         let mut m = model();
         let mut s = UiState::new(&m);
-        s.url_expanded = true;
+        s.expanded = Some(Expand::Url);
         s.refresh(&m);
         goto(&mut s, |f| matches!(f, Field::Method));
         // focus the method enum cell
