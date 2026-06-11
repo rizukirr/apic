@@ -427,7 +427,7 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
             if expanded == Some(Expand::Request) {
                 lead.push(field_row(vec![
                     label("type"),
-                    text(Field::BodyDtype(BodyLoc::Request), req.dtype.clone()),
+                    enum_cell(Field::BodyDtype(BodyLoc::Request), req.dtype.clone()),
                 ]));
             }
             out.push(Section {
@@ -475,7 +475,7 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
                 ]));
                 lead.push(field_row(vec![
                     label("type"),
-                    text(Field::BodyDtype(BodyLoc::Response(i)), r.dtype.clone()),
+                    enum_cell(Field::BodyDtype(BodyLoc::Response(i)), r.dtype.clone()),
                 ]));
             }
             out.push(Section {
