@@ -211,7 +211,7 @@ fn header_value_line(
 ) -> (Line<'static>, Option<usize>) {
     let cell = &row.cells[0];
     let focused = selected && state.cell == Some(0);
-    let base = sel_style(selected);
+    let base = sel_style(state, selected);
     if focused && let Mode::Insert(buf) = &state.mode {
         // Insert edits the raw value; show it as plain bold text and place a
         // real terminal cursor at its end (no yellow highlight while typing).
@@ -223,23 +223,19 @@ fn header_value_line(
         let col = 1 + buf.chars().count();
         return (line, Some(col));
     }
-    let style = if focused {
-        base.fg(Color::Black).bg(Color::Yellow)
-    } else {
-        base
-    };
+    let style = if focused { cell_hl() } else { base };
     (Line::from(Span::styled(fmt(&cell.value), style)), None)
 }
 
 /// The collapsed ` METHOD <built-url>` line.
 fn url_line(state: &UiState, row: &TableRow, selected: bool) -> Line<'static> {
-    let base = sel_style(selected);
+    let base = sel_style(state, selected);
     let method = &row.cells[0];
     let url = &row.cells[1];
     let method_focused = selected && state.cell == Some(0);
 
     let method_style = if method_focused {
-        base.fg(Color::Black).bg(Color::Yellow)
+        cell_hl()
     } else {
         base.fg(method_color(&method.value))
             .add_modifier(Modifier::BOLD)
@@ -255,7 +251,7 @@ fn url_line(state: &UiState, row: &TableRow, selected: bool) -> Line<'static> {
 /// A ` label  value` key/value line (expanded URL rows). The label is dim; the
 /// value cell honors focus and the insert buffer.
 fn kv_line(state: &UiState, row: &TableRow, selected: bool) -> (Line<'static>, Option<usize>) {
-    let base = sel_style(selected);
+    let base = sel_style(state, selected);
     let mut spans = vec![Span::styled(" ", base)];
     let mut emitted = 1usize; // leading space
     let mut cursor_col = None;
@@ -269,7 +265,7 @@ fn kv_line(state: &UiState, row: &TableRow, selected: bool) -> (Line<'static>, O
         } else {
             let val = cell_text(state, c, focused);
             let style = if focused {
-                base.fg(Color::Black).bg(Color::Yellow)
+                cell_hl()
             } else if c.kind == CellKind::Label {
                 base.fg(Color::DarkGray)
             } else {
@@ -311,8 +307,8 @@ fn push_section(
             if selected {
                 *sel_line = lines.len();
             }
-            let style = if selected {
-                title_style().bg(Color::Rgb(40, 40, 60))
+            let style = if selected && state.cell.is_none() {
+                title_style().bg(Color::Red).fg(Color::Black)
             } else {
                 title_style()
             };
@@ -388,7 +384,7 @@ fn push_section(
                 if selected {
                     *sel_line = lines.len();
                 }
-                push_example(row, selected, lines);
+                push_example(state, row, selected, lines);
             }
             _ => {}
         }
@@ -397,8 +393,8 @@ fn push_section(
 
 /// Emits the inline example payload (` <line>` per line of the raw buffer), or
 /// ` (no example provided)` when empty.
-fn push_example(row: &TableRow, selected: bool, lines: &mut Vec<Line<'static>>) {
-    let base = sel_style(selected);
+fn push_example(state: &UiState, row: &TableRow, selected: bool, lines: &mut Vec<Line<'static>>) {
+    let base = sel_style(state, selected);
     if row.raw.trim().is_empty() {
         lines.push(Line::from(Span::styled(" (no example provided)", dim())));
         return;
@@ -417,7 +413,7 @@ fn table_line(
     ncols: usize,
     selected: bool,
 ) -> (Line<'static>, Option<usize>) {
-    let base = sel_style(selected);
+    let base = sel_style(state, selected);
     let editing_here = selected && state.cell.is_some();
     let mut spans = vec![Span::styled(" ", base)];
     let mut emitted = 1usize; // leading space
@@ -453,11 +449,7 @@ fn table_line(
                 }
                 // Last column is not padded (its trailing space would trim).
                 let cell_str = if i == last { val } else { pad(&val, widths[i]) };
-                let style = if focused {
-                    base.fg(Color::Black).bg(Color::Yellow)
-                } else {
-                    base
-                };
+                let style = if focused { cell_hl() } else { base };
                 emitted += cell_str.chars().count();
                 spans.push(Span::styled(cell_str, style));
             }
@@ -489,7 +481,7 @@ fn table_line(
                     val
                 };
                 let style = if focused {
-                    base.fg(Color::Black).bg(Color::Yellow)
+                    cell_hl()
                 } else if c.kind == CellKind::Label {
                     base.fg(Color::DarkGray)
                 } else {
@@ -507,13 +499,21 @@ fn table_line(
     (Line::from(trim_trailing(spans)), cursor_col)
 }
 
-/// The base style for a row: a subtle background highlight when selected.
-fn sel_style(selected: bool) -> Style {
-    if selected {
-        Style::default().bg(Color::Rgb(40, 40, 60))
+/// The base style for a row: a red highlight when selected in row-select mode
+/// (no cell focused). In cell-edit mode the row carries no base — only the
+/// focused cell is highlighted (see `cell_hl`).
+fn sel_style(state: &UiState, selected: bool) -> Style {
+    if selected && state.cell.is_none() {
+        Style::default().bg(Color::Red).fg(Color::Black)
     } else {
         Style::default()
     }
+}
+
+/// The highlight for the focused cell in cell-edit mode: red, regardless of the
+/// row base.
+fn cell_hl() -> Style {
+    Style::default().bg(Color::Red).fg(Color::Black)
 }
 
 /// The text to show for a cell, accounting for an in-progress insert buffer.
@@ -679,5 +679,48 @@ mod tests {
         for g in ['│', '┌', '┐', '┘', '┤', '┬', '┴', '┼'] {
             assert!(!text.contains(g), "found border glyph {g:?}");
         }
+    }
+
+    #[test]
+    fn cell_edit_highlights_only_focused_cell_red() {
+        let c = json_get(
+            r#"{ "name":"t","method":"GET",
+                 "url":{"protocol":"https","host":"h","path":["x"],
+                        "query":[{"name":"page","value":"1","description":"d","required":false}]},
+                 "headers":[],"responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let m = EditModel::from_contract(c);
+        let mut state = UiState::new(&m);
+        // focus the QUERY name cell in cell-edit mode
+        let (si, ri) = state
+            .sections
+            .iter()
+            .enumerate()
+            .find_map(|(si, s)| {
+                s.rows
+                    .iter()
+                    .position(|r| {
+                        r.cells
+                            .iter()
+                            .any(|c| matches!(c.field, crate::tui::rows::Field::QueryName(_)))
+                    })
+                    .map(|ri| (si, ri))
+            })
+            .unwrap();
+        state.sec = si;
+        state.row = ri;
+        state.cell = Some(0);
+        let backend = TestBackend::new(100, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &state)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        // Some cell in the buffer carries a red background (the focused cell).
+        let any_red = buf
+            .content()
+            .iter()
+            .any(|cell| cell.style().bg == Some(Color::Red));
+        assert!(any_red, "expected a red-highlighted focused cell");
     }
 }
