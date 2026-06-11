@@ -10,6 +10,8 @@ mod seed;
 mod state;
 
 pub(crate) use model::EditModel;
+use ratatui::style::Style;
+use ratatui::widgets::Block;
 pub(crate) use seed::seed_model;
 
 use crate::tui::rows::{BodyLoc, Field};
@@ -149,10 +151,11 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                 let mut ta =
                     TextArea::from(text.lines().map(|l| l.to_string()).collect::<Vec<_>>());
                 ta.set_block(
-                    ratatui::widgets::Block::default()
-                        .borders(ratatui::widgets::Borders::NONE)
-                        .title(" example JSON — Esc to save & close "),
+                    Block::bordered()
+                        .title(" JSON Example ")
+                        .title_bottom(" Ctrl-S Save • Esc Close "),
                 );
+                ta.set_line_number_style(Style::default());
                 modal = Some((field, ta));
                 state.mode = Mode::Example;
             }
