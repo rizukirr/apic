@@ -489,6 +489,17 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
         }
     }
 
+    // A trailing "+ add response" affordance so the cursor can land on it and
+    // `a` appends a new response at any time (not just when there are zero).
+    out.push(Section {
+        title: String::new(),
+        kind: SectionKind::Table,
+        headers: None,
+        rows: vec![field_row(vec![label("+ add response")])],
+        add: Some(Field::ResponseAdd),
+        expand: None,
+    });
+
     out
 }
 
@@ -633,6 +644,24 @@ mod tests {
                 "{t} should start with a Title row"
             );
         }
+    }
+
+    #[test]
+    fn trailing_add_response_affordance_present() {
+        let secs = flatten(&model(), None);
+        let aff = secs
+            .iter()
+            .find(|s| {
+                s.add == Some(Field::ResponseAdd)
+                    && s.rows.iter().any(|r| {
+                        r.cells
+                            .first()
+                            .map(|c| c.value == "+ add response")
+                            .unwrap_or(false)
+                    })
+            })
+            .expect("a '+ add response' affordance section exists");
+        assert_eq!(aff.add, Some(Field::ResponseAdd));
     }
 
     #[test]

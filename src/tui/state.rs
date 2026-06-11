@@ -305,6 +305,16 @@ fn append_here(state: &mut UiState, model: &mut EditModel) {
         return;
     };
     add_row(state, model, &target);
+    if target == Field::ResponseAdd {
+        // The new response starts collapsed; expand it so its code row exists,
+        // then drop the cursor into that code cell in insert mode.
+        if let Some(idx) = model.responses.len().checked_sub(1) {
+            state.expanded = Some(Expand::Response(idx));
+            state.refresh(model);
+            focus_and_insert(state, &Field::ResponseCode(idx));
+        }
+        return;
+    }
     if let Some(nf) = new_name_field(model, &target) {
         focus_and_insert(state, &nf);
     }
@@ -1104,6 +1114,57 @@ mod tests {
         // a adds the first query
         handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
         assert_eq!(m.url.query.len(), 1);
+    }
+
+    #[test]
+    fn add_response_expands_and_focuses_code() {
+        let c = json_get(
+            r#"{ "name":"t","method":"GET",
+                 "url":{"protocol":"https","host":"h","path":["x"]},"headers":[],
+                 "responses":[{"code":200,"description":"ok","schema":[]}] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        // land on the "+ add response" affordance row
+        let (si, ri) = s
+            .sections
+            .iter()
+            .enumerate()
+            .find_map(|(si, sec)| {
+                (sec.add == Some(Field::ResponseAdd)
+                    && sec
+                        .rows
+                        .iter()
+                        .any(|r| r.cells.iter().any(|c| c.value == "+ add response")))
+                .then(|| {
+                    (
+                        si,
+                        sec.rows
+                            .iter()
+                            .position(|r| r.cells.iter().any(|c| c.value == "+ add response"))
+                            .unwrap(),
+                    )
+                })
+            })
+            .unwrap();
+        s.sec = si;
+        s.row = ri;
+        s.cell = None;
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
+        assert_eq!(m.responses.len(), 2);
+        assert!(matches!(s.mode, Mode::Insert(_)));
+        assert!(matches!(
+            s.focused_field_pub(),
+            Some(Field::ResponseCode(1))
+        ));
+        // typing sets the new code
+        handle_insert(&mut s, &mut m, key(KeyCode::Char('4')));
+        handle_insert(&mut s, &mut m, key(KeyCode::Char('2')));
+        handle_insert(&mut s, &mut m, key(KeyCode::Char('9')));
+        handle_insert(&mut s, &mut m, key(KeyCode::Enter));
+        assert_eq!(m.responses[1].code, "429");
     }
 
     #[test]

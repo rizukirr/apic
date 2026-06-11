@@ -89,10 +89,10 @@ impl EditBody {
 }
 
 impl EditResponse {
-    /// A blank response shell with a `200` default code.
+    /// A blank response shell with an empty code (the user types it).
     pub fn blank() -> Self {
         EditResponse {
-            code: "200".to_string(),
+            code: String::new(),
             description: String::new(),
             dtype: "object".to_string(),
             schema: Vec::new(),

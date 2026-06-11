@@ -331,10 +331,14 @@ fn push_section(
             )));
         }
         None => {
-            lines.push(Line::from(Span::styled(
-                format!(" {}", section.title),
-                title_style(),
-            )));
+            // An empty-titled, title-rowless section (e.g. the "+ add response"
+            // affordance) prints no title line.
+            if !section.title.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    format!(" {}", section.title),
+                    title_style(),
+                )));
+            }
         }
     }
 
@@ -618,7 +622,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Row::new(vec!["Esc", "Back · collapse · cancel"]),
         Row::new(vec![
             "a",
-            "Add field — child if on an object field, else sibling",
+            "Add field/member · on '+ add response' adds a response",
         ]),
         Row::new(vec!["g", "Generate example from the schema"]),
         Row::new(vec!["d", "Delete the selected row"]),
