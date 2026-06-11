@@ -7,6 +7,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use tui_textarea::TextArea;
 
 /// Draws the whole UI for the current frame.
 pub(crate) fn draw(frame: &mut Frame, state: &UiState) {
@@ -97,6 +98,13 @@ Save/quit:  Ctrl-S save · q quit · ? toggle this help";
         Paragraph::new(help).block(block).wrap(Wrap { trim: false }),
         popup,
     );
+}
+
+/// Renders the example-editor modal over the screen.
+pub(crate) fn draw_example_modal(frame: &mut Frame, textarea: &TextArea) {
+    let area = centered(frame.area(), 80, 70);
+    frame.render_widget(Clear, area);
+    frame.render_widget(textarea, area);
 }
 
 /// A centered rect `pct_x`% × `pct_y`% of `area`.
