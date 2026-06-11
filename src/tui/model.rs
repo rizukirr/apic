@@ -396,6 +396,74 @@ impl EditModel {
     }
 }
 
+/// Walks `fields` following `path`, returning the addressed node.
+fn schema_node_mut<'a>(fields: &'a mut [EditSchema], path: &[usize]) -> Option<&'a mut EditSchema> {
+    let (&first, rest) = path.split_first()?;
+    let node = fields.get_mut(first)?;
+    if rest.is_empty() {
+        Some(node)
+    } else {
+        schema_node_mut(&mut node.properties, rest)
+    }
+}
+
+impl EditModel {
+    /// Mutable access to a request-body schema node by path ([] is invalid;
+    /// use the top-level vec directly for inserts).
+    pub fn schema_at_mut_request(&mut self, path: &[usize]) -> Option<&mut EditSchema> {
+        let req = self.request.as_mut()?;
+        schema_node_mut(&mut req.schema, path)
+    }
+
+    /// Mutable access to a response schema node by path.
+    pub fn schema_at_mut_response(
+        &mut self,
+        resp: usize,
+        path: &[usize],
+    ) -> Option<&mut EditSchema> {
+        let r = self.responses.get_mut(resp)?;
+        schema_node_mut(&mut r.schema, path)
+    }
+
+    /// The vector that should receive a new child for `path` ([] = top-level).
+    /// Returns `None` if the path does not resolve.
+    pub fn schema_children_mut_request(&mut self, path: &[usize]) -> Option<&mut Vec<EditSchema>> {
+        let req = self.request.as_mut()?;
+        if path.is_empty() {
+            return Some(&mut req.schema);
+        }
+        schema_node_mut(&mut req.schema, path).map(|n| &mut n.properties)
+    }
+
+    /// Response counterpart of [`schema_children_mut_request`].
+    pub fn schema_children_mut_response(
+        &mut self,
+        resp: usize,
+        path: &[usize],
+    ) -> Option<&mut Vec<EditSchema>> {
+        let r = self.responses.get_mut(resp)?;
+        if path.is_empty() {
+            return Some(&mut r.schema);
+        }
+        schema_node_mut(&mut r.schema, path).map(|n| &mut n.properties)
+    }
+}
+
+/// A blank schema field for inserts.
+impl EditSchema {
+    pub fn blank() -> Self {
+        EditSchema {
+            name: String::new(),
+            dtype: "string".to_string(),
+            default: String::new(),
+            description: String::new(),
+            required: false,
+            properties: Vec::new(),
+            accept: String::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -485,6 +553,26 @@ mod tests {
         let json = model.to_json().unwrap();
         let back = json_get(&json, None).unwrap();
         assert!(back.request.unwrap().example.is_none());
+    }
+
+    #[test]
+    fn schema_at_mut_reaches_nested() {
+        let c = json_get(
+            r#"{ "name":"t","method":"GET",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "request":{"type":"object","schema":[
+                   {"name":"wrap","type":"object","default":null,"description":"d","required":true,
+                    "properties":[{"name":"leaf","type":"string","default":null,"description":"d","required":false}]}
+                 ]},
+                 "responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let node = m.schema_at_mut_request(&[0, 0]).unwrap();
+        assert_eq!(node.name, "leaf");
+        node.name = "renamed".to_string();
+        assert_eq!(m.request.unwrap().schema[0].properties[0].name, "renamed");
     }
 
     #[test]
