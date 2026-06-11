@@ -22,6 +22,7 @@ pub(crate) enum Mode {
     Example,
     Help,
     ConfirmQuit,
+    ConfirmDelete(Field),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -170,6 +171,32 @@ fn delete_field(state: &UiState) -> Option<Field> {
         .map(|c| c.field.clone())
 }
 
+/// Whether `delete_row` would actually remove a row for this field — matching
+/// exactly the variants it handles (path/query/var/header/response/schema).
+fn is_deletable(field: &Field) -> bool {
+    matches!(
+        field,
+        Field::PathSeg(_)
+            | Field::QueryName(_)
+            | Field::QueryValue(_)
+            | Field::QueryDesc(_)
+            | Field::QueryRequired(_)
+            | Field::VarName(_)
+            | Field::VarType(_)
+            | Field::VarDesc(_)
+            | Field::VarRequired(_)
+            | Field::HeaderName(_)
+            | Field::HeaderValue(_)
+            | Field::ResponseCode(_)
+            | Field::ResponseDesc(_)
+            | Field::SchemaName(_, _)
+            | Field::SchemaType(_, _)
+            | Field::SchemaDesc(_, _)
+            | Field::SchemaRequired(_, _)
+            | Field::SchemaAccept(_, _)
+    )
+}
+
 /// Handles one key in Normal mode (row-select or cell-edit per `state.cell`).
 pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: KeyEvent) -> Action {
     if (key.code, key.modifiers) == (KeyCode::Char('s'), KeyModifiers::CONTROL) {
@@ -188,7 +215,6 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
         (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => {
             if state.dirty {
                 state.mode = Mode::ConfirmQuit;
-                state.status = "Unsaved changes — y: save & quit · n: discard · Esc: cancel".into();
                 Action::None
             } else {
                 Action::Quit
@@ -212,8 +238,10 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
             Action::None
         }
         (KeyCode::Char('d'), _) => {
-            if let Some(f) = delete_field(state) {
-                delete_row(state, model, &f);
+            if let Some(f) = delete_field(state)
+                && is_deletable(&f)
+            {
+                state.mode = Mode::ConfirmDelete(f);
             }
             Action::None
         }
@@ -241,6 +269,14 @@ fn handle_cell(state: &mut UiState, model: &mut EditModel, key: KeyEvent) -> Act
             Action::None
         }
         KeyCode::Right => {
+            state.move_cell(1);
+            Action::None
+        }
+        KeyCode::Char('h') => {
+            state.move_cell(-1);
+            Action::None
+        }
+        KeyCode::Char('l') => {
             state.move_cell(1);
             Action::None
         }
@@ -584,6 +620,28 @@ pub(crate) fn handle_confirm_quit(state: &mut UiState, key: KeyEvent) -> Action 
     }
 }
 
+/// Handles keys while the delete confirmation is showing.
+pub(crate) fn handle_confirm_delete(
+    state: &mut UiState,
+    model: &mut EditModel,
+    key: KeyEvent,
+) -> Action {
+    match key.code {
+        KeyCode::Char('y') => {
+            if let Mode::ConfirmDelete(f) = state.mode.clone() {
+                delete_row(state, model, &f);
+            }
+            state.mode = Mode::Normal;
+            Action::None
+        }
+        KeyCode::Char('n') | KeyCode::Esc => {
+            state.mode = Mode::Normal;
+            Action::None
+        }
+        _ => Action::None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -680,7 +738,37 @@ mod tests {
         let mut s = UiState::new(&m);
         goto(&mut s, |f| matches!(f, Field::QueryName(_)));
         handle_normal(&mut s, &mut m, key(KeyCode::Char('d')));
+        handle_confirm_delete(&mut s, &mut m, key(KeyCode::Char('y')));
         assert_eq!(m.url.query.len(), 0);
+    }
+
+    #[test]
+    fn delete_requires_confirmation() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| matches!(f, Field::HeaderName(_)));
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('d')));
+        assert!(matches!(s.mode, Mode::ConfirmDelete(_)));
+        assert_eq!(m.headers.len(), 1);
+        handle_confirm_delete(&mut s, &mut m, key(KeyCode::Char('n')));
+        assert_eq!(s.mode, Mode::Normal);
+        assert_eq!(m.headers.len(), 1);
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('d')));
+        handle_confirm_delete(&mut s, &mut m, key(KeyCode::Char('y')));
+        assert_eq!(m.headers.len(), 0);
+    }
+
+    #[test]
+    fn h_and_l_move_cells() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| matches!(f, Field::QueryName(_)));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cell mode
+        let first = s.cell.unwrap();
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('l')));
+        assert!(s.cell.unwrap() > first);
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('h')));
+        assert_eq!(s.cell.unwrap(), first);
     }
 
     #[test]

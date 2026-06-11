@@ -29,8 +29,23 @@ pub(crate) fn draw(frame: &mut Frame, state: &UiState) {
 
     draw_status(frame, chunks[1], state);
 
-    if state.mode == Mode::Help {
-        draw_help(frame, area);
+    match state.mode {
+        Mode::Help => draw_help(frame, area),
+        Mode::ConfirmQuit => draw_confirm(
+            frame,
+            area,
+            " unsaved changes ",
+            "Save before quitting?",
+            "y: save & quit    n: discard    Esc: cancel",
+        ),
+        Mode::ConfirmDelete(_) => draw_confirm(
+            frame,
+            area,
+            " confirm delete ",
+            "Delete this row?",
+            "y: delete    n/Esc: cancel",
+        ),
+        _ => {}
     }
 }
 
@@ -449,19 +464,50 @@ fn draw_status(frame: &mut Frame, area: Rect, state: &UiState) {
     );
 }
 
+/// A bordered, centered confirmation popup showing a prompt and the key legend.
+fn draw_confirm(frame: &mut Frame, area: Rect, title: &str, prompt: &str, keys: &str) {
+    let popup = centered(area, 50, 20);
+    frame.render_widget(Clear, popup);
+    let body = format!("{prompt}\n\n{keys}");
+    frame.render_widget(
+        Paragraph::new(body)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title.to_string()),
+            )
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+/// A bordered help popup with an aligned `KEY  ACTION` two-column table.
 fn draw_help(frame: &mut Frame, area: Rect) {
-    let help = "\
-Row select: ↑/↓ or j/k move between rows · Enter steps into a row's cells
-Cell edit:  ←/→ move between cells · Enter edits the cell (type / cycle / toggle) · Esc back
-URL:        Enter on the METHOD url line expands it; Esc collapses it again
-Add/Delete: a adds a row to the current section · d deletes the selected row
-Examples:   Enter on an example opens the JSON editor in a pop-up
-Save/quit:  Ctrl-S save · q quit · ? toggle this help";
-    let popup = centered(area, 76, 45);
+    let rows = [
+        ("↑/↓  j/k", "Select a row"),
+        ("←/→  h/l", "Move between cells"),
+        ("Enter", "Edit cell · expand url/title · open example"),
+        ("Esc", "Back · collapse · cancel"),
+        ("a", "Add a row to the section"),
+        ("d", "Delete the selected row (asks to confirm)"),
+        ("Ctrl-S", "Save"),
+        ("q", "Quit"),
+        ("?", "Toggle this help"),
+    ];
+    let key_w = rows
+        .iter()
+        .map(|(k, _)| k.chars().count())
+        .max()
+        .unwrap_or(0);
+    let body: Vec<Line<'static>> = rows
+        .iter()
+        .map(|(k, a)| Line::raw(format!(" {}  {}", pad(k, key_w), a)))
+        .collect();
+    let popup = centered(area, 64, 50);
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(help)
-            .block(Block::default().borders(Borders::NONE).title(" help "))
+        Paragraph::new(body)
+            .block(Block::default().borders(Borders::ALL).title(" help "))
             .wrap(Wrap { trim: false }),
         popup,
     );

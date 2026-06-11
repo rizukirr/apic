@@ -14,7 +14,8 @@ pub(crate) use seed::seed_model;
 
 use crate::tui::rows::{BodyLoc, Field};
 use crate::tui::state::{
-    Action, Mode, UiState, apply_save, handle_confirm_quit, handle_insert, handle_normal,
+    Action, Mode, UiState, apply_save, handle_confirm_delete, handle_confirm_quit, handle_insert,
+    handle_normal,
 };
 // Crossterm is imported via ratatui's re-export (== 0.28) so event/terminal
 // types match ratatui and tui-textarea. The root `crossterm` 0.29 crate is used
@@ -133,6 +134,7 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
             Mode::Normal => handle_normal(&mut state, &mut model, key),
             Mode::Insert(_) => handle_insert(&mut state, &mut model, key),
             Mode::ConfirmQuit => handle_confirm_quit(&mut state, key),
+            Mode::ConfirmDelete(_) => handle_confirm_delete(&mut state, &mut model, key),
             Mode::Help => {
                 state.mode = Mode::Normal;
                 Action::None
