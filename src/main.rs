@@ -12,6 +12,7 @@ mod picker;
 mod render;
 mod template;
 mod tree;
+mod tui;
 
 /// Restores the default `SIGPIPE` disposition on Unix.
 ///

@@ -4,7 +4,7 @@ use crate::file::{FindFileResult, find_file_by_ext_downward};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum Method {
     GET,
@@ -14,7 +14,7 @@ pub enum Method {
     DELETE,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct JsonContent {
     pub(crate) name: String,
     pub(crate) description: Option<String>,
@@ -28,7 +28,7 @@ pub struct JsonContent {
 /// The request body section: a field-level schema, a raw JSON example payload,
 /// or both. Either part may be omitted — early-stage contracts often have only
 /// an example, formal ones only a schema.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RequestBody {
     /// Body shape: `"object"` (default) or an array form like `"object[]"`.
     #[serde(alias = "type", default = "default_body_type")]
@@ -39,7 +39,7 @@ pub struct RequestBody {
     pub(crate) example: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Url {
     pub(crate) protocol: String,
     pub(crate) host: String,
@@ -71,7 +71,7 @@ fn default_body_type() -> String {
     "object".to_string()
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Query {
     pub(crate) name: String,
     pub(crate) value: String,
@@ -79,13 +79,13 @@ pub struct Query {
     pub(crate) required: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Header {
     pub(crate) name: String,
     pub(crate) value: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Response {
     pub code: u16,
     pub description: String,
@@ -100,7 +100,7 @@ pub struct Response {
     pub example: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Schema {
     pub(crate) name: String,
     #[serde(alias = "type")]
@@ -124,6 +124,17 @@ pub fn method_str(method: &Method) -> String {
         Method::PATCH => "PATCH".to_string(),
         Method::DELETE => "DELETE".to_string(),
     }
+}
+
+/// All HTTP methods in a fixed order, for cycling through choices in the TUI.
+pub(crate) fn method_all() -> [Method; 5] {
+    [
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::PATCH,
+        Method::DELETE,
+    ]
 }
 
 /// Splits a type string into its base type and array-ness:

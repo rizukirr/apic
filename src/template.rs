@@ -160,7 +160,7 @@ fn merge(base: &mut Value, overlay: Value) {
 
 /// Serializes `value` as pretty JSON with four-space indentation, matching the
 /// style of the embedded template.
-fn render_pretty(value: &Value) -> Result<String, String> {
+pub(crate) fn render_pretty(value: &Value) -> Result<String, String> {
     let mut buf = Vec::new();
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut serializer = serde_json::Serializer::with_formatter(&mut buf, formatter);

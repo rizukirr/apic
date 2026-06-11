@@ -59,13 +59,30 @@ apic init
 # 2. Point apic at the folder that holds your contract files
 apic config --set-dir api-contract
 
-# 3. Scaffold a new contract from a template (opens it in your editor)
+# 3. Scaffold a new contract from a template (opens the interactive editor)
 apic create -f auth/login.json
 
 # 4. List and read contracts
 apic list
 apic read -f login
 ```
+
+### Editing contracts
+
+`apic create <file>` and `apic open <file>` open an interactive terminal editor
+(TUI) by default. It shows the contract exactly as `apic read` renders it — the
+same header, sections, tables, and inline JSON examples — and lets you edit in
+place: `↑/↓` select a row, `Enter` steps into a row's cells, `←/→` move between
+cells, and `Enter` edits a cell (type text, cycle the method, or toggle a
+boolean). `Enter` on the `METHOD url` line expands it so you can edit the
+protocol, host, and path, and `Enter` on a `REQUEST`/`RESPONSE` title expands it
+so you can edit its code, description, and type; `Esc` collapses either again.
+Press `a` to add a row to the current section, `d` to delete the selected row, and
+`Enter` on an example to edit its JSON in a pop-up. `Ctrl-S` saves; `Esc`/`q`
+exits; `?` shows the key map.
+
+Prefer your own editor? Pass `--editor` to open the file in `$VISUAL`/`$EDITOR`
+(or a specific one, e.g. `apic open login --editor "code --wait"`).
 
 ## Commands
 
@@ -81,13 +98,14 @@ Updates project configuration.
   from (must exist).
 
 ### `apic create -f <filename> [-e <editor>]`
-Creates a new contract from the project template (`.apic/template.json`,
-falling back to the built-in default) and opens it in your editor. A relative
-path is resolved against the configured working directory. `apic` refuses to
-overwrite an existing file.
+Creates a new contract seeded from the project template (`.apic/template.json`,
+falling back to the built-in default) and opens it in the interactive TUI; the
+file is written only when you save. A relative path is resolved against the
+configured working directory. `apic` refuses to overwrite an existing file.
 
-Editor resolution order: `--editor` flag → `$VISUAL` → `$EDITOR` → `vi`. The
-`-e`/`--editor` flag picks the editor for a single invocation (e.g.
+Pass `-e`/`--editor` to scaffold the file to disk and open it in your external
+editor instead of the TUI. Editor resolution order: `--editor` flag → `$VISUAL`
+→ `$EDITOR` → `vi`. The flag picks the editor for a single invocation (e.g.
 `apic create -f auth/login.json -e nano`) and the value may include arguments.
 GUI editors need their wait flag (`code --wait`, `subl -w`) so `apic` waits for
 the file to be saved.
@@ -141,8 +159,8 @@ copy-paste view:
 
 ### `apic open (-f <filename> | --template) [-e <editor>]`
 Resolves `<filename>` exactly like `read` (path, extensionless, or fuzzy) and
-opens the matching contract in your editor — the same editor resolution as
-`apic create`, including the `-e`/`--editor` flag.
+opens the matching contract in the interactive TUI. Pass `-e`/`--editor` to open
+it in your external editor instead — the same editor resolution as `apic create`.
 
 Pass `--template` instead of `-f` to edit the project template
 (`.apic/template.json`) that `apic create` scaffolds from; it is seeded from

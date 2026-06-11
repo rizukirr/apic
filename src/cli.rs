@@ -82,19 +82,21 @@ enum Commands {
         #[arg(long, short = 'e')]
         example: bool,
     },
-    /// Scaffold a new contract from a template and open it in your editor.
+    /// Scaffold a new contract and edit it in the interactive TUI.
     ///
-    /// The path is resolved against the working directory and confined to it;
-    /// a `..` escape or an absolute path elsewhere is rejected. Refuses to
-    /// overwrite an existing file.
+    /// Opens a full-screen editor seeded from the project template's structure;
+    /// the file is written when you save. Pass `--editor` to scaffold the file
+    /// to disk and open it in `$VISUAL`/`$EDITOR` instead. The path is resolved
+    /// against the working directory and confined to it; a `..` escape or an
+    /// absolute path elsewhere is rejected. Refuses to overwrite an existing file.
     Create {
         /// Path for the new contract, relative to the working directory
         /// (e.g. `auth/login.json`).
         #[arg(long, short = 'f', value_name = "FILENAME")]
         filename: Option<String>,
 
-        /// Editor to open the new contract with (e.g. `nvim` or
-        /// `"code --wait"`), overriding `$VISUAL` and `$EDITOR`.
+        /// Edit in this external editor (e.g. `nvim` or `"code --wait"`) instead
+        /// of the built-in TUI, overriding `$VISUAL` and `$EDITOR`.
         #[arg(long, short = 'e', value_name = "EDITOR")]
         editor: Option<String>,
     },
@@ -119,11 +121,11 @@ enum Commands {
         #[arg(long, conflicts_with = "filename")]
         template: bool,
     },
-    /// Open an existing contract in your editor.
+    /// Edit an existing contract in the interactive TUI.
     ///
-    /// The filename is resolved like `read`: an exact path (`user/user.json`),
-    /// without the `.json` extension (`user/user`), or a fuzzy fragment
-    /// (`user`). Uses the same editor resolution as `create`.
+    /// Resolves the filename like `read` (exact, extensionless, or fuzzy) and
+    /// opens it in the full-screen editor. Pass `--editor` to use your external
+    /// editor instead. Uses the same editor resolution as `create`.
     ///
     /// Pass `--template` instead of a filename to edit the project template
     /// (`.apic/template.json`) that `apic create` scaffolds from.
@@ -139,8 +141,8 @@ enum Commands {
         )]
         filename: Option<String>,
 
-        /// Editor to open the contract with (e.g. `nvim` or `"code --wait"`),
-        /// overriding `$VISUAL` and `$EDITOR`.
+        /// Edit in this external editor (e.g. `nvim` or `"code --wait"`) instead
+        /// of the built-in TUI, overriding `$VISUAL` and `$EDITOR`.
         #[arg(long, short = 'e', value_name = "EDITOR")]
         editor: Option<String>,
 
@@ -479,13 +481,13 @@ fn validate_template_cmd() -> Result<(), String> {
     }
 }
 
-/// Creates a new contract file from the default template and opens it in the
-/// configured editor.
+/// Creates a new contract. Without `--editor` the interactive TUI is opened,
+/// seeded from the project template's structure; with `--editor` the contract
+/// is scaffolded to disk and opened in the external editor (legacy behavior).
 ///
-/// Inside an initialized project the `filename` is resolved against the
-/// working directory and confined to it: a path that escapes via `..` or an
-/// absolute path elsewhere is rejected. Outside a project the path is taken
-/// as given. Refuses to overwrite an existing file.
+/// Inside an initialized project the `filename` is resolved against the working
+/// directory and confined to it; a `..` escape or absolute path elsewhere is
+/// rejected. Refuses to overwrite an existing file.
 fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
     let path = match read_config_file().and_then(|conf| conf.get_root_dir()) {
         Ok(root) => confine_to_dir(&root, Path::new(filename))?,
@@ -496,45 +498,76 @@ fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
         return Err(format!("{} already exists", path.display()));
     }
 
-    let contract = crate::template::resolve_for_create()?;
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("Failed to create {}: {}", parent.display(), err))?;
+    if editor.is_some() {
+        // Legacy path: scaffold to disk, then open the external editor.
+        let contract = crate::template::resolve_for_create()?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("Failed to create {}: {}", parent.display(), err))?;
+        }
+        fs::write(&path, contract)
+            .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
+        println!("Created {}", sanitize(&path.to_string_lossy()));
+        return open_in_editor(&path, editor)
+            .map_err(|err| format!("Failed to open editor: {err}"));
     }
 
-    fs::write(&path, contract)
-        .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
-    println!("Created {}", sanitize(&path.to_string_lossy()));
-    open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))?;
-    Ok(())
+    // Default path: seed an EditModel and open the TUI. The file is written only
+    // when the user saves inside the TUI.
+    let overlay = read_project_template();
+    let model = crate::tui::seed_model(overlay.as_deref())?;
+    crate::tui::run(model, &path)
 }
 
-/// Opens a contract, or the project template when `template` is set.
+/// Reads `.apic/template.json` if present, for seeding the create TUI.
+fn read_project_template() -> Option<String> {
+    let apic_dir = crate::config::find_apic_dir()?;
+    crate::template::seed_if_missing(&apic_dir).ok()?;
+    fs::read_to_string(crate::template::path(&apic_dir)).ok()
+}
+
+/// Opens a contract for editing, or the project template when `template` is set.
 ///
-/// With `--template` the project's `.apic/template.json` is opened, seeded from
-/// the default first if it does not exist. Otherwise `filename` is resolved to
-/// an existing contract (path, extensionless, or fuzzy) and that is opened.
-/// `filename` is guaranteed present by the CLI parser unless `template` is set.
+/// Without `--editor` the interactive TUI is opened on the parsed contract;
+/// with `--editor` the file is opened in the external editor (legacy behavior).
+/// With `--template` the project's `.apic/template.json` is targeted, seeded
+/// from the default first if it does not exist.
 fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Result<(), String> {
     if template {
         let apic_dir =
             crate::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
         crate::template::seed_if_missing(&apic_dir)?;
         let path = crate::template::path(&apic_dir);
-        return open_in_editor(&path, editor)
-            .map_err(|err| format!("Failed to open editor: {err}"));
+        if editor.is_some() {
+            return open_in_editor(&path, editor)
+                .map_err(|err| format!("Failed to open editor: {err}"));
+        }
+        return open_path_in_tui(&path);
     }
 
     // The parser requires `-f` unless `--template` is given, so this is safe.
     let filename = filename.expect("filename is required without --template");
     match resolve_one(filename)? {
         Resolved::Path(path) => {
-            open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))
+            if editor.is_some() {
+                open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))
+            } else {
+                open_path_in_tui(&path)
+            }
         }
         Resolved::Cancelled => cancelled(),
         Resolved::NotFound => Err(format!("No contract found matching '{filename}'")),
     }
+}
+
+/// Reads, parses, and edits an existing contract file in the TUI.
+fn open_path_in_tui(path: &Path) -> Result<(), String> {
+    let text =
+        read_file(path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
+    let contract = json_get(&text, None)
+        .map_err(|err| format!("{} is not a valid contract: {err}", path.display()))?;
+    let model = crate::tui::EditModel::from_contract(contract);
+    crate::tui::run(model, path)
 }
 
 /// Resolves `filename` to one contract and deletes it after confirmation.
