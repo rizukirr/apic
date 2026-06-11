@@ -71,7 +71,7 @@ fn commands_outside_a_project_report_not_initialized() {
 fn create_scaffolds_then_read_renders_it() {
     let dir = init_project("create_read");
     apic(&dir)
-        .args(["create", "-f", "auth/login.json"])
+        .args(["create", "--editor", "true", "-f", "auth/login.json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Created"));
@@ -88,7 +88,7 @@ fn create_scaffolds_then_read_renders_it() {
 fn remove_deletes_a_resolved_contract() {
     let dir = init_project("remove");
     apic(&dir)
-        .args(["create", "-f", "auth/login.json"])
+        .args(["create", "--editor", "true", "-f", "auth/login.json"])
         .assert()
         .success();
     assert!(dir.join("contracts/auth/login.json").exists());
@@ -116,11 +116,11 @@ fn remove_reports_when_nothing_matches() {
 fn create_refuses_to_overwrite() {
     let dir = init_project("overwrite");
     apic(&dir)
-        .args(["create", "-f", "x.json"])
+        .args(["create", "--editor", "true", "-f", "x.json"])
         .assert()
         .success();
     apic(&dir)
-        .args(["create", "-f", "x.json"])
+        .args(["create", "--editor", "true", "-f", "x.json"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("already exists"));
@@ -140,7 +140,7 @@ fn create_uses_customized_template() {
     fs::write(dir.join(".apic/template.json"), custom).unwrap();
 
     apic(&dir)
-        .args(["create", "-f", "foo.json"])
+        .args(["create", "--editor", "true", "-f", "foo.json"])
         .assert()
         .success();
 
@@ -158,7 +158,7 @@ fn create_fails_when_template_malformed() {
     fs::write(dir.join(".apic/template.json"), broken).unwrap();
 
     apic(&dir)
-        .args(["create", "-f", "bar.json"])
+        .args(["create", "--editor", "true", "-f", "bar.json"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("is not valid JSON"));
@@ -174,7 +174,7 @@ fn create_fails_when_template_malformed() {
 fn create_rejects_path_traversal() {
     let dir = init_project("traversal");
     apic(&dir)
-        .args(["create", "-f", "../../escape.json"])
+        .args(["create", "--editor", "true", "-f", "../../escape.json"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("outside the working directory"));
@@ -185,7 +185,7 @@ fn create_rejects_path_traversal() {
 fn read_unknown_contract_reports_not_found() {
     let dir = init_project("read_missing");
     apic(&dir)
-        .args(["create", "-f", "a.json"])
+        .args(["create", "--editor", "true", "-f", "a.json"])
         .assert()
         .success();
     apic(&dir)
@@ -199,7 +199,7 @@ fn read_unknown_contract_reports_not_found() {
 fn validate_passes_for_valid_and_fails_for_broken() {
     let dir = init_project("validate");
     apic(&dir)
-        .args(["create", "-f", "good.json"])
+        .args(["create", "--editor", "true", "-f", "good.json"])
         .assert()
         .success();
 
@@ -251,7 +251,7 @@ fn validate_template_reports_ok_fail_and_rejects_filename() {
 fn read_resolves_path_extensionless_and_fuzzy_forms() {
     let dir = init_project("resolve");
     apic(&dir)
-        .args(["create", "-f", "user/user.json"])
+        .args(["create", "--editor", "true", "-f", "user/user.json"])
         .assert()
         .success();
 
@@ -269,12 +269,15 @@ fn read_resolves_path_extensionless_and_fuzzy_forms() {
 fn open_resolves_and_succeeds() {
     let dir = init_project("open");
     apic(&dir)
-        .args(["create", "-f", "user/user.json"])
+        .args(["create", "--editor", "true", "-f", "user/user.json"])
         .assert()
         .success();
 
     for form in ["user/user.json", "user/user", "user"] {
-        apic(&dir).args(["open", "-f", form]).assert().success();
+        apic(&dir)
+            .args(["open", "--editor", "true", "-f", form])
+            .assert()
+            .success();
     }
 }
 
@@ -282,11 +285,11 @@ fn open_resolves_and_succeeds() {
 fn open_missing_contract_fails() {
     let dir = init_project("open_missing");
     apic(&dir)
-        .args(["create", "-f", "a.json"])
+        .args(["create", "--editor", "true", "-f", "a.json"])
         .assert()
         .success();
     apic(&dir)
-        .args(["open", "-f", "zzz_no_match_zzz"])
+        .args(["open", "--editor", "true", "-f", "zzz_no_match_zzz"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("No contract found"));
@@ -296,7 +299,7 @@ fn open_missing_contract_fails() {
 fn list_defaults_to_relative_paths() {
     let dir = init_project("list_rel");
     apic(&dir)
-        .args(["create", "-f", "auth/login.json"])
+        .args(["create", "--editor", "true", "-f", "auth/login.json"])
         .assert()
         .success();
     // Default output is relative: the contract path, not the absolute prefix.
@@ -340,7 +343,7 @@ fn read_renders_accept_column_for_multipart_file_fields() {
 
     // Contracts without accept fields keep the four-column table.
     apic(&dir)
-        .args(["create", "-f", "plain.json"])
+        .args(["create", "--editor", "true", "-f", "plain.json"])
         .assert()
         .success();
     apic(&dir)
@@ -427,11 +430,11 @@ fn read_example_only_contract_renders_example_by_default() {
 fn list_filter_fuzzy_matches_contracts() {
     let dir = init_project("list_filter");
     apic(&dir)
-        .args(["create", "-f", "user/user.json"])
+        .args(["create", "--editor", "true", "-f", "user/user.json"])
         .assert()
         .success();
     apic(&dir)
-        .args(["create", "-f", "auth/login.json"])
+        .args(["create", "--editor", "true", "-f", "auth/login.json"])
         .assert()
         .success();
 
@@ -474,11 +477,11 @@ fn version_matches_package_version() {
 fn read_ambiguous_basename_errors_when_not_a_tty() {
     let dir = init_project("ambiguous_read");
     apic(&dir)
-        .args(["create", "-f", "user/user.json"])
+        .args(["create", "--editor", "true", "-f", "user/user.json"])
         .assert()
         .success();
     apic(&dir)
-        .args(["create", "-f", "auth/user.json"])
+        .args(["create", "--editor", "true", "-f", "auth/user.json"])
         .assert()
         .success();
 
@@ -505,16 +508,16 @@ fn read_ambiguous_basename_errors_when_not_a_tty() {
 fn open_ambiguous_basename_errors_when_not_a_tty() {
     let dir = init_project("ambiguous_open");
     apic(&dir)
-        .args(["create", "-f", "user/user.json"])
+        .args(["create", "--editor", "true", "-f", "user/user.json"])
         .assert()
         .success();
     apic(&dir)
-        .args(["create", "-f", "auth/user.json"])
+        .args(["create", "--editor", "true", "-f", "auth/user.json"])
         .assert()
         .success();
 
     apic(&dir)
-        .args(["open", "-f", "user"])
+        .args(["open", "--editor", "true", "-f", "user"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("is ambiguous"));
@@ -524,11 +527,11 @@ fn open_ambiguous_basename_errors_when_not_a_tty() {
 fn validate_ambiguous_basename_errors_when_not_a_tty() {
     let dir = init_project("ambiguous_validate");
     apic(&dir)
-        .args(["create", "-f", "user/user.json"])
+        .args(["create", "--editor", "true", "-f", "user/user.json"])
         .assert()
         .success();
     apic(&dir)
-        .args(["create", "-f", "auth/user.json"])
+        .args(["create", "--editor", "true", "-f", "auth/user.json"])
         .assert()
         .success();
 
@@ -545,11 +548,11 @@ fn read_fuzzy_score_tie_errors_when_not_a_tty() {
     // Different basenames, identical structure: "usr" is not a basename
     // match for either, and both fuzzy-score identically -> ambiguous.
     apic(&dir)
-        .args(["create", "-f", "a/user-a.json"])
+        .args(["create", "--editor", "true", "-f", "a/user-a.json"])
         .assert()
         .success();
     apic(&dir)
-        .args(["create", "-f", "b/user-b.json"])
+        .args(["create", "--editor", "true", "-f", "b/user-b.json"])
         .assert()
         .success();
 
@@ -566,7 +569,7 @@ fn read_fuzzy_score_tie_errors_when_not_a_tty() {
 fn list_piped_output_stays_flat_without_tree_chars() {
     let dir = init_project("list_piped_flat");
     apic(&dir)
-        .args(["create", "-f", "user/profile/user.json"])
+        .args(["create", "--editor", "true", "-f", "user/profile/user.json"])
         .assert()
         .success();
 
@@ -599,7 +602,10 @@ fn list_piped_output_stays_flat_without_tree_chars() {
 fn list_filter_does_not_match_across_path_components() {
     let dir = init_project("list_filter_component");
     for f in ["user/user.json", "user/upload.json", "auth/user.json"] {
-        apic(&dir).args(["create", "-f", f]).assert().success();
+        apic(&dir)
+            .args(["create", "--editor", "true", "-f", f])
+            .assert()
+            .success();
     }
 
     // "user.json" must not match user/upload.json by borrowing "user" from

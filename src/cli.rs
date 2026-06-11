@@ -479,13 +479,13 @@ fn validate_template_cmd() -> Result<(), String> {
     }
 }
 
-/// Creates a new contract file from the default template and opens it in the
-/// configured editor.
+/// Creates a new contract. Without `--editor` the interactive TUI is opened,
+/// seeded from the project template's structure; with `--editor` the contract
+/// is scaffolded to disk and opened in the external editor (legacy behavior).
 ///
-/// Inside an initialized project the `filename` is resolved against the
-/// working directory and confined to it: a path that escapes via `..` or an
-/// absolute path elsewhere is rejected. Outside a project the path is taken
-/// as given. Refuses to overwrite an existing file.
+/// Inside an initialized project the `filename` is resolved against the working
+/// directory and confined to it; a `..` escape or absolute path elsewhere is
+/// rejected. Refuses to overwrite an existing file.
 fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
     let path = match read_config_file().and_then(|conf| conf.get_root_dir()) {
         Ok(root) => confine_to_dir(&root, Path::new(filename))?,
@@ -496,18 +496,32 @@ fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
         return Err(format!("{} already exists", path.display()));
     }
 
-    let contract = crate::template::resolve_for_create()?;
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("Failed to create {}: {}", parent.display(), err))?;
+    if editor.is_some() {
+        // Legacy path: scaffold to disk, then open the external editor.
+        let contract = crate::template::resolve_for_create()?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("Failed to create {}: {}", parent.display(), err))?;
+        }
+        fs::write(&path, contract)
+            .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
+        println!("Created {}", sanitize(&path.to_string_lossy()));
+        return open_in_editor(&path, editor)
+            .map_err(|err| format!("Failed to open editor: {err}"));
     }
 
-    fs::write(&path, contract)
-        .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
-    println!("Created {}", sanitize(&path.to_string_lossy()));
-    open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))?;
-    Ok(())
+    // Default path: seed an EditModel and open the TUI. The file is written only
+    // when the user saves inside the TUI.
+    let overlay = read_project_template();
+    let model = crate::tui::seed_model(overlay.as_deref())?;
+    crate::tui::run(model, &path)
+}
+
+/// Reads `.apic/template.json` if present, for seeding the create TUI.
+fn read_project_template() -> Option<String> {
+    let apic_dir = crate::config::find_apic_dir()?;
+    crate::template::seed_if_missing(&apic_dir).ok()?;
+    fs::read_to_string(crate::template::path(&apic_dir)).ok()
 }
 
 /// Opens a contract, or the project template when `template` is set.
