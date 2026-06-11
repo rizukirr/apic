@@ -11,6 +11,7 @@ use crate::tui::rows::{BodyLoc, Field, Row, RowKind, flatten};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::json::{Method, method_all, method_str};
+use std::path::Path;
 
 /// Whether keystrokes navigate or edit.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -420,6 +421,33 @@ fn set_schema(
     }
 }
 
+/// Saves the model to `path`, updating dirty flag and status line.
+pub(crate) fn apply_save(state: &mut UiState, model: &EditModel, path: &Path) {
+    match model.save(path) {
+        Ok(()) => {
+            state.dirty = false;
+            state.status = format!("saved {}", path.display());
+        }
+        Err(err) => {
+            state.status = format!("save error: {err}");
+        }
+    }
+}
+
+/// Handles keys while the quit confirmation is showing. Returns the action.
+pub(crate) fn handle_confirm_quit(state: &mut UiState, key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Char('y') => Action::Save, // event loop saves, then quits
+        KeyCode::Char('n') => Action::Quit,
+        KeyCode::Esc => {
+            state.mode = Mode::Normal;
+            state.status = "Ctrl-S save · q quit · ? help".into();
+            Action::None
+        }
+        _ => Action::None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -583,5 +611,40 @@ mod tests {
             .unwrap();
         handle_normal(&mut s, &mut m, key(KeyCode::Char('d')));
         assert_eq!(m.headers.len(), 0);
+    }
+
+    #[test]
+    fn save_clears_dirty_on_success() {
+        let dir = std::env::temp_dir().join("apic_tui_save");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("c.json");
+
+        let m = model();
+        let mut s = UiState::new(&m);
+        s.dirty = true;
+        apply_save(&mut s, &m, &path);
+        assert!(!s.dirty);
+        assert!(path.exists());
+        assert!(s.status.to_lowercase().contains("saved"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn save_failure_keeps_dirty_and_reports() {
+        let mut m = model();
+        m.responses[0].example = "{ bad".to_string();
+        let mut s = UiState::new(&m);
+        s.dirty = true;
+        apply_save(
+            &mut s,
+            &m,
+            std::path::Path::new("/tmp/should-not-write.json"),
+        );
+        assert!(s.dirty);
+        assert!(
+            s.status.to_lowercase().contains("example")
+                || s.status.to_lowercase().contains("error")
+        );
     }
 }
