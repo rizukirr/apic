@@ -148,7 +148,7 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                     TextArea::from(text.lines().map(|l| l.to_string()).collect::<Vec<_>>());
                 ta.set_block(
                     ratatui::widgets::Block::default()
-                        .borders(ratatui::widgets::Borders::ALL)
+                        .borders(ratatui::widgets::Borders::NONE)
                         .title(" example JSON — Esc to save & close "),
                 );
                 modal = Some((field, ta));
