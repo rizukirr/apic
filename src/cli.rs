@@ -524,31 +524,48 @@ fn read_project_template() -> Option<String> {
     fs::read_to_string(crate::template::path(&apic_dir)).ok()
 }
 
-/// Opens a contract, or the project template when `template` is set.
+/// Opens a contract for editing, or the project template when `template` is set.
 ///
-/// With `--template` the project's `.apic/template.json` is opened, seeded from
-/// the default first if it does not exist. Otherwise `filename` is resolved to
-/// an existing contract (path, extensionless, or fuzzy) and that is opened.
-/// `filename` is guaranteed present by the CLI parser unless `template` is set.
+/// Without `--editor` the interactive TUI is opened on the parsed contract;
+/// with `--editor` the file is opened in the external editor (legacy behavior).
+/// With `--template` the project's `.apic/template.json` is targeted, seeded
+/// from the default first if it does not exist.
 fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Result<(), String> {
     if template {
         let apic_dir =
             crate::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
         crate::template::seed_if_missing(&apic_dir)?;
         let path = crate::template::path(&apic_dir);
-        return open_in_editor(&path, editor)
-            .map_err(|err| format!("Failed to open editor: {err}"));
+        if editor.is_some() {
+            return open_in_editor(&path, editor)
+                .map_err(|err| format!("Failed to open editor: {err}"));
+        }
+        return open_path_in_tui(&path);
     }
 
     // The parser requires `-f` unless `--template` is given, so this is safe.
     let filename = filename.expect("filename is required without --template");
     match resolve_one(filename)? {
         Resolved::Path(path) => {
-            open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))
+            if editor.is_some() {
+                open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))
+            } else {
+                open_path_in_tui(&path)
+            }
         }
         Resolved::Cancelled => cancelled(),
         Resolved::NotFound => Err(format!("No contract found matching '{filename}'")),
     }
+}
+
+/// Reads, parses, and edits an existing contract file in the TUI.
+fn open_path_in_tui(path: &Path) -> Result<(), String> {
+    let text =
+        read_file(path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
+    let contract = json_get(&text, None)
+        .map_err(|err| format!("{} is not a valid contract: {err}", path.display()))?;
+    let model = crate::tui::EditModel::from_contract(contract);
+    crate::tui::run(model, path)
 }
 
 /// Resolves `filename` to one contract and deletes it after confirmation.
