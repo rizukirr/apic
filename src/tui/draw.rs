@@ -718,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn cell_edit_highlights_only_focused_cell_red() {
+    fn cell_edit_highlights_only_focused_cell() {
         let c = json_get(
             r#"{ "name":"t","method":"GET",
                  "url":{"protocol":"https","host":"h","path":["x"],
@@ -752,12 +752,12 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, &state)).unwrap();
         let buf = terminal.backend().buffer().clone();
-        // Some cell in the buffer carries a red background (the focused cell).
-        let any_red = buf
+        // Some cell in the buffer carries the focused-cell highlight background.
+        let any_hl = buf
             .content()
             .iter()
-            .any(|cell| cell.style().bg == Some(Color::Red));
-        assert!(any_red, "expected a red-highlighted focused cell");
+            .any(|cell| cell.style().bg == Some(Color::Yellow));
+        assert!(any_hl, "expected a highlighted focused cell");
     }
 
     #[test]
