@@ -203,6 +203,199 @@ impl EditModel {
     }
 }
 
+use std::path::Path;
+
+fn str_opt(s: &str) -> Option<&str> {
+    if s.trim().is_empty() { None } else { Some(s) }
+}
+
+/// Parses a raw example buffer into a JSON value, or `None` when blank.
+/// Returns a contextual error (mentioning "example") on malformed input.
+fn parse_example(raw: &str, ctx: &str) -> Result<Option<Value>, String> {
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_str::<Value>(raw)
+        .map(Some)
+        .map_err(|err| format!("{ctx} example is not valid JSON: {err}"))
+}
+
+fn edit_schema_to_value(s: &EditSchema) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("name".into(), Value::String(s.name.clone()));
+    map.insert("type".into(), Value::String(s.dtype.clone()));
+    map.insert(
+        "default".into(),
+        match str_opt(&s.default) {
+            Some(d) => Value::String(d.to_string()),
+            None => Value::Null,
+        },
+    );
+    map.insert("description".into(), Value::String(s.description.clone()));
+    map.insert("required".into(), Value::Bool(s.required));
+    if !s.properties.is_empty() {
+        map.insert(
+            "properties".into(),
+            Value::Array(s.properties.iter().map(edit_schema_to_value).collect()),
+        );
+    }
+    if let Some(a) = str_opt(&s.accept) {
+        map.insert("accept".into(), Value::String(a.to_string()));
+    }
+    Value::Object(map)
+}
+
+impl EditModel {
+    /// Serializes the model to a pretty, schema-valid contract string.
+    ///
+    /// Returns `Err` (never panics) when an example buffer is malformed JSON, a
+    /// response code is non-numeric, or the assembled document fails contract
+    /// validation. The error is suitable for display on the TUI status line.
+    pub fn to_json(&self) -> Result<String, String> {
+        let mut root = serde_json::Map::new();
+        root.insert("name".into(), Value::String(self.name.clone()));
+        if let Some(d) = str_opt(&self.description) {
+            root.insert("description".into(), Value::String(d.to_string()));
+        }
+        root.insert(
+            "method".into(),
+            Value::String(crate::json::method_str(&self.method)),
+        );
+
+        // url
+        let mut url = serde_json::Map::new();
+        url.insert("protocol".into(), Value::String(self.url.protocol.clone()));
+        url.insert("host".into(), Value::String(self.url.host.clone()));
+        if !self.url.path.is_empty() {
+            url.insert(
+                "path".into(),
+                Value::Array(self.url.path.iter().cloned().map(Value::String).collect()),
+            );
+        }
+        if !self.url.query.is_empty() {
+            url.insert(
+                "query".into(),
+                Value::Array(
+                    self.url
+                        .query
+                        .iter()
+                        .map(|q| {
+                            let mut m = serde_json::Map::new();
+                            m.insert("name".into(), Value::String(q.name.clone()));
+                            m.insert("value".into(), Value::String(q.value.clone()));
+                            if let Some(d) = str_opt(&q.description) {
+                                m.insert("description".into(), Value::String(d.to_string()));
+                            }
+                            m.insert("required".into(), Value::Bool(q.required));
+                            Value::Object(m)
+                        })
+                        .collect(),
+                ),
+            );
+        }
+        if !self.url.variable.is_empty() {
+            url.insert(
+                "variable".into(),
+                Value::Array(
+                    self.url
+                        .variable
+                        .iter()
+                        .map(|v| {
+                            let mut m = serde_json::Map::new();
+                            m.insert("name".into(), Value::String(v.name.clone()));
+                            let dtype = if v.dtype.trim().is_empty() {
+                                "string"
+                            } else {
+                                v.dtype.as_str()
+                            };
+                            m.insert("type".into(), Value::String(dtype.to_string()));
+                            if let Some(d) = str_opt(&v.description) {
+                                m.insert("description".into(), Value::String(d.to_string()));
+                            }
+                            m.insert("required".into(), Value::Bool(v.required));
+                            Value::Object(m)
+                        })
+                        .collect(),
+                ),
+            );
+        }
+        root.insert("url".into(), Value::Object(url));
+
+        // headers (always present, possibly empty array)
+        root.insert(
+            "headers".into(),
+            Value::Array(
+                self.headers
+                    .iter()
+                    .map(|h| {
+                        let mut m = serde_json::Map::new();
+                        m.insert("name".into(), Value::String(h.name.clone()));
+                        m.insert("value".into(), Value::String(h.value.clone()));
+                        Value::Object(m)
+                    })
+                    .collect(),
+            ),
+        );
+
+        // request (optional)
+        if let Some(req) = &self.request {
+            let mut m = serde_json::Map::new();
+            m.insert("type".into(), Value::String(req.dtype.clone()));
+            if !req.schema.is_empty() {
+                m.insert(
+                    "schema".into(),
+                    Value::Array(req.schema.iter().map(edit_schema_to_value).collect()),
+                );
+            }
+            if let Some(ex) = parse_example(&req.example, "request")? {
+                m.insert("example".into(), ex);
+            }
+            root.insert("request".into(), Value::Object(m));
+        }
+
+        // responses (always present, possibly empty)
+        let mut responses = Vec::new();
+        for (i, r) in self.responses.iter().enumerate() {
+            let code: u16 =
+                r.code.trim().parse().map_err(|_| {
+                    format!("response #{}: code '{}' is not a number", i + 1, r.code)
+                })?;
+            let mut m = serde_json::Map::new();
+            m.insert("code".into(), Value::Number(code.into()));
+            m.insert("description".into(), Value::String(r.description.clone()));
+            m.insert("type".into(), Value::String(r.dtype.clone()));
+            if !r.schema.is_empty() {
+                m.insert(
+                    "schema".into(),
+                    Value::Array(r.schema.iter().map(edit_schema_to_value).collect()),
+                );
+            }
+            if let Some(ex) = parse_example(&r.example, &format!("response {code}"))? {
+                m.insert("example".into(), ex);
+            }
+            responses.push(Value::Object(m));
+        }
+        root.insert("responses".into(), Value::Array(responses));
+
+        let contract = crate::template::render_pretty(&Value::Object(root))?;
+        crate::json::validate(&contract).map_err(|err| format!("invalid contract: {err}"))?;
+        Ok(contract)
+    }
+
+    /// Serializes and writes the contract to `path`, creating parent dirs.
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        let contract = self.to_json()?;
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+        }
+        std::fs::write(path, contract)
+            .map_err(|err| format!("failed to write {}: {err}", path.display()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,5 +450,49 @@ mod tests {
         assert_eq!(m.responses[0].code, "200");
         assert_eq!(m.responses[0].schema[0].name, "token");
         assert!(m.responses[0].example.contains("\"token\""));
+    }
+
+    #[test]
+    fn roundtrip_preserves_contract() {
+        let contract = json_get(FULL, None).unwrap();
+        let model = EditModel::from_contract(contract);
+        let json = model.to_json().expect("valid model serializes");
+        // Re-parse: the produced JSON must be a valid contract with the same shape.
+        let back = json_get(&json, None).unwrap();
+        assert_eq!(back.name, "login");
+        assert_eq!(back.url.variable.unwrap()[0].dtype, "int");
+        assert_eq!(back.responses[0].code, 200);
+        assert_eq!(
+            back.request.unwrap().example.unwrap()["user"]["email"],
+            "a@b.c"
+        );
+    }
+
+    #[test]
+    fn invalid_example_is_rejected() {
+        let contract = json_get(FULL, None).unwrap();
+        let mut model = EditModel::from_contract(contract);
+        model.responses[0].example = "{ not json".to_string();
+        let err = model.to_json().unwrap_err();
+        assert!(err.to_lowercase().contains("example"));
+    }
+
+    #[test]
+    fn empty_example_becomes_absent() {
+        let contract = json_get(FULL, None).unwrap();
+        let mut model = EditModel::from_contract(contract);
+        model.request.as_mut().unwrap().example = String::new();
+        let json = model.to_json().unwrap();
+        let back = json_get(&json, None).unwrap();
+        assert!(back.request.unwrap().example.is_none());
+    }
+
+    #[test]
+    fn non_numeric_response_code_is_rejected() {
+        let contract = json_get(FULL, None).unwrap();
+        let mut model = EditModel::from_contract(contract);
+        model.responses[0].code = "2xx".to_string();
+        let err = model.to_json().unwrap_err();
+        assert!(err.to_lowercase().contains("code"));
     }
 }
