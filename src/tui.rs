@@ -1,4 +1,4 @@
-use crate::json::{Header, JsonContent, Method, Query, Request, Schema, Variable, method_str};
+use crate::json::{Header, JsonContent, Method, Query, Schema, Variable, method_str};
 use crate::render::{build_url, sanitize};
 use crossterm::event::{self, KeyCode};
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -238,7 +238,7 @@ fn document(contract: &JsonContent, state: &State) -> Vec<Line<'static>> {
             if let Some(schema) = &request.schema
                 && !schema.is_empty()
             {
-                doc.extend(request_table(schema));
+                doc.extend(field_table(schema));
                 doc.push(Line::from(""));
             }
             doc.extend(example_block(request.example.as_ref()));
@@ -282,7 +282,7 @@ fn response_section(contract: &JsonContent, selected: usize, focused: bool) -> V
 
     let mut lines = vec![head, Line::from("")];
     if !response.schema.is_empty() {
-        lines.extend(schema_table(&response.schema));
+        lines.extend(field_table(&response.schema));
         lines.push(Line::from(""));
     }
     lines.extend(example_block(response.example.as_ref()));
@@ -378,46 +378,37 @@ fn param_table(variables: &[Variable]) -> Vec<Line<'static>> {
     table(&["NAME", "TYPE", "REQ", "DESCRIPTION"], &rows)
 }
 
-fn request_table(fields: &[Request]) -> Vec<Line<'static>> {
-    // The ACCEPT column only appears when a multipart field declares it.
-    let has_accept = fields.iter().any(|field| field.accept.is_some());
+/// True if any field — at any depth — declares `accept`.
+fn any_accept(fields: &[Schema]) -> bool {
+    fields
+        .iter()
+        .any(|f| f.accept.is_some() || f.properties.as_deref().is_some_and(any_accept))
+}
+
+/// Renders a request/response field list as an aligned table. The ACCEPT
+/// column appears only when some field declares it; nested `properties` are
+/// drawn as a `├─`/`└─` tree.
+fn field_table(fields: &[Schema]) -> Vec<Line<'static>> {
+    let has_accept = any_accept(fields);
     let headers: Vec<&str> = if has_accept {
         vec!["NAME", "TYPE", "REQ", "ACCEPT", "DESCRIPTION"]
     } else {
         vec!["NAME", "TYPE", "REQ", "DESCRIPTION"]
     };
-
-    let rows: Vec<Vec<(String, Style)>> = fields
-        .iter()
-        .map(|field| {
-            let mut row = vec![
-                (sanitize(&field.name), Style::default()),
-                (sanitize(&field.dtype), yellow()),
-                (req_mark(field.required), green()),
-            ];
-            if has_accept {
-                row.push((sanitize(field.accept.as_deref().unwrap_or("")), gray()));
-            }
-            row.push((sanitize(&field.description), gray()));
-            row
-        })
-        .collect();
+    let mut rows = Vec::new();
+    push_field_rows(fields, "", true, has_accept, &mut rows);
     table(&headers, &rows)
 }
 
-/// Renders a response schema as an aligned NAME / TYPE / REQ / DESCRIPTION
-/// table, with nested `properties` drawn as a tree.
-fn schema_table(schema: &[Schema]) -> Vec<Line<'static>> {
-    let mut rows = Vec::new();
-    flatten(schema, "", true, &mut rows);
-    table(&["NAME", "TYPE", "REQ", "DESCRIPTION"], &rows)
-}
-
-/// Flattens a schema (depth-first) into table rows, drawing `├─`/`└─`/`│`
-/// connectors for nested properties.
-fn flatten(schema: &[Schema], ancestor: &str, is_root: bool, rows: &mut Vec<Vec<(String, Style)>>) {
-    let count = schema.len();
-    for (index, field) in schema.iter().enumerate() {
+fn push_field_rows(
+    fields: &[Schema],
+    ancestor: &str,
+    is_root: bool,
+    has_accept: bool,
+    rows: &mut Vec<Vec<(String, Style)>>,
+) {
+    let count = fields.len();
+    for (index, field) in fields.iter().enumerate() {
         let last = index + 1 == count;
         let name = if is_root {
             sanitize(&field.name)
@@ -428,19 +419,24 @@ fn flatten(schema: &[Schema], ancestor: &str, is_root: bool, rows: &mut Vec<Vec<
                 sanitize(&field.name)
             )
         };
-        rows.push(vec![
+        let mut row = vec![
             (name, Style::default()),
             (sanitize(&field.dtype), yellow()),
             (req_mark(field.required), green()),
-            (sanitize(&field.description), gray()),
-        ]);
+        ];
+        if has_accept {
+            row.push((sanitize(field.accept.as_deref().unwrap_or("")), gray()));
+        }
+        row.push((sanitize(&field.description), gray()));
+        rows.push(row);
+
         if let Some(properties) = &field.properties {
             let child_ancestor = if is_root {
                 String::new()
             } else {
                 format!("{ancestor}{}", if last { "   " } else { "│  " })
             };
-            flatten(properties, &child_ancestor, false, rows);
+            push_field_rows(properties, &child_ancestor, false, has_accept, rows);
         }
     }
 }

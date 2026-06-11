@@ -34,7 +34,7 @@ pub struct RequestBody {
     #[serde(alias = "type", default = "default_body_type")]
     pub(crate) dtype: String,
     #[serde(default)]
-    pub(crate) schema: Option<Vec<Request>>,
+    pub(crate) schema: Option<Vec<Schema>>,
     #[serde(default)]
     pub(crate) example: Option<serde_json::Value>,
 }
@@ -86,20 +86,6 @@ pub struct Header {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Request {
-    pub(crate) name: String,
-    #[serde(alias = "type")]
-    pub(crate) dtype: String,
-    pub(crate) default: Option<String>,
-    pub(crate) description: String,
-    pub(crate) required: bool,
-    /// Accepted MIME types for `file` fields in multipart requests,
-    /// e.g. `"image/png, image/jpeg"`. Omitted for ordinary fields.
-    #[serde(default)]
-    pub(crate) accept: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct Response {
     pub code: u16,
     pub description: String,
@@ -124,6 +110,10 @@ pub struct Schema {
     pub(crate) required: bool,
     #[serde(default)]
     pub(crate) properties: Option<Vec<Schema>>,
+    /// Accepted MIME types for `file` fields in multipart requests, e.g.
+    /// `"image/png, image/jpeg"`. Omitted for ordinary fields.
+    #[serde(default)]
+    pub(crate) accept: Option<String>,
 }
 
 pub fn method_str(method: &Method) -> String {
@@ -336,6 +326,20 @@ mod tests {
         let s = &c.responses[0].schema[0];
         assert_eq!(s.dtype, "string[]");
         assert!(s.properties.is_none());
+    }
+
+    #[test]
+    fn schema_accept_defaults_to_none_when_omitted() {
+        let json = r#"{
+            "name": "t", "method": "GET",
+            "url": { "protocol": "https", "host": "h", "path": ["x"] },
+            "headers": [],
+            "responses": [ { "code": 200, "description": "ok", "schema": [
+                { "name": "f", "type": "string", "default": null, "description": "d", "required": true }
+            ] } ]
+        }"#;
+        let c = json_get(json, None).unwrap();
+        assert!(c.responses[0].schema[0].accept.is_none());
     }
 
     #[test]
