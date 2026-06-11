@@ -8,8 +8,8 @@
 // confirms nothing is left genuinely dead or unused.
 #![allow(dead_code, unused_imports)]
 
-pub(crate) mod model;
 mod draw;
+pub(crate) mod model;
 mod rows;
 mod seed;
 mod state;
@@ -19,18 +19,18 @@ pub(crate) use seed::seed_model;
 
 use crate::tui::rows::{BodyLoc, Field};
 use crate::tui::state::{
-    apply_save, handle_confirm_quit, handle_insert, handle_normal, Action, Mode, UiState,
+    Action, Mode, UiState, apply_save, handle_confirm_quit, handle_insert, handle_normal,
 };
 // Crossterm is imported via ratatui's re-export (== 0.28) so event/terminal
 // types match ratatui and tui-textarea. The root `crossterm` 0.29 crate is used
 // only by `picker.rs`; the two never exchange values.
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::backend::CrosstermBackend;
-use ratatui::Terminal;
 use std::io::{self, Stdout};
 use std::path::Path;
 use tui_textarea::TextArea;
@@ -149,7 +149,8 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
             Action::None => {}
             Action::OpenExample(field, _) => {
                 let text = example_text(&model, &field);
-                let mut ta = TextArea::from(text.lines().map(|l| l.to_string()).collect::<Vec<_>>());
+                let mut ta =
+                    TextArea::from(text.lines().map(|l| l.to_string()).collect::<Vec<_>>());
                 ta.set_block(
                     ratatui::widgets::Block::default()
                         .borders(ratatui::widgets::Borders::ALL)
