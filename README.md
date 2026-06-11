@@ -303,8 +303,8 @@ there is no schema), and `read --example` shows only the payloads.
 | `method` | yes | HTTP method (`GET`, `POST`, …). |
 | `url` | yes | Request URL, broken into parts (see below). |
 | `headers` | yes | Array of headers (`name`, `value`). |
-| `request` | no | Request body: `{ "schema": [fields], "example": <raw JSON> }` — both parts optional. |
-| `responses` | yes | Array of responses (`code`, `description`, optional `schema`, optional `example`). |
+| `request` | no | Request body: `{ "type": <body shape>, "schema": [fields], "example": <raw JSON> }` — all parts optional; `type` defaults to `"object"` (see [Array bodies](#array-bodies)). |
+| `responses` | yes | Array of responses (`code`, `description`, optional `type`, optional `schema`, optional `example`). |
 
 The `url` object has:
 
@@ -321,12 +321,15 @@ A **field** (in the request `schema` and response `schema`) has:
 | Field | Description |
 |-------|-------------|
 | `name` | Field name. |
-| `type` | Data type (`string`, `int`, `file`, `object`, …). |
+| `type` | Data type (`string`, `int`, `file`, `object`, …). Append `[]` for a list — `string[]`, `object[]` (see [Array bodies](#array-bodies)). |
 | `default` | Default value as a string, or `null`. |
 | `description` | Field description. |
 | `required` | Whether the field is required. |
-| `accept` | Allowed MIME types for `file` fields, e.g. `"image/png, image/jpeg"`. Request only; omit for ordinary fields. |
-| `properties` | Nested fields (for `object` types), or `null`. Response schema only. |
+| `accept` | Allowed MIME types for `file` fields, e.g. `"image/png, image/jpeg"`; omit for ordinary fields. |
+| `properties` | Nested fields for `object` (or `object[]`) types, or `null`. |
+
+Request and response fields share the same shape, so request bodies can nest
+objects via `properties` just like responses.
 
 ### Multipart / file uploads
 
@@ -375,6 +378,68 @@ REQUEST
  NAME     TYPE    REQ  ACCEPT                 DESCRIPTION
  avatar   file    ✓    image/png, image/jpeg  Avatar image, max 2MB
  caption  string                              Optional caption
+```
+
+### Array bodies
+
+A request or response body can be a JSON **array** instead of a single object —
+useful for bulk requests and list endpoints. Set the body-level `"type"` to an
+array form, and `apic` reads the `schema` fields as a description of **each
+element**:
+
+- `"object"` — a single object (the default when `type` is omitted).
+- `"object[]"` — an array of objects; `schema` describes each element's fields.
+- A field's own `"type"` may carry the same `[]` suffix: `"string[]"` is a list
+  of scalars (e.g. `["a", "b"]`), `"object[]"` a list of objects whose fields go
+  in `properties`.
+
+`apic read` marks an array body with a `· <type>` suffix on the section title
+and shows the raw `string[]`/`object[]` in the TYPE column. See
+[`example/items/bulk-create.json`](example/items/bulk-create.json) (an array
+request **and** an array response) and
+[`example/items/list.json`](example/items/list.json) (an array response).
+
+```json
+{
+    "name": "bulk-create-items",
+    "method": "POST",
+    "url": { "protocol": "https", "host": "api.example.com", "path": ["items", "bulk"] },
+    "headers": [{ "name": "Content-Type", "value": "application/json" }],
+    "request": {
+        "type": "object[]",
+        "schema": [
+            { "name": "name", "type": "string",   "default": null, "description": "Item name",        "required": true },
+            { "name": "tags", "type": "string[]", "default": null, "description": "Free-form labels", "required": false }
+        ],
+        "example": [
+            { "name": "Widget", "tags": ["new", "featured"] },
+            { "name": "Gadget", "tags": [] }
+        ]
+    },
+    "responses": [
+        {
+            "code": 201,
+            "type": "object[]",
+            "description": "Items created",
+            "schema": [
+                { "name": "id",   "type": "string", "default": null, "description": "Generated id", "required": true, "properties": null },
+                { "name": "name", "type": "string", "default": null, "description": "Item name",     "required": true, "properties": null }
+            ]
+        }
+    ]
+}
+```
+
+```text
+ REQUEST · object[]
+ NAME  TYPE      REQ  DESCRIPTION
+ name  string    ✓    Item name
+ tags  string[]       Free-form labels
+
+ RESPONSE 201 — Items created · object[]
+ NAME  TYPE    REQ  DESCRIPTION
+ id    string  ✓    Generated id
+ name  string  ✓    Item name
 ```
 
 ## Configuration
