@@ -3,11 +3,11 @@
 //! The default authoring surface for `apic create` and `apic open`. The
 //! external-editor path remains available behind `--editor`.
 
-// The TUI is built incrementally across tasks; many items are defined before
-// the task that wires them up. This module-wide allow keeps `clippy -D warnings`
-// green during construction. Task 18 removes it and confirms nothing is left
-// genuinely dead.
-#![allow(dead_code)]
+// The TUI is built incrementally across tasks; many items and imports are
+// introduced before the task that wires them up. This module-wide allow keeps
+// `clippy -D warnings` green during construction. Task 18 removes it and confirms
+// nothing is left genuinely dead or unused.
+#![allow(dead_code, unused_imports)]
 
 mod draw;
 mod model;
