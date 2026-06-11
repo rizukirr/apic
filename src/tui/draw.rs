@@ -84,7 +84,12 @@ fn col_widths(section: &Section, ncols: usize) -> Vec<usize> {
     for row in &section.rows {
         if row.kind == RowKind::Field && row.cells.len() == ncols {
             for (i, c) in row.cells.iter().enumerate() {
-                w[i] = w[i].max(c.value.chars().count());
+                let extra = if i == 0 {
+                    row.prefix.chars().count()
+                } else {
+                    0
+                };
+                w[i] = w[i].max(extra + c.value.chars().count());
             }
         }
     }
@@ -376,7 +381,17 @@ fn table_line(
         let last = row.cells.len() - 1;
         for (i, c) in row.cells.iter().enumerate() {
             let focused = editing_here && state.cell == Some(i);
-            let val = cell_text(state, c, focused);
+            let mut val = cell_text(state, c, focused);
+            // Column 0 carries the tree prefix at display time only (the edited
+            // buffer stays bare, so `cell_text` shows `{buf}_` without prefix).
+            if i == 0 && !row.prefix.is_empty() {
+                val = format!("{}{val}", row.prefix);
+            }
+            // A focused but empty last cell renders a single space so its
+            // highlight is visible (e.g. editing an empty description).
+            if i == last && focused && val.is_empty() {
+                val = " ".to_string();
+            }
             // Last column is not padded (its trailing space would be trimmed).
             let cell_str = if i == last { val } else { pad(&val, widths[i]) };
             let style = if focused {
@@ -446,7 +461,9 @@ fn pad(s: &str, w: usize) -> String {
 /// Drops a trailing whitespace-only span so lines `trim_end` like read's output.
 fn trim_trailing(mut spans: Vec<Span<'static>>) -> Vec<Span<'static>> {
     while let Some(last) = spans.last() {
-        if last.content.trim().is_empty() && spans.len() > 1 {
+        // Keep a highlighted (background-styled) trailing span so a focused
+        // empty cell's cursor stays visible; only trim default whitespace.
+        if last.content.trim().is_empty() && last.style.bg.is_none() && spans.len() > 1 {
             spans.pop();
         } else {
             break;
@@ -556,7 +573,8 @@ mod tests {
                         "variable":[{"name":"id","type":"int","description":"User ID","required":false}]},
                  "headers":[{"name":"Content-Type","value":"application/json"}],
                  "responses":[{"code":200,"description":"ok","schema":[
-                    {"name":"status","type":"int","default":null,"description":"Status","required":true}
+                    {"name":"data","type":"object","default":null,"description":"d","required":false,
+                     "properties":[{"name":"access_token","type":"string","default":null,"description":"tok","required":true}]}
                  ],"example":{"status":200}}] }"#,
             None,
         )
@@ -575,8 +593,14 @@ mod tests {
         assert!(text.contains("HEADERS"));
         assert!(text.contains("RESPONSE 200 — ok"));
         assert!(text.contains("Example:"));
-        // The fixture has no nested fields, so no ├─/└─; assert no box borders.
-        for g in ['│', '┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼'] {
+        // The nested field renders with exactly one tree prefix (no doubling).
+        assert!(text.contains("access_token"));
+        assert!(
+            !text.contains("└─ └─") && !text.contains("├─ ├─"),
+            "tree prefix is doubled"
+        );
+        // No box borders (a single └─/├─ tree prefix is allowed).
+        for g in ['│', '┌', '┐', '┘', '┤', '┬', '┴', '┼'] {
             assert!(!text.contains(g), "found border glyph {g:?}");
         }
     }

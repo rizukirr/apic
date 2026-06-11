@@ -106,7 +106,8 @@ pub(crate) struct TableRow {
     pub kind: RowKind,
     pub indent: u16,
     pub cells: Vec<Cell>,
-    pub raw: String, // example buffer for RowKind::Example; empty otherwise
+    pub raw: String,    // example buffer for RowKind::Example; empty otherwise
+    pub prefix: String, // tree prefix (`├─ `/`└─ `) shown at display time only
 }
 
 /// A titled section. `headers: Some(cols)` renders a dim column-header line and
@@ -156,14 +157,16 @@ fn field_row(cells: Vec<Cell>) -> TableRow {
         indent: 0,
         cells,
         raw: String::new(),
+        prefix: String::new(),
     }
 }
-fn field_row_i(indent: u16, cells: Vec<Cell>) -> TableRow {
+fn field_row_i_prefixed(indent: u16, cells: Vec<Cell>, prefix: String) -> TableRow {
     TableRow {
         kind: RowKind::Field,
         indent,
         cells,
         raw: String::new(),
+        prefix,
     }
 }
 /// A Body section's title row, drawn as the bold section title. Its single
@@ -178,6 +181,7 @@ fn title_row(title: String) -> TableRow {
             value: title,
         }],
         raw: String::new(),
+        prefix: String::new(),
     }
 }
 fn example_row(loc: BodyLoc, raw: String) -> TableRow {
@@ -190,6 +194,7 @@ fn example_row(loc: BodyLoc, raw: String) -> TableRow {
             value: String::new(),
         }],
         raw,
+        prefix: String::new(),
     }
 }
 
@@ -248,10 +253,7 @@ fn push_schema(
             format!("{}{branch}", "  ".repeat(depth - 1))
         };
         let mut cells = vec![
-            text(
-                Field::SchemaName(loc.clone(), path.clone()),
-                format!("{prefix}{}", f.name),
-            ),
+            text(Field::SchemaName(loc.clone(), path.clone()), f.name.clone()),
             text(
                 Field::SchemaType(loc.clone(), path.clone()),
                 f.dtype.clone(),
@@ -268,7 +270,7 @@ fn push_schema(
             Field::SchemaDesc(loc.clone(), path.clone()),
             f.description.clone(),
         ));
-        rows.push(field_row_i(depth as u16, cells));
+        rows.push(field_row_i_prefixed(depth as u16, cells, prefix));
 
         push_schema(rows, loc, &f.properties, path, depth + 1, has_accept);
         path.pop();
@@ -304,12 +306,14 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
             indent: 0,
             cells: vec![text(Field::Name, m.name.clone())],
             raw: String::new(),
+            prefix: String::new(),
         },
         TableRow {
             kind: RowKind::Desc,
             indent: 0,
             cells: vec![text(Field::Description, m.description.clone())],
             raw: String::new(),
+            prefix: String::new(),
         },
     ];
     let mut head_add = None;
@@ -346,6 +350,7 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
                 },
             ],
             raw: String::new(),
+            prefix: String::new(),
         });
     }
     out.push(Section {
@@ -606,13 +611,28 @@ mod tests {
             .find(|s| s.expand == Some(Expand::Response(0)))
             .unwrap();
         assert!(resp.rows.iter().any(|r| {
-            r.kind == RowKind::Field
-                && (r.cells[0].value.contains("├─") || r.cells[0].value.contains("└─"))
+            r.kind == RowKind::Field && (r.prefix.contains("├─") || r.prefix.contains("└─"))
         }));
         assert!(
             resp.rows
                 .iter()
                 .any(|r| r.kind == RowKind::Example && r.raw.contains("status"))
         );
+    }
+
+    #[test]
+    fn nested_name_cell_is_bare_with_prefix_on_row() {
+        let secs = flatten(&model(), None);
+        let resp = secs
+            .iter()
+            .find(|s| s.title.starts_with("RESPONSE 200") || s.expand == Some(Expand::Response(0)))
+            .unwrap();
+        let nested = resp
+            .rows
+            .iter()
+            .find(|r| matches!(&r.cells.first().map(|c| &c.field), Some(Field::SchemaName(BodyLoc::Response(_), p)) if p.len()==2))
+            .unwrap();
+        assert!(!nested.cells[0].value.contains('├') && !nested.cells[0].value.contains('└'));
+        assert!(nested.prefix.contains('└') || nested.prefix.contains('├'));
     }
 }
