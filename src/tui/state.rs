@@ -474,7 +474,8 @@ fn handle_cell(state: &mut UiState, model: &mut EditModel, key: KeyEvent) -> Act
     }
 }
 
-/// Enter on a selected row (row-select mode).
+/// Enter on a selected row (row-select mode). For editable rows this selects
+/// the first cell and begins editing it immediately (no second keypress).
 fn begin_row(state: &mut UiState, model: &mut EditModel) -> Action {
     let Some(row) = state.current_row().cloned() else {
         return Action::None;
@@ -497,8 +498,12 @@ fn begin_row(state: &mut UiState, model: &mut EditModel) -> Action {
         }
         RowKind::Example => Action::OpenExample(row.cells[0].field.clone(), String::new()),
         RowKind::Name | RowKind::Desc | RowKind::Field => {
+            // Select the first editable cell and drop straight into editing it
+            // (insert for text, toggle/cycle for bool/enum) so the user can
+            // start typing without a second Enter.
             if let Some(&first) = state.editable_cells().first() {
                 state.cell = Some(first);
+                return begin_cell_edit(state, model);
             }
             Action::None
         }
@@ -670,11 +675,17 @@ pub(crate) fn handle_insert(state: &mut UiState, model: &mut EditModel, key: Key
         }
         KeyCode::Enter => {
             let value = buf.clone();
-            if let Some(field) = state.focused_field_pub() {
-                set_field(model, &field, value);
+            let field = state.focused_field_pub();
+            if let Some(f) = &field {
+                set_field(model, f, value);
                 state.dirty = true;
             }
             state.mode = Mode::Normal;
+            // Name and Description are single-cell rows: commit returns to row
+            // focus instead of parking the cursor in a pointless cell focus.
+            if matches!(field, Some(Field::Name | Field::Description)) {
+                state.cell = None;
+            }
             state.refresh(model);
             Action::None
         }
@@ -700,6 +711,14 @@ pub(crate) fn handle_insert(state: &mut UiState, model: &mut EditModel, key: Key
             Action::None
         }
         KeyCode::Esc => {
+            // Name and Description never rest in cell focus: Esc out of editing
+            // returns to row focus, same as committing with Enter.
+            if matches!(
+                state.focused_field_pub(),
+                Some(Field::Name | Field::Description)
+            ) {
+                state.cell = None;
+            }
             state.mode = Mode::Normal;
             Action::None
         }
@@ -910,13 +929,76 @@ mod tests {
     }
 
     #[test]
-    fn i_enters_insert_on_text_cell() {
+    fn enter_on_name_row_goes_straight_to_insert() {
         let mut m = model();
         let mut s = UiState::new(&m);
         goto(&mut s, |f| matches!(f, Field::Name));
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // -> cell-edit on the name cell
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // -> insert directly
+        assert!(s.cell.is_some(), "first cell is selected");
+        assert!(matches!(s.mode, Mode::Insert(_)), "no second Enter needed");
+    }
+
+    #[test]
+    fn name_commit_returns_to_row_focus() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| matches!(f, Field::Name));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert ("t")
+        handle_insert(&mut s, &mut m, key(KeyCode::Char('x')));
+        handle_insert(&mut s, &mut m, key(KeyCode::Enter)); // commit "tx"
+        assert_eq!(m.name, "tx");
+        assert!(s.cell.is_none(), "Name drops back to row focus on commit");
+    }
+
+    #[test]
+    fn name_esc_returns_to_row_focus() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| matches!(f, Field::Name));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert
+        handle_insert(&mut s, &mut m, key(KeyCode::Esc)); // cancel editing
+        assert_eq!(s.mode, Mode::Normal);
+        assert!(s.cell.is_none(), "Name drops back to row focus on Esc too");
+    }
+
+    #[test]
+    fn field_row_esc_keeps_cell_focus() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| matches!(f, Field::QueryName(_)));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert
+        handle_insert(&mut s, &mut m, key(KeyCode::Esc)); // cancel editing
+        assert!(
+            s.cell.is_some(),
+            "multi-cell row falls back to cell focus on Esc"
+        );
+    }
+
+    #[test]
+    fn field_row_commit_keeps_cell_focus() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| matches!(f, Field::QueryName(_)));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert directly
+        assert!(matches!(s.mode, Mode::Insert(_)));
+        handle_insert(&mut s, &mut m, key(KeyCode::Char('X')));
+        handle_insert(&mut s, &mut m, key(KeyCode::Enter)); // commit
+        assert!(
+            s.cell.is_some(),
+            "multi-cell row stays in cell focus after commit"
+        );
+    }
+
+    #[test]
+    fn i_enters_insert_on_text_cell() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| matches!(f, Field::QueryName(_)));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert directly
+        handle_insert(&mut s, &mut m, key(KeyCode::Esc)); // -> cell focus
         assert!(s.cell.is_some());
-        handle_normal(&mut s, &mut m, key(KeyCode::Char('i'))); // i -> insert
+        assert_eq!(s.mode, Mode::Normal);
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('i'))); // i -> insert again
         assert!(matches!(s.mode, Mode::Insert(_)));
     }
 
@@ -945,7 +1027,6 @@ mod tests {
         // a code row now exists and is editable
         s.refresh(&m);
         goto(&mut s, |f| matches!(f, Field::ResponseCode(_)));
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cell mode
         handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert (prefilled "200")
         handle_insert(&mut s, &mut m, key(KeyCode::Backspace));
         handle_insert(&mut s, &mut m, key(KeyCode::Char('1')));
@@ -1013,7 +1094,8 @@ mod tests {
         let mut m = model();
         let mut s = UiState::new(&m);
         goto(&mut s, |f| matches!(f, Field::QueryName(_)));
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cell mode
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert directly
+        handle_insert(&mut s, &mut m, key(KeyCode::Esc)); // -> cell focus
         let first = s.cell.unwrap();
         handle_normal(&mut s, &mut m, key(KeyCode::Char('l')));
         assert!(s.cell.unwrap() > first);
@@ -1026,8 +1108,7 @@ mod tests {
         let mut m = model();
         let mut s = UiState::new(&m);
         goto(&mut s, |f| matches!(f, Field::Name));
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cell mode
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert directly
         assert!(matches!(s.mode, Mode::Insert(_)));
         handle_insert(&mut s, &mut m, key(KeyCode::Char('x')));
         handle_insert(&mut s, &mut m, key(KeyCode::Enter));
@@ -1047,7 +1128,6 @@ mod tests {
         let mut m = EditModel::from_contract(c);
         let mut s = UiState::new(&m);
         goto(&mut s, |f| matches!(f, Field::QueryName(_)));
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cell-edit on query name
         handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert (prefilled "page")
         assert!(matches!(s.mode, Mode::Insert(_)));
         handle_insert(&mut s, &mut m, key(KeyCode::Tab)); // commit + jump to the value cell
@@ -1320,13 +1400,11 @@ mod tests {
         assert!(!s.dirty);
         // edit name "t" -> "tx"
         goto(&mut s, |f| matches!(f, Field::Name));
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cell
         handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert (prefilled "t")
         handle_insert(&mut s, &mut m, key(KeyCode::Char('x')));
         handle_insert(&mut s, &mut m, key(KeyCode::Enter));
         assert!(s.dirty);
         // revert "tx" -> "t" clears dirty
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // cell
         handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert (prefilled "tx")
         handle_insert(&mut s, &mut m, key(KeyCode::Backspace));
         handle_insert(&mut s, &mut m, key(KeyCode::Enter));
@@ -1342,7 +1420,6 @@ mod tests {
         let mut m = model();
         let mut s = UiState::new(&m);
         goto(&mut s, |f| matches!(f, Field::Name));
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter));
         handle_normal(&mut s, &mut m, key(KeyCode::Enter));
         handle_insert(&mut s, &mut m, key(KeyCode::Char('z')));
         handle_insert(&mut s, &mut m, key(KeyCode::Enter));
