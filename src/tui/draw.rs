@@ -19,7 +19,7 @@ pub(crate) fn draw(frame: &mut Frame, state: &UiState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .margin(1)
+        .margin(2)
         .split(area);
 
     let (mut lines, sel_start, sel_end, cursor) = build_lines(state);
