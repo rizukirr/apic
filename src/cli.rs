@@ -477,7 +477,9 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
             .as_ref()
             .and_then(|r| path.strip_prefix(r).ok())
             .unwrap_or(path);
-        let shown = sanitize(&shown.to_string_lossy());
+        // Normalize to forward slashes so output matches the rest of apic and is
+        // stable across platforms (Windows would otherwise show backslashes).
+        let shown = sanitize(&to_slash(shown));
 
         let result = read_file(path)
             .map_err(|err| err.to_string())
