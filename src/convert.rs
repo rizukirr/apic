@@ -1,9 +1,12 @@
 //! `apic convert` — import a Postman collection as apic contract files.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
+use crate::converter;
 use crate::converter::{PostmanCollection, v1_0_0, v2_0_0, v2_1_0};
+use crate::file::confine_to_dir;
 use crate::json::{Header, JsonContent, Query, RequestBody, Response, Url, Variable, method_from_str};
 
 /// Convert a human request/folder name into a filesystem-safe slug using
@@ -509,6 +512,55 @@ fn parse_v1_headers(headers: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Map any supported collection version to contracts.
+fn map(collection: &PostmanCollection) -> Vec<MappedContract> {
+    match collection {
+        PostmanCollection::V1_0_0(spec) => map_v1(spec),
+        PostmanCollection::V2_0_0(spec) => map_v2_0(spec),
+        PostmanCollection::V2_1_0(spec) => map_v2_1(spec),
+    }
+}
+
+/// Write mapped contracts under `dest_base`. Each contract's `rel_path` is
+/// confined under `dest_base` (rejecting `..` escapes), its parent directories
+/// are created, and the pretty-printed JSON is written. Existing files are not
+/// overwritten. Returns the number of files written.
+fn write_contracts(dest_base: &Path, mapped: &[MappedContract]) -> Result<usize, String> {
+    let mut written = 0usize;
+    for item in mapped {
+        let path = confine_to_dir(dest_base, &item.rel_path)?;
+        if path.exists() {
+            return Err(format!(
+                "{} already exists; refusing to overwrite",
+                path.display()
+            ));
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+        }
+        let json = serde_json::to_string_pretty(&item.contract)
+            .map_err(|err| format!("failed to serialize contract: {err}"))?;
+        fs::write(&path, json)
+            .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+        written += 1;
+    }
+    Ok(written)
+}
+
+/// Run `apic convert`: parse the collection at `collection_path`, map it, and
+/// write contracts under `dest_base`.
+pub fn run(collection_path: &Path, dest_base: &Path) -> Result<(), String> {
+    let collection = converter::from_path(collection_path)?;
+    let mapped = map(&collection);
+    if mapped.is_empty() {
+        return Err("collection contained no convertible requests".to_string());
+    }
+    let count = write_contracts(dest_base, &mapped)?;
+    println!("Converted {count} contract(s) into {}", dest_base.display());
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -673,5 +725,35 @@ mod tests {
             mapped[0].rel_path,
             std::path::Path::new("users").join("list_users.json")
         );
+    }
+
+    #[test]
+    fn write_creates_nested_files_and_refuses_overwrite() {
+        let base = std::env::temp_dir().join("apic_convert_write_test");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+
+        let mapped = vec![MappedContract {
+            rel_path: std::path::Path::new("users").join("get_user.json"),
+            contract: build_contract(RawRequest {
+                name: "Get User".into(),
+                description: None,
+                method: "GET".into(),
+                raw_url: "https://api.example.com/users/1".into(),
+                headers: vec![],
+                body: None,
+                responses: vec![],
+            }),
+        }];
+
+        let n = write_contracts(&base, &mapped).unwrap();
+        assert_eq!(n, 1);
+        assert!(base.join("users").join("get_user.json").is_file());
+
+        // Second write to the same path is refused.
+        let err = write_contracts(&base, &mapped).unwrap_err();
+        assert!(err.contains("already exists"));
+
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }
