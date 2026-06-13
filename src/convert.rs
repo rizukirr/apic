@@ -758,6 +758,70 @@ mod tests {
     }
 
     #[test]
+    fn url_with_port_and_tricky_query() {
+        let u = split_raw_url("https://api.example.com:8080/v1/items?filter=a=b&q=x%20y");
+        assert_eq!(u.protocol, "https");
+        // The port travels with the host (apic stores host as one string).
+        assert_eq!(u.host, "api.example.com:8080");
+        assert_eq!(u.path, Some(vec!["v1".into(), "items".into()]));
+        let q = u.query.unwrap();
+        assert_eq!(q.len(), 2);
+        // Only the first '=' splits key from value; the rest stays in the value.
+        assert_eq!(q[0].name, "filter");
+        assert_eq!(q[0].value, "a=b");
+        // Percent-encoding is preserved verbatim (no decoding).
+        assert_eq!(q[1].name, "q");
+        assert_eq!(q[1].value, "x%20y");
+    }
+
+    #[test]
+    fn v1_non_string_body_is_dropped() {
+        let json = r#"{
+          "id": "col1", "name": "Legacy", "order": ["r1"],
+          "requests": [
+            { "id": "r1", "name": "Make", "method": "POST", "headers": "",
+              "url": "https://api.example.com/things",
+              "rawModeData": ["chunk-a", "chunk-b"], "collectionId": "col1" }
+          ]
+        }"#;
+        let spec = match crate::converter::from_slice(json.as_bytes()).unwrap() {
+            PostmanCollection::V1_0_0(s) => s,
+            other => panic!("expected v1, got {:?}", other.version()),
+        };
+        let mapped = map_v1(&spec);
+        assert_eq!(mapped.len(), 1);
+        // A non-string v1 body (array rawModeData) is dropped gracefully, not panicked on.
+        assert!(mapped[0].contract.request.is_none());
+    }
+
+    #[test]
+    fn folder_and_request_same_name_do_not_collide() {
+        let json = r#"{
+          "info": { "name": "X", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+          "item": [
+            { "name": "users", "item": [
+              { "name": "Get",
+                "request": { "method": "GET", "url": { "raw": "https://api.example.com/users" } },
+                "response": [] }
+            ] },
+            { "name": "users",
+              "request": { "method": "GET", "url": { "raw": "https://api.example.com/users" } },
+              "response": [] }
+          ]
+        }"#;
+        let mapped = map_v2_1(&v2_1_collection(json));
+        assert_eq!(mapped.len(), 2);
+        let paths: Vec<String> = mapped
+            .iter()
+            .map(|m| m.rel_path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        // The folder "users" claims `users/`; the sibling request "users" is
+        // renamed to `users_2.json` so a directory and a file never clash.
+        assert!(paths.contains(&"users/get.json".to_string()), "{paths:?}");
+        assert!(paths.contains(&"users_2.json".to_string()), "{paths:?}");
+    }
+
+    #[test]
     fn write_creates_nested_files_and_refuses_overwrite() {
         let base = std::env::temp_dir().join("apic_convert_write_test");
         let _ = std::fs::remove_dir_all(&base);
