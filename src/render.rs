@@ -214,6 +214,8 @@ impl Printer {
             Method::PUT => method_str.yellow().bold().to_string(),
             Method::PATCH => method_str.magenta().bold().to_string(),
             Method::DELETE => method_str.red().bold().to_string(),
+            Method::HEAD => method_str.cyan().bold().to_string(),
+            Method::OPTIONS => method_str.white().bold().to_string(),
         }
     }
 

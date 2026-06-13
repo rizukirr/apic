@@ -219,7 +219,10 @@ pub(crate) struct MappedContract {
 /// this surfaces that so the user can fix the imported contract.
 fn method_warning(method: &str, name: &str) -> Option<String> {
     let upper = method.to_uppercase();
-    if matches!(upper.as_str(), "GET" | "POST" | "PUT" | "PATCH" | "DELETE") {
+    if matches!(
+        upper.as_str(),
+        "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS"
+    ) {
         None
     } else {
         Some(format!(
@@ -682,29 +685,33 @@ mod tests {
     }
 
     #[test]
-    fn v2_1_unsupported_method_warns_and_imports_as_get() {
+    fn v2_1_unsupported_method_warns_supported_ones_do_not() {
         let json = r#"{
           "info": { "name": "X", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
           "item": [
+            { "name": "Trace",
+              "request": { "method": "TRACE", "url": { "raw": "https://api.example.com/x" } },
+              "response": [] },
             { "name": "Preflight",
               "request": { "method": "OPTIONS", "url": { "raw": "https://api.example.com/x" } },
-              "response": [] },
-            { "name": "List",
-              "request": { "method": "GET", "url": { "raw": "https://api.example.com/x" } },
               "response": [] }
           ]
         }"#;
         let mapped = map_v2_1(&v2_1_collection(json));
         assert_eq!(mapped.len(), 2);
-        // The OPTIONS request is still imported, downgraded to GET, with a warning.
+        // TRACE is not modeled by apic — imported as GET, with a warning.
         assert!(matches!(
             mapped[0].contract.method,
             crate::json::Method::GET
         ));
-        let warning = mapped[0].warning.as_deref().expect("warning for OPTIONS");
-        assert!(warning.contains("OPTIONS"), "{warning}");
-        assert!(warning.contains("Preflight"), "{warning}");
-        // The supported GET request has no warning.
+        let warning = mapped[0].warning.as_deref().expect("warning for TRACE");
+        assert!(warning.contains("TRACE"), "{warning}");
+        assert!(warning.contains("Trace"), "{warning}");
+        // OPTIONS is natively supported now — mapped as OPTIONS, no warning.
+        assert!(matches!(
+            mapped[1].contract.method,
+            crate::json::Method::OPTIONS
+        ));
         assert!(mapped[1].warning.is_none());
     }
 
