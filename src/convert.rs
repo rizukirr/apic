@@ -704,6 +704,31 @@ mod tests {
     }
 
     #[test]
+    fn v2_1_empty_auth_object_is_accepted() {
+        // Real exports use `"auth": {}` to mean "inherit from parent"; the
+        // `type` field is absent and must default to noauth rather than fail.
+        let json = r#"{
+          "info": { "name": "X", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+          "item": [
+            { "name": "Login",
+              "request": { "method": "POST", "auth": {},
+                "url": { "raw": "https://api.example.com/login" } },
+              "response": [] }
+          ]
+        }"#;
+        let mapped = map_v2_1(&v2_1_collection(json));
+        assert_eq!(mapped.len(), 1);
+        // Inherited/empty auth yields no synthesized Authorization header.
+        assert!(
+            mapped[0]
+                .contract
+                .headers
+                .iter()
+                .all(|h| h.name != "Authorization")
+        );
+    }
+
+    #[test]
     fn v1_folders_group_requests_by_id() {
         let json = r#"{
           "id": "col1", "name": "Legacy", "order": [],

@@ -73,7 +73,7 @@ pub struct Spec {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]
 pub struct Auth {
     /// The auth type. Either `noauth`, `apikey`, `awsv4`, `basic`, `bearer`, `digest`, `hawk`, `ntlm`, `oauth1`, or `oauth2`.
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default)]
     pub auth_type: AuthType,
 
     /// No authentication

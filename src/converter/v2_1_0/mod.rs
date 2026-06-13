@@ -75,7 +75,7 @@ pub struct Auth {
     #[serde(rename = "oauth2")]
     pub oauth2: Option<Vec<AuthAttribute>>,
 
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default)]
     pub auth_type: AuthType,
 }
 
