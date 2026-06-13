@@ -163,6 +163,24 @@ enum Commands {
         #[arg(long, short = 'f', value_name = "FILENAME")]
         filename: String,
     },
+    /// Import a Postman collection as apic contract files.
+    ///
+    /// Reads a Postman Collection export (v1.0.0 / v2.0.0 / v2.1.0) and writes
+    /// one JSON contract per request, mirroring the collection's folder nesting.
+    /// Files are written under `--destination`, resolved within the configured
+    /// working directory; `..` escapes and absolute paths elsewhere are
+    /// rejected, and existing files are never overwritten. Requires an
+    /// initialized apic project (`apic init`).
+    Convert {
+        /// Path to the Postman collection JSON file to import.
+        #[arg(long, value_name = "FILE")]
+        postman: PathBuf,
+
+        /// Destination directory for the generated contracts, relative to the
+        /// working directory (created if missing).
+        #[arg(long, value_name = "DIR")]
+        destination: String,
+    },
 }
 
 /// Updates the configured root working directory.
@@ -601,6 +619,14 @@ fn remove_cmd(filename: &str) -> Result<(), String> {
     }
 }
 
+/// Handles `apic convert`: resolve the destination under the working directory,
+/// then parse the Postman collection and write contracts.
+fn convert_cmd(postman: &Path, destination: &str) -> Result<(), String> {
+    let root = read_config_file().and_then(|conf| conf.get_root_dir())?;
+    let dest_base = confine_to_dir(&root, Path::new(destination))?;
+    crate::convert::run(postman, &dest_base)
+}
+
 /// Asks the user `prompt` and returns whether they confirmed (default no).
 ///
 /// Only prompts on an interactive terminal: when stdin or stdout is not a TTY
@@ -755,6 +781,10 @@ pub fn run() {
             template,
         } => open_cmd(template, filename.as_deref(), editor.as_deref()),
         Commands::Remove { filename } => remove_cmd(&filename),
+        Commands::Convert {
+            postman,
+            destination,
+        } => convert_cmd(&postman, &destination),
     };
 
     if let Err(err) = result {
