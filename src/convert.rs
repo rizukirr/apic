@@ -725,6 +725,38 @@ mod tests {
         );
     }
 
+    fn v2_0_collection(json: &str) -> v2_0_0::Spec {
+        match crate::converter::from_slice(json.as_bytes()).unwrap() {
+            PostmanCollection::V2_0_0(s) => s,
+            other => panic!("expected v2.0, got {:?}", other.version()),
+        }
+    }
+
+    #[test]
+    fn v2_0_mirrors_folders_and_maps_request() {
+        let json = r#"{
+          "info": { "name": "X", "schema": "https://schema.getpostman.com/json/collection/v2.0.0/collection.json" },
+          "item": [
+            { "name": "users", "item": [
+              { "name": "Get User",
+                "request": { "method": "GET", "header": [],
+                  "url": { "raw": "https://api.example.com/users/:id" } },
+                "response": [] }
+            ] }
+          ]
+        }"#;
+        let mapped = map_v2_0(&v2_0_collection(json));
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(
+            mapped[0].rel_path,
+            std::path::Path::new("users").join("get_user.json")
+        );
+        assert!(matches!(
+            mapped[0].contract.method,
+            crate::json::Method::GET
+        ));
+    }
+
     #[test]
     fn write_creates_nested_files_and_refuses_overwrite() {
         let base = std::env::temp_dir().join("apic_convert_write_test");
