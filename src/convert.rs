@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use crate::converter;
 use crate::converter::{PostmanCollection, v1_0_0, v2_0_0, v2_1_0};
 use crate::file::confine_to_dir;
-use crate::json::{Header, JsonContent, Query, RequestBody, Response, Url, Variable, method_from_str};
+use crate::json::{
+    Header, JsonContent, Query, RequestBody, Response, Url, Variable, method_from_str,
+};
 
 /// Convert a human request/folder name into a filesystem-safe slug using
 /// underscores: lowercase, runs of non-alphanumeric characters collapse to a
@@ -214,11 +216,11 @@ pub(crate) struct MappedContract {
 /// Walk a v2.1 collection into mapped contracts.
 fn map_v2_1(spec: &v2_1_0::Spec) -> Vec<MappedContract> {
     let mut out = Vec::new();
-    walk_v2_1(&spec.item, &PathBuf::new(), &mut out);
+    walk_v2_1(&spec.item, Path::new(""), &mut out);
     out
 }
 
-fn walk_v2_1(items: &[v2_1_0::Items], dir: &PathBuf, out: &mut Vec<MappedContract>) {
+fn walk_v2_1(items: &[v2_1_0::Items], dir: &Path, out: &mut Vec<MappedContract>) {
     let mut taken = HashSet::new();
     for item in items {
         match item {
@@ -250,11 +252,7 @@ fn raw_request_v2_1(item: &v2_1_0::Item) -> Option<RawRequest> {
     let name = item.name.clone().unwrap_or_else(|| "request".to_string());
     let description = item.description.as_ref().and_then(description_text_v2_1);
     let method = req.method.clone().unwrap_or_else(|| "GET".to_string());
-    let raw_url = req
-        .url
-        .as_ref()
-        .map(url_raw_v2_1)
-        .unwrap_or_default();
+    let raw_url = req.url.as_ref().map(url_raw_v2_1).unwrap_or_default();
 
     let mut headers = match &req.header {
         Some(v2_1_0::HeaderUnion::HeaderArray(list)) => list
@@ -327,10 +325,7 @@ fn auth_header_v2_1(auth: &v2_1_0::Auth) -> Option<(String, String)> {
         v2_1_0::AuthType::Basic => {
             let user = attr(&auth.basic, "username").unwrap_or_default();
             let pass = attr(&auth.basic, "password").unwrap_or_default();
-            Some((
-                "Authorization".to_string(),
-                format!("Basic {user}:{pass}"),
-            ))
+            Some(("Authorization".to_string(), format!("Basic {user}:{pass}")))
         }
         v2_1_0::AuthType::Apikey => {
             let key = attr(&auth.api_key, "key").unwrap_or_else(|| "X-API-Key".to_string());
@@ -345,11 +340,11 @@ fn auth_header_v2_1(auth: &v2_1_0::Auth) -> Option<(String, String)> {
 
 fn map_v2_0(spec: &v2_0_0::Spec) -> Vec<MappedContract> {
     let mut out = Vec::new();
-    walk_v2_0(&spec.item, &PathBuf::new(), &mut out);
+    walk_v2_0(&spec.item, Path::new(""), &mut out);
     out
 }
 
-fn walk_v2_0(items: &[v2_0_0::Items], dir: &PathBuf, out: &mut Vec<MappedContract>) {
+fn walk_v2_0(items: &[v2_0_0::Items], dir: &Path, out: &mut Vec<MappedContract>) {
     let mut taken = HashSet::new();
     for item in items {
         match item {
@@ -463,7 +458,7 @@ fn map_v1(spec: &v1_0_0::Spec) -> Vec<MappedContract> {
     let mut root_taken = HashSet::new();
     for req in &spec.requests {
         if !placed.contains(req.id.as_str()) {
-            push_v1_request(req, &PathBuf::new(), &mut root_taken, &mut out);
+            push_v1_request(req, Path::new(""), &mut root_taken, &mut out);
         }
     }
 
@@ -472,7 +467,7 @@ fn map_v1(spec: &v1_0_0::Spec) -> Vec<MappedContract> {
 
 fn push_v1_request(
     req: &v1_0_0::Request,
-    dir: &PathBuf,
+    dir: &Path,
     taken: &mut HashSet<String>,
     out: &mut Vec<MappedContract>,
 ) {
@@ -680,7 +675,10 @@ mod tests {
             mapped[0].rel_path,
             std::path::Path::new("users").join("get_user.json")
         );
-        assert!(matches!(mapped[0].contract.method, crate::json::Method::GET));
+        assert!(matches!(
+            mapped[0].contract.method,
+            crate::json::Method::GET
+        ));
     }
 
     #[test]

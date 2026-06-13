@@ -25,7 +25,13 @@ fn convert_imports_v2_1_collection() {
     Command::cargo_bin("apic")
         .unwrap()
         .current_dir(&work)
-        .args(["convert", "--postman", &fixture, "--destination", "imported"])
+        .args([
+            "convert",
+            "--postman",
+            &fixture,
+            "--destination",
+            "imported",
+        ])
         .assert()
         .success();
 

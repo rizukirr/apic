@@ -1,4 +1,5 @@
 #![allow(clippy::large_enum_variant)]
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 

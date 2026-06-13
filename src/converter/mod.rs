@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Postman Collection parsing.
 //!
 //! Reads a Postman Collection export (v1.0.0, v2.0.0, or v2.1.0) from JSON and
@@ -121,9 +123,11 @@ fn detect_version(value: &Value) -> Result<PostmanCollectionVersion, String> {
     }
 
     if looks_like_v2_document(object) {
-        return Err("missing Postman Collection version; expected a v2 info.schema value \
+        return Err(
+            "missing Postman Collection version; expected a v2 info.schema value \
                     or the v1 collection shape"
-            .to_string());
+                .to_string(),
+        );
     }
 
     Err("unrecognized Postman Collection document shape".to_string())
