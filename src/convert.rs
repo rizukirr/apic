@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::json::{Query, Url, Variable};
+use crate::json::{Header, JsonContent, Query, RequestBody, Response, Url, Variable, method_from_str};
 
 /// Convert a human request/folder name into a filesystem-safe slug using
 /// underscores: lowercase, runs of non-alphanumeric characters collapse to a
@@ -132,6 +132,72 @@ fn placeholder_name(segment: &str) -> Option<String> {
     None
 }
 
+/// Version-agnostic shape extracted from one Postman request, ready to build
+/// into a [`JsonContent`]. Every version's walker produces this.
+struct RawRequest {
+    name: String,
+    description: Option<String>,
+    method: String,
+    raw_url: String,
+    headers: Vec<(String, String)>,
+    /// Raw request body text (e.g. Postman `body.raw`), if any.
+    body: Option<String>,
+    /// Saved responses: (status code, status text, raw body text).
+    responses: Vec<(u16, String, Option<String>)>,
+}
+
+/// Parse `raw` body/response text as JSON; fall back to a JSON string value when
+/// it is not valid JSON (e.g. plain text). `None` when `raw` is `None`/empty.
+fn body_example(raw: Option<&str>) -> Option<serde_json::Value> {
+    let text = raw?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(value) => Some(value),
+        Err(_) => Some(serde_json::Value::String(text.to_string())),
+    }
+}
+
+/// Build an apic contract from extracted primitives.
+fn build_contract(raw: RawRequest) -> JsonContent {
+    let headers = raw
+        .headers
+        .into_iter()
+        .map(|(name, value)| Header { name, value })
+        .collect();
+
+    let request = raw.body.as_deref().and_then(|text| {
+        body_example(Some(text)).map(|example| RequestBody {
+            dtype: "object".to_string(),
+            schema: None,
+            example: Some(example),
+        })
+    });
+
+    let responses = raw
+        .responses
+        .into_iter()
+        .map(|(code, status, body)| Response {
+            code,
+            description: status,
+            dtype: "object".to_string(),
+            schema: Vec::new(),
+            example: body_example(body.as_deref()),
+        })
+        .collect();
+
+    JsonContent {
+        name: raw.name,
+        description: raw.description,
+        method: method_from_str(&raw.method),
+        url: split_raw_url(&raw.raw_url),
+        headers,
+        request,
+        responses,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,5 +253,41 @@ mod tests {
         let u = split_raw_url("https://example.com");
         assert_eq!(u.host, "example.com");
         assert!(u.path.is_none());
+    }
+
+    #[test]
+    fn build_maps_core_fields() {
+        let raw = RawRequest {
+            name: "Get User".into(),
+            description: Some("fetch a user".into()),
+            method: "get".into(),
+            raw_url: "https://api.example.com/users/:id".into(),
+            headers: vec![("Accept".into(), "application/json".into())],
+            body: None,
+            responses: vec![(200, "200 OK".into(), Some("{\"id\":1}".into()))],
+        };
+        let c = build_contract(raw);
+        assert_eq!(c.name, "Get User");
+        assert!(matches!(c.method, crate::json::Method::GET));
+        assert_eq!(c.headers.len(), 1);
+        assert_eq!(c.headers[0].name, "Accept");
+        assert_eq!(c.responses.len(), 1);
+        assert_eq!(c.responses[0].code, 200);
+        assert!(c.responses[0].example.is_some());
+        assert!(c.request.is_none());
+    }
+
+    #[test]
+    fn build_body_parses_json_else_string() {
+        assert_eq!(
+            body_example(Some("{\"a\":1}")),
+            Some(serde_json::json!({"a": 1}))
+        );
+        assert_eq!(
+            body_example(Some("plain text")),
+            Some(serde_json::Value::String("plain text".into()))
+        );
+        assert_eq!(body_example(Some("   ")), None);
+        assert_eq!(body_example(None), None);
     }
 }
