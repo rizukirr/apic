@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use crate::converter::{PostmanCollection, v2_0_0, v2_1_0};
+use crate::converter::{PostmanCollection, v1_0_0, v2_0_0, v2_1_0};
 use crate::json::{Header, JsonContent, Query, RequestBody, Response, Url, Variable, method_from_str};
 
 /// Convert a human request/folder name into a filesystem-safe slug using
@@ -430,6 +430,85 @@ fn url_raw_v2_0(url: &v2_0_0::Url) -> String {
     }
 }
 
+// ---- v1.0.0 (flat requests + folder-by-id reconstruction, no auth) ----
+
+fn map_v1(spec: &v1_0_0::Spec) -> Vec<MappedContract> {
+    use std::collections::HashMap;
+
+    // Index requests by id.
+    let by_id: HashMap<&str, &v1_0_0::Request> =
+        spec.requests.iter().map(|r| (r.id.as_str(), r)).collect();
+
+    let mut out = Vec::new();
+    let mut placed: HashSet<&str> = HashSet::new();
+
+    // Folders → directories; their `order` lists request ids.
+    if let Some(folders) = &spec.folders {
+        for folder in folders {
+            let dir = PathBuf::from(slugify(&folder.name));
+            let mut taken = HashSet::new();
+            for id in &folder.order {
+                if let Some(req) = by_id.get(id.as_str()) {
+                    placed.insert(id.as_str());
+                    push_v1_request(req, &dir, &mut taken, &mut out);
+                }
+            }
+        }
+    }
+
+    // Unfoldered requests at the root.
+    let mut root_taken = HashSet::new();
+    for req in &spec.requests {
+        if !placed.contains(req.id.as_str()) {
+            push_v1_request(req, &PathBuf::new(), &mut root_taken, &mut out);
+        }
+    }
+
+    out
+}
+
+fn push_v1_request(
+    req: &v1_0_0::Request,
+    dir: &PathBuf,
+    taken: &mut HashSet<String>,
+    out: &mut Vec<MappedContract>,
+) {
+    let raw = raw_request_v1(req);
+    let slug = unique_slug(taken, &slugify(&raw.name));
+    out.push(MappedContract {
+        rel_path: dir.join(format!("{slug}.json")),
+        contract: build_contract(raw),
+    });
+}
+
+fn raw_request_v1(req: &v1_0_0::Request) -> RawRequest {
+    // v1 stores the complete URL as a plain string.
+    let raw_url = req.url.clone();
+    // v1 raw body is `Option<RawModeData>`; take the string variant.
+    let body = match &req.raw_mode_data {
+        Some(v1_0_0::RawModeData::String(s)) => Some(s.clone()),
+        _ => None,
+    };
+    RawRequest {
+        name: req.name.clone(),
+        description: req.description.clone(),
+        method: req.method.clone(),
+        raw_url,
+        headers: parse_v1_headers(&req.headers),
+        body,
+        responses: Vec::new(),
+    }
+}
+
+/// v1 stores headers as a single newline-separated `"Key: Value"` string.
+fn parse_v1_headers(headers: &str) -> Vec<(String, String)> {
+    headers
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -572,5 +651,27 @@ mod tests {
             .find(|h| h.name == "Authorization")
             .expect("authorization header");
         assert_eq!(auth.value, "Bearer abc123");
+    }
+
+    #[test]
+    fn v1_folders_group_requests_by_id() {
+        let json = r#"{
+          "id": "col1", "name": "Legacy", "order": [],
+          "folders": [ { "id": "f1", "name": "Users", "description": "", "order": ["r1"] } ],
+          "requests": [
+            { "id": "r1", "name": "List Users", "method": "GET", "headers": "",
+              "url": "https://api.example.com/users", "collectionId": "col1" }
+          ]
+        }"#;
+        let spec = match crate::converter::from_slice(json.as_bytes()).unwrap() {
+            PostmanCollection::V1_0_0(s) => s,
+            other => panic!("expected v1, got {:?}", other.version()),
+        };
+        let mapped = map_v1(&spec);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(
+            mapped[0].rel_path,
+            std::path::Path::new("users").join("list_users.json")
+        );
     }
 }
