@@ -116,11 +116,11 @@ Lists discovered `.json` contract files under the working directory.
 - `--absolute <true|false>` — print absolute paths or paths relative to the
   working directory (`false`, the default).
 
-### `apic read -f <filename> [-s <status>]`
+### `apic read -f <query> [-s <status>]`
 Renders a contract as formatted tables. `-s <status>` filters the response
 section to a single HTTP status code.
 
-`<filename>` is resolved flexibly — an exact match wins, then fuzzy:
+`<query>` is resolved flexibly — an exact match wins, then fuzzy:
 
 1. a path relative to the working directory — `user/user.json`
 2. the same without the `.json` extension — `user/user`, `auth/login`
@@ -155,8 +155,8 @@ copy-paste view:
  }
 ```
 
-### `apic open (-f <filename> | --template) [-e <editor>]`
-Resolves `<filename>` exactly like `read` (path, extensionless, or fuzzy) and
+### `apic open (-f <query> | --template) [-e <editor>]`
+Resolves `<query>` exactly like `read` (path, extensionless, or fuzzy) and
 opens the matching contract in the interactive TUI. Pass `-e`/`--editor` to open
 it in your external editor instead — the same editor resolution as `apic create`.
 
@@ -176,8 +176,8 @@ Output is colorized when stdout is a terminal and plain when piped, so it stays
 clean in scripts. Contract strings are sanitized before display, so a file from
 an untrusted source cannot inject terminal escape sequences.
 
-### `apic remove -f <filename>`
-Resolves `<filename>` exactly like `read`/`open` (path, extensionless, or
+### `apic remove -f <query>`
+Resolves `<query>` exactly like `read`/`open` (path, extensionless, or
 fuzzy, prompting to pick when ambiguous) and deletes the matching contract
 file. On an interactive terminal it asks `Remove <path>? [y/N]` first and only
 deletes on `y`/`yes`; when stdin/stdout is not a terminal (scripts) it removes
@@ -188,16 +188,20 @@ apic remove -f user/user.json
 apic remove -f login            # fuzzy, with confirmation
 ```
 
-### `apic validate [-f <filename>]`
+### `apic validate [-f <query>] [--template]`
 Checks that contracts parse and conform to the schema. With no `-f`, every
-contract under the working directory is checked; with `-f <name>` only the best
-fuzzy match is. Prints `ok`/`FAIL` per file with the parse error (line and
-column) for failures, and **exits non-zero if any contract is invalid** — so it
-drops straight into a CI step or pre-commit hook.
+contract under the working directory is checked. A query ending in `/` (e.g.
+`auth/`) validates every contract under that folder, recursively; otherwise the
+query resolves to a single contract like `read` (path, extensionless, or fuzzy).
+Prints `ok`/`FAIL` per file with the parse error (line and column) for failures,
+and **exits non-zero if any contract is invalid** — so it drops straight into a
+CI step or pre-commit hook.
 
 ```bash
 apic validate               # check every contract
 apic validate -f login      # check one
+apic validate -f auth/      # check every contract under auth/, recursively
+apic validate --template    # check the project template (.apic/template.json)
 ```
 
 ```text
@@ -205,6 +209,40 @@ ok   auth/login.json
 FAIL user/user.json: EOF while parsing an object at line 12 column 1
 
 2 passed, 1 failed
+```
+
+> The long flag is `--find` on the commands that resolve an existing contract
+> (`read`, `open`, `remove`, `validate`); the short `-f` is unchanged. `create`
+> keeps `--filename` because it names a new file rather than finding one.
+
+### `apic convert --postman <file> [--destination <dir>]`
+Imports a Postman collection as apic contracts — one JSON file per request,
+mirroring the collection's folder nesting. Accepts Postman Collection exports of
+v1.0.0, v2.0.0, and v2.1.0 (auto-detected).
+
+- `--postman <file>` — the Postman collection JSON to import.
+- `--destination <dir>` — where to write the contracts, relative to the working
+  directory (created if missing). **Optional** — defaults to the working
+  directory itself. The path is confined to the working directory (`..`/absolute
+  escapes are rejected) and existing files are never overwritten.
+
+Each Postman folder becomes a directory and each request becomes
+`folder/request_name.json`. Only the fields apic models are imported (method,
+URL, headers, request/response bodies); Postman-specific data (auth blocks,
+scripts, events, variables) is ignored. A request whose HTTP method apic does
+not model (anything other than `GET`/`POST`/`PUT`/`PATCH`/`DELETE`/`HEAD`/
+`OPTIONS`) is imported as `GET` with a warning, so nothing is downgraded
+silently.
+
+```bash
+apic init                                   # an apic project is required
+apic convert --postman MyAPI.postman.json   # writes into the working directory
+apic convert --postman MyAPI.postman.json --destination imported
+```
+
+```text
+warning: request "Preflight" uses method TRACE, unsupported by apic — imported as GET
+Converted 12 contract(s) into imported (1 warning)
 ```
 
 ## Security
@@ -316,7 +354,7 @@ there is no schema), and `read --example` shows only the payloads.
 |-------|----------|-------------|
 | `name` | yes | Endpoint name. |
 | `description` | no | Short description of the endpoint. |
-| `method` | yes | HTTP method (`GET`, `POST`, …). |
+| `method` | yes | HTTP method: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, or `OPTIONS`. |
 | `url` | yes | Request URL, broken into parts (see below). |
 | `headers` | yes | Array of headers (`name`, `value`). |
 | `request` | no | Request body: `{ "type": <body shape>, "schema": [fields], "example": <raw JSON> }` — all parts optional; `type` defaults to `"object"` (see [Array bodies](#array-bodies)). |
