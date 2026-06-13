@@ -130,7 +130,7 @@ fn check_at(apic_dir: &Path) -> TemplateCheck {
 /// The default provides every field; `overlay` only needs the values it wants
 /// to change. The result is validated so a partial template that merges into an
 /// invalid contract is rejected (the caller then falls back to the default).
-fn merge_onto_default(overlay: &str) -> Result<String, String> {
+pub(crate) fn merge_onto_default(overlay: &str) -> Result<String, String> {
     let mut base: Value = serde_json::from_str(DEFAULT)
         .map_err(|err| format!("built-in template is not valid JSON: {err}"))?;
     let overlay: Value =

@@ -542,7 +542,16 @@ fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Res
             return open_in_editor(&path, editor)
                 .map_err(|err| format!("Failed to open editor: {err}"));
         }
-        return open_path_in_tui(&path);
+        // The template is a partial overlay; merge it onto the builtin so every
+        // required field (name, …) is present before parsing it as a contract.
+        let overlay =
+            read_file(&path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
+        let contract = crate::template::merge_onto_default(&overlay)
+            .map_err(|reason| format!("{} {reason}", path.display()))?;
+        let parsed = json_get(&contract, None)
+            .map_err(|err| format!("{} is not a valid contract: {err}", path.display()))?;
+        let model = crate::tui::EditModel::from_contract(parsed);
+        return crate::tui::run(model, &path);
     }
 
     // The parser requires `-f` unless `--template` is given, so this is safe.
