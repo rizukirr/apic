@@ -209,6 +209,26 @@ fn build_contract(raw: RawRequest) -> JsonContent {
 pub(crate) struct MappedContract {
     pub rel_path: PathBuf,
     pub contract: JsonContent,
+    /// A lossy-mapping note surfaced to the user (e.g. an unsupported HTTP
+    /// method downgraded to GET). `None` when the mapping was clean.
+    pub warning: Option<String>,
+}
+
+/// Flags a request whose HTTP method apic does not model. Such methods are
+/// downgraded to GET by [`method_from_str`], silently losing the original verb;
+/// this surfaces that so the user can fix the imported contract.
+fn method_warning(method: &str, name: &str) -> Option<String> {
+    let upper = method.to_uppercase();
+    if matches!(
+        upper.as_str(),
+        "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS"
+    ) {
+        None
+    } else {
+        Some(format!(
+            "request {name:?} uses method {upper}, unsupported by apic — imported as GET"
+        ))
+    }
 }
 
 // ---- v2.1 ----
@@ -233,9 +253,11 @@ fn walk_v2_1(items: &[v2_1_0::Items], dir: &Path, out: &mut Vec<MappedContract>)
             v2_1_0::Items::Item(it) => {
                 let raw = raw_request_v2_1(it);
                 let slug = unique_slug(&mut taken, &slugify(&raw.name));
+                let warning = method_warning(&raw.method, &raw.name);
                 out.push(MappedContract {
                     rel_path: dir.join(format!("{slug}.json")),
                     contract: build_contract(raw),
+                    warning,
                 });
             }
         }
@@ -321,9 +343,11 @@ fn walk_v2_0(items: &[v2_0_0::Items], dir: &Path, out: &mut Vec<MappedContract>)
             v2_0_0::Items::Item(it) => {
                 let raw = raw_request_v2_0(it);
                 let slug = unique_slug(&mut taken, &slugify(&raw.name));
+                let warning = method_warning(&raw.method, &raw.name);
                 out.push(MappedContract {
                     rel_path: dir.join(format!("{slug}.json")),
                     contract: build_contract(raw),
+                    warning,
                 });
             }
         }
@@ -433,9 +457,11 @@ fn push_v1_request(
 ) {
     let raw = raw_request_v1(req);
     let slug = unique_slug(taken, &slugify(&raw.name));
+    let warning = method_warning(&raw.method, &raw.name);
     out.push(MappedContract {
         rel_path: dir.join(format!("{slug}.json")),
         contract: build_contract(raw),
+        warning,
     });
 }
 
@@ -513,7 +539,23 @@ pub fn run(collection_path: &Path, dest_base: &Path) -> Result<(), String> {
         return Err("collection contained no convertible requests".to_string());
     }
     let count = write_contracts(dest_base, &mapped)?;
-    println!("Converted {count} contract(s) into {}", dest_base.display());
+
+    // Surface lossy-mapping notes (e.g. unsupported methods downgraded to GET)
+    // so the user knows which imported contracts to review.
+    let warnings: Vec<&str> = mapped.iter().filter_map(|m| m.warning.as_deref()).collect();
+    for warning in &warnings {
+        eprintln!("warning: {warning}");
+    }
+
+    let suffix = match warnings.len() {
+        0 => String::new(),
+        1 => " (1 warning)".to_string(),
+        n => format!(" ({n} warnings)"),
+    };
+    println!(
+        "Converted {count} contract(s) into {}{suffix}",
+        dest_base.display()
+    );
     Ok(())
 }
 
@@ -640,6 +682,37 @@ mod tests {
             mapped[0].contract.method,
             crate::json::Method::GET
         ));
+    }
+
+    #[test]
+    fn v2_1_unsupported_method_warns_supported_ones_do_not() {
+        let json = r#"{
+          "info": { "name": "X", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+          "item": [
+            { "name": "Trace",
+              "request": { "method": "TRACE", "url": { "raw": "https://api.example.com/x" } },
+              "response": [] },
+            { "name": "Preflight",
+              "request": { "method": "OPTIONS", "url": { "raw": "https://api.example.com/x" } },
+              "response": [] }
+          ]
+        }"#;
+        let mapped = map_v2_1(&v2_1_collection(json));
+        assert_eq!(mapped.len(), 2);
+        // TRACE is not modeled by apic — imported as GET, with a warning.
+        assert!(matches!(
+            mapped[0].contract.method,
+            crate::json::Method::GET
+        ));
+        let warning = mapped[0].warning.as_deref().expect("warning for TRACE");
+        assert!(warning.contains("TRACE"), "{warning}");
+        assert!(warning.contains("Trace"), "{warning}");
+        // OPTIONS is natively supported now — mapped as OPTIONS, no warning.
+        assert!(matches!(
+            mapped[1].contract.method,
+            crate::json::Method::OPTIONS
+        ));
+        assert!(mapped[1].warning.is_none());
     }
 
     #[test]
@@ -804,6 +877,7 @@ mod tests {
                 body: None,
                 responses: vec![],
             }),
+            warning: None,
         }];
 
         let n = write_contracts(&base, &mapped).unwrap();

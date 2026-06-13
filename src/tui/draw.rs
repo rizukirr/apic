@@ -86,6 +86,7 @@ fn method_color(method: &str) -> Color {
         "PUT" => Color::Yellow,
         "PATCH" => Color::Magenta,
         "DELETE" => Color::Red,
+        "HEAD" => Color::Cyan,
         _ => Color::White,
     }
 }

@@ -12,6 +12,8 @@ pub enum Method {
     PUT,
     PATCH,
     DELETE,
+    HEAD,
+    OPTIONS,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -123,17 +125,21 @@ pub fn method_str(method: &Method) -> String {
         Method::PUT => "PUT".to_string(),
         Method::PATCH => "PATCH".to_string(),
         Method::DELETE => "DELETE".to_string(),
+        Method::HEAD => "HEAD".to_string(),
+        Method::OPTIONS => "OPTIONS".to_string(),
     }
 }
 
 /// All HTTP methods in a fixed order, for cycling through choices in the TUI.
-pub(crate) fn method_all() -> [Method; 5] {
+pub(crate) fn method_all() -> [Method; 7] {
     [
         Method::GET,
         Method::POST,
         Method::PUT,
         Method::PATCH,
         Method::DELETE,
+        Method::HEAD,
+        Method::OPTIONS,
     ]
 }
 
@@ -163,6 +169,8 @@ pub fn method_from_str(method: &str) -> Method {
         "PUT" => Method::PUT,
         "PATCH" => Method::PATCH,
         "DELETE" => Method::DELETE,
+        "HEAD" => Method::HEAD,
+        "OPTIONS" => Method::OPTIONS,
         _ => Method::GET,
     }
 }
