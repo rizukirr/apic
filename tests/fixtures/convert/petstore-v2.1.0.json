@@ -1,0 +1,32 @@
+{
+  "info": {
+    "name": "Petstore",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "pets",
+      "item": [
+        {
+          "name": "List Pets",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Accept", "value": "application/json" } ],
+            "url": { "raw": "https://api.example.com/pets?limit=10" }
+          },
+          "response": [
+            { "code": 200, "status": "200 OK", "body": "[{\"id\":1,\"name\":\"Rex\"}]" }
+          ]
+        },
+        {
+          "name": "Get Pet",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "https://api.example.com/pets/:id" }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

@@ -5,6 +5,8 @@
 
 mod cli;
 mod config;
+mod convert;
+mod converter;
 mod file;
 mod fuzzy;
 mod json;
