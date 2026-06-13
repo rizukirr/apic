@@ -1,7 +1,9 @@
 //! `apic convert` — import a Postman collection as apic contract files.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 
+use crate::converter::{PostmanCollection, v2_0_0, v2_1_0};
 use crate::json::{Header, JsonContent, Query, RequestBody, Response, Url, Variable, method_from_str};
 
 /// Convert a human request/folder name into a filesystem-safe slug using
@@ -198,6 +200,236 @@ fn build_contract(raw: RawRequest) -> JsonContent {
     }
 }
 
+/// One contract destined for a file at `rel_path` (relative to `--destination`).
+pub(crate) struct MappedContract {
+    pub rel_path: PathBuf,
+    pub contract: JsonContent,
+}
+
+// ---- v2.1 ----
+
+/// Walk a v2.1 collection into mapped contracts.
+fn map_v2_1(spec: &v2_1_0::Spec) -> Vec<MappedContract> {
+    let mut out = Vec::new();
+    walk_v2_1(&spec.item, &PathBuf::new(), &mut out);
+    out
+}
+
+fn walk_v2_1(items: &[v2_1_0::Items], dir: &PathBuf, out: &mut Vec<MappedContract>) {
+    let mut taken = HashSet::new();
+    for item in items {
+        match item {
+            v2_1_0::Items::ItemGroup(group) => {
+                let name = group.name.as_deref().unwrap_or("folder");
+                let slug = unique_slug(&mut taken, &slugify(name));
+                let child_dir = dir.join(&slug);
+                walk_v2_1(&group.item, &child_dir, out);
+            }
+            v2_1_0::Items::Item(it) => {
+                if let Some(raw) = raw_request_v2_1(it) {
+                    let slug = unique_slug(&mut taken, &slugify(&raw.name));
+                    out.push(MappedContract {
+                        rel_path: dir.join(format!("{slug}.json")),
+                        contract: build_contract(raw),
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn raw_request_v2_1(item: &v2_1_0::Item) -> Option<RawRequest> {
+    let req = match &item.request {
+        v2_1_0::RequestUnion::RequestClass(req) => req,
+        v2_1_0::RequestUnion::String(_) => return None, // bare-URL string form: skip
+    };
+
+    let name = item.name.clone().unwrap_or_else(|| "request".to_string());
+    let description = item.description.as_ref().and_then(description_text_v2_1);
+    let method = req.method.clone().unwrap_or_else(|| "GET".to_string());
+    let raw_url = req
+        .url
+        .as_ref()
+        .map(url_raw_v2_1)
+        .unwrap_or_default();
+
+    let mut headers = match &req.header {
+        Some(v2_1_0::HeaderUnion::HeaderArray(list)) => list
+            .iter()
+            .filter(|h| !h.disabled.unwrap_or(false))
+            .map(|h| (h.key.clone(), h.value.clone()))
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    if let Some(auth_header) = req.auth.as_ref().and_then(auth_header_v2_1) {
+        headers.push(auth_header);
+    }
+
+    let body = req.body.as_ref().and_then(|b| b.raw.clone());
+
+    let responses = item
+        .response
+        .as_ref()
+        .map(|rs| {
+            rs.iter()
+                .map(|r| {
+                    let code = r.code.unwrap_or(0) as u16;
+                    let status = r.status.clone().unwrap_or_else(|| code.to_string());
+                    (code, status, r.body.clone())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(RawRequest {
+        name,
+        description,
+        method,
+        raw_url,
+        headers,
+        body,
+        responses,
+    })
+}
+
+fn description_text_v2_1(d: &v2_1_0::DescriptionUnion) -> Option<String> {
+    match d {
+        v2_1_0::DescriptionUnion::String(s) => Some(s.clone()),
+        v2_1_0::DescriptionUnion::Description(desc) => desc.content.clone(),
+    }
+}
+
+fn url_raw_v2_1(url: &v2_1_0::Url) -> String {
+    match url {
+        v2_1_0::Url::String(s) => s.clone(),
+        v2_1_0::Url::UrlClass(u) => u.raw.clone().unwrap_or_default(),
+    }
+}
+
+/// Synthesize a single `Authorization`/api-key header from v2.1 auth.
+fn auth_header_v2_1(auth: &v2_1_0::Auth) -> Option<(String, String)> {
+    let attr = |attrs: &Option<Vec<v2_1_0::AuthAttribute>>, key: &str| -> Option<String> {
+        attrs.as_ref()?.iter().find(|a| a.key == key).and_then(|a| {
+            a.value.as_ref().map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+        })
+    };
+    match auth.auth_type {
+        v2_1_0::AuthType::Bearer => {
+            let token = attr(&auth.bearer, "token").unwrap_or_else(|| "{{token}}".to_string());
+            Some(("Authorization".to_string(), format!("Bearer {token}")))
+        }
+        v2_1_0::AuthType::Basic => {
+            let user = attr(&auth.basic, "username").unwrap_or_default();
+            let pass = attr(&auth.basic, "password").unwrap_or_default();
+            Some((
+                "Authorization".to_string(),
+                format!("Basic {user}:{pass}"),
+            ))
+        }
+        v2_1_0::AuthType::Apikey => {
+            let key = attr(&auth.api_key, "key").unwrap_or_else(|| "X-API-Key".to_string());
+            let value = attr(&auth.api_key, "value").unwrap_or_else(|| "{{apiKey}}".to_string());
+            Some((key, value))
+        }
+        _ => None,
+    }
+}
+
+// ---- v2.0 (same shape, no auth mapping) ----
+
+fn map_v2_0(spec: &v2_0_0::Spec) -> Vec<MappedContract> {
+    let mut out = Vec::new();
+    walk_v2_0(&spec.item, &PathBuf::new(), &mut out);
+    out
+}
+
+fn walk_v2_0(items: &[v2_0_0::Items], dir: &PathBuf, out: &mut Vec<MappedContract>) {
+    let mut taken = HashSet::new();
+    for item in items {
+        match item {
+            v2_0_0::Items::ItemGroup(group) => {
+                let name = group.name.as_deref().unwrap_or("folder");
+                let slug = unique_slug(&mut taken, &slugify(name));
+                let child_dir = dir.join(&slug);
+                walk_v2_0(&group.item, &child_dir, out);
+            }
+            v2_0_0::Items::Item(it) => {
+                if let Some(raw) = raw_request_v2_0(it) {
+                    let slug = unique_slug(&mut taken, &slugify(&raw.name));
+                    out.push(MappedContract {
+                        rel_path: dir.join(format!("{slug}.json")),
+                        contract: build_contract(raw),
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn raw_request_v2_0(item: &v2_0_0::Item) -> Option<RawRequest> {
+    let req = match &item.request {
+        v2_0_0::RequestUnion::RequestClass(req) => req,
+        v2_0_0::RequestUnion::String(_) => return None,
+    };
+
+    let name = item.name.clone().unwrap_or_else(|| "request".to_string());
+    let description = item.description.as_ref().and_then(description_text_v2_0);
+    let method = req.method.clone().unwrap_or_else(|| "GET".to_string());
+    let raw_url = req.url.as_ref().map(url_raw_v2_0).unwrap_or_default();
+
+    let headers = match &req.header {
+        Some(v2_0_0::HeaderUnion::HeaderArray(list)) => list
+            .iter()
+            .filter(|h| !h.disabled.unwrap_or(false))
+            .map(|h| (h.key.clone(), h.value.clone()))
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+
+    let body = req.body.as_ref().and_then(|b| b.raw.clone());
+
+    let responses = item
+        .response
+        .as_ref()
+        .map(|rs| {
+            rs.iter()
+                .map(|r| {
+                    let code = r.code.unwrap_or(0) as u16;
+                    let status = r.status.clone().unwrap_or_else(|| code.to_string());
+                    (code, status, r.body.clone())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(RawRequest {
+        name,
+        description,
+        method,
+        raw_url,
+        headers,
+        body,
+        responses,
+    })
+}
+
+fn description_text_v2_0(d: &v2_0_0::DescriptionUnion) -> Option<String> {
+    match d {
+        v2_0_0::DescriptionUnion::String(s) => Some(s.clone()),
+        v2_0_0::DescriptionUnion::Description(desc) => desc.content.clone(),
+    }
+}
+
+fn url_raw_v2_0(url: &v2_0_0::Url) -> String {
+    match url {
+        v2_0_0::Url::String(s) => s.clone(),
+        v2_0_0::Url::UrlClass(u) => u.raw.clone().unwrap_or_default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,5 +521,56 @@ mod tests {
         );
         assert_eq!(body_example(Some("   ")), None);
         assert_eq!(body_example(None), None);
+    }
+
+    fn v2_1_collection(json: &str) -> v2_1_0::Spec {
+        match crate::converter::from_slice(json.as_bytes()).unwrap() {
+            PostmanCollection::V2_1_0(s) => s,
+            other => panic!("expected v2.1, got {:?}", other.version()),
+        }
+    }
+
+    #[test]
+    fn v2_1_mirrors_folders_and_maps_request() {
+        let json = r#"{
+          "info": { "name": "X", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+          "item": [
+            { "name": "users", "item": [
+              { "name": "Get User",
+                "request": { "method": "GET", "header": [],
+                  "url": { "raw": "https://api.example.com/users/:id" } },
+                "response": [] }
+            ] }
+          ]
+        }"#;
+        let mapped = map_v2_1(&v2_1_collection(json));
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(
+            mapped[0].rel_path,
+            std::path::Path::new("users").join("get_user.json")
+        );
+        assert!(matches!(mapped[0].contract.method, crate::json::Method::GET));
+    }
+
+    #[test]
+    fn v2_1_bearer_auth_becomes_header() {
+        let json = r#"{
+          "info": { "name": "X", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+          "item": [
+            { "name": "Me",
+              "request": { "method": "GET",
+                "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "abc123" } ] },
+                "url": { "raw": "https://api.example.com/me" } },
+              "response": [] }
+          ]
+        }"#;
+        let mapped = map_v2_1(&v2_1_collection(json));
+        let auth = mapped[0]
+            .contract
+            .headers
+            .iter()
+            .find(|h| h.name == "Authorization")
+            .expect("authorization header");
+        assert_eq!(auth.value, "Bearer abc123");
     }
 }
