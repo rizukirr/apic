@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-06-13
+
+### Added
+- `apic convert --postman <file> [--destination <dir>]` — import a Postman
+  collection (v1.0.0 / v2.0.0 / v2.1.0, auto-detected) as per-endpoint
+  contracts, mirroring the collection's folder nesting at any depth.
+  `--destination` is optional and defaults to the working directory; paths are
+  confined to it and existing files are never overwritten.
+- Recursive folder validation: a `validate` query ending in `/` (e.g.
+  `apic validate -f auth/`) validates every contract under that folder.
+- `HEAD` and `OPTIONS` are now first-class HTTP methods — in contracts, the
+  `read`/`validate` rendering, and the TUI method cycler. `apic convert` maps
+  them natively; a method apic still does not model (`TRACE`, `CONNECT`, custom
+  verbs) is imported as `GET` with a warning so nothing is downgraded silently.
+
+### Changed
+- The long flag `--filename` is renamed to `--find` on `read`, `open`,
+  `remove`, and `validate` (the short `-f` is unchanged; `create` keeps
+  `--filename` since it names a new file).
+- `validate` prints contract paths with forward slashes on every OS.
+
+## [0.2.1] - 2026-06-13
+
+### Fixed
+- `apic open --template` no longer fails to launch the TUI. The partial
+  `.apic/template.json` is now merged onto the built-in default before it is
+  parsed, so a template missing required fields (e.g. `name`) opens correctly
+  (#15).
+
+## [0.2.0] - 2026-06-13
+
+### Added
+- Interactive authoring TUI — the default surface for `apic create` and
+  `apic open`. Edit contracts in place: inline text cells, enum cycling, and
+  boolean toggles; an inline JSON example editor (generate one from the schema
+  with `g`); nested schema editing; response editing; selectable section titles;
+  `Tab`/`Shift-Tab` cell navigation; and accurate unsaved-changes detection. The
+  external editor remains available behind `--editor`.
+
+### Changed
+- `apic create` seeds builtin scalar defaults and empty arrays, so a fresh
+  contract is valid and ready to edit.
+- Upgraded to ratatui 0.30 (via ratatui-textarea), consolidating on
+  crossterm 0.29.
+
+## [0.1.1] - 2026-06-09
+
+### Added
+- `apic validate --template` — validates the project's `.apic/template.json`
+  (as merged onto the built-in default), printing `ok`/`FAIL` and exiting
+  non-zero on failure. Mutually exclusive with `--filename`.
+
+### Changed
+- `apic create` now aborts with an error (writing nothing) when
+  `.apic/template.json` exists but is invalid, instead of silently falling back
+  to the built-in template. The zero-config path (no project, a missing template
+  file, or a freshly seeded template) is unchanged.
+
 ## [0.1.0] - 2026-06-09
 
 First crates.io release. Adds interactive resolution, tree output, project
@@ -53,7 +111,11 @@ Initial beta release.
 - CI (fmt, clippy, build, test) and unit + end-to-end test suites.
 - MIT license.
 
-[Unreleased]: https://github.com/rizukirr/apic/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/rizukirr/apic/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/rizukirr/apic/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/rizukirr/apic/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/rizukirr/apic/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/rizukirr/apic/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/rizukirr/apic/compare/v0.1.0-beta.2...v0.1.0
 [0.1.0-beta.2]: https://github.com/rizukirr/apic/compare/v0.1.0-beta.1...v0.1.0-beta.2
 [0.1.0-beta.1]: https://github.com/rizukirr/apic/releases/tag/v0.1.0-beta.1
