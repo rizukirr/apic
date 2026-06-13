@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Postman Collection parsing.
 //!
 //! Reads a Postman Collection export (v1.0.0, v2.0.0, or v2.1.0) from JSON and
@@ -8,7 +6,7 @@
 
 use std::{fs::File, io::Read, path::Path};
 
-use serde::{Deserialize, Deserializer, Serialize, de};
+use serde::{Deserialize, Deserializer, de};
 use serde_json::{Map, Value};
 
 pub mod v1_0_0;
@@ -34,9 +32,7 @@ pub enum PostmanCollectionVersion {
 }
 
 /// A parsed Postman Collection, tagged by the version it was detected as.
-#[derive(Clone, Debug, Serialize, PartialEq)]
-#[serde(untagged)]
-#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
 pub enum PostmanCollection {
     #[allow(non_camel_case_types)]
     V1_0_0(v1_0_0::Spec),
@@ -68,14 +64,6 @@ impl PostmanCollection {
             PostmanCollectionVersion::V2_1_0 => serde_json::from_value::<v2_1_0::Spec>(value)
                 .map(Self::V2_1_0)
                 .map_err(|err| format!("invalid v2.1.0 collection: {err}")),
-        }
-    }
-
-    pub fn version(&self) -> PostmanCollectionVersion {
-        match self {
-            Self::V1_0_0(_) => PostmanCollectionVersion::V1_0_0,
-            Self::V2_0_0(_) => PostmanCollectionVersion::V2_0_0,
-            Self::V2_1_0(_) => PostmanCollectionVersion::V2_1_0,
         }
     }
 }

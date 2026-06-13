@@ -231,40 +231,33 @@ fn walk_v2_1(items: &[v2_1_0::Items], dir: &Path, out: &mut Vec<MappedContract>)
                 walk_v2_1(&group.item, &child_dir, out);
             }
             v2_1_0::Items::Item(it) => {
-                if let Some(raw) = raw_request_v2_1(it) {
-                    let slug = unique_slug(&mut taken, &slugify(&raw.name));
-                    out.push(MappedContract {
-                        rel_path: dir.join(format!("{slug}.json")),
-                        contract: build_contract(raw),
-                    });
-                }
+                let raw = raw_request_v2_1(it);
+                let slug = unique_slug(&mut taken, &slugify(&raw.name));
+                out.push(MappedContract {
+                    rel_path: dir.join(format!("{slug}.json")),
+                    contract: build_contract(raw),
+                });
             }
         }
     }
 }
 
-fn raw_request_v2_1(item: &v2_1_0::Item) -> Option<RawRequest> {
-    let req = match &item.request {
-        v2_1_0::RequestUnion::RequestClass(req) => req,
-        v2_1_0::RequestUnion::String(_) => return None, // bare-URL string form: skip
-    };
+fn raw_request_v2_1(item: &v2_1_0::Item) -> RawRequest {
+    let req = &item.request;
 
     let name = item.name.clone().unwrap_or_else(|| "request".to_string());
     let description = item.description.as_ref().and_then(description_text_v2_1);
     let method = req.method.clone().unwrap_or_else(|| "GET".to_string());
     let raw_url = req.url.as_ref().map(url_raw_v2_1).unwrap_or_default();
 
-    let mut headers = match &req.header {
-        Some(v2_1_0::HeaderUnion::HeaderArray(list)) => list
+    let headers = match &req.header {
+        Some(list) => list
             .iter()
             .filter(|h| !h.disabled.unwrap_or(false))
             .map(|h| (h.key.clone(), h.value.clone()))
             .collect::<Vec<_>>(),
-        _ => Vec::new(),
+        None => Vec::new(),
     };
-    if let Some(auth_header) = req.auth.as_ref().and_then(auth_header_v2_1) {
-        headers.push(auth_header);
-    }
 
     let body = req.body.as_ref().and_then(|b| b.raw.clone());
 
@@ -282,7 +275,7 @@ fn raw_request_v2_1(item: &v2_1_0::Item) -> Option<RawRequest> {
         })
         .unwrap_or_default();
 
-    Some(RawRequest {
+    RawRequest {
         name,
         description,
         method,
@@ -290,7 +283,7 @@ fn raw_request_v2_1(item: &v2_1_0::Item) -> Option<RawRequest> {
         headers,
         body,
         responses,
-    })
+    }
 }
 
 fn description_text_v2_1(d: &v2_1_0::DescriptionUnion) -> Option<String> {
@@ -307,36 +300,7 @@ fn url_raw_v2_1(url: &v2_1_0::Url) -> String {
     }
 }
 
-/// Synthesize a single `Authorization`/api-key header from v2.1 auth.
-fn auth_header_v2_1(auth: &v2_1_0::Auth) -> Option<(String, String)> {
-    let attr = |attrs: &Option<Vec<v2_1_0::AuthAttribute>>, key: &str| -> Option<String> {
-        attrs.as_ref()?.iter().find(|a| a.key == key).and_then(|a| {
-            a.value.as_ref().map(|v| match v {
-                serde_json::Value::String(s) => s.clone(),
-                other => other.to_string(),
-            })
-        })
-    };
-    match auth.auth_type {
-        v2_1_0::AuthType::Bearer => {
-            let token = attr(&auth.bearer, "token").unwrap_or_else(|| "{{token}}".to_string());
-            Some(("Authorization".to_string(), format!("Bearer {token}")))
-        }
-        v2_1_0::AuthType::Basic => {
-            let user = attr(&auth.basic, "username").unwrap_or_default();
-            let pass = attr(&auth.basic, "password").unwrap_or_default();
-            Some(("Authorization".to_string(), format!("Basic {user}:{pass}")))
-        }
-        v2_1_0::AuthType::Apikey => {
-            let key = attr(&auth.api_key, "key").unwrap_or_else(|| "X-API-Key".to_string());
-            let value = attr(&auth.api_key, "value").unwrap_or_else(|| "{{apiKey}}".to_string());
-            Some((key, value))
-        }
-        _ => None,
-    }
-}
-
-// ---- v2.0 (same shape, no auth mapping) ----
+// ---- v2.0 (same shape) ----
 
 fn map_v2_0(spec: &v2_0_0::Spec) -> Vec<MappedContract> {
     let mut out = Vec::new();
@@ -355,23 +319,19 @@ fn walk_v2_0(items: &[v2_0_0::Items], dir: &Path, out: &mut Vec<MappedContract>)
                 walk_v2_0(&group.item, &child_dir, out);
             }
             v2_0_0::Items::Item(it) => {
-                if let Some(raw) = raw_request_v2_0(it) {
-                    let slug = unique_slug(&mut taken, &slugify(&raw.name));
-                    out.push(MappedContract {
-                        rel_path: dir.join(format!("{slug}.json")),
-                        contract: build_contract(raw),
-                    });
-                }
+                let raw = raw_request_v2_0(it);
+                let slug = unique_slug(&mut taken, &slugify(&raw.name));
+                out.push(MappedContract {
+                    rel_path: dir.join(format!("{slug}.json")),
+                    contract: build_contract(raw),
+                });
             }
         }
     }
 }
 
-fn raw_request_v2_0(item: &v2_0_0::Item) -> Option<RawRequest> {
-    let req = match &item.request {
-        v2_0_0::RequestUnion::RequestClass(req) => req,
-        v2_0_0::RequestUnion::String(_) => return None,
-    };
+fn raw_request_v2_0(item: &v2_0_0::Item) -> RawRequest {
+    let req = &item.request;
 
     let name = item.name.clone().unwrap_or_else(|| "request".to_string());
     let description = item.description.as_ref().and_then(description_text_v2_0);
@@ -379,12 +339,12 @@ fn raw_request_v2_0(item: &v2_0_0::Item) -> Option<RawRequest> {
     let raw_url = req.url.as_ref().map(url_raw_v2_0).unwrap_or_default();
 
     let headers = match &req.header {
-        Some(v2_0_0::HeaderUnion::HeaderArray(list)) => list
+        Some(list) => list
             .iter()
             .filter(|h| !h.disabled.unwrap_or(false))
             .map(|h| (h.key.clone(), h.value.clone()))
             .collect::<Vec<_>>(),
-        _ => Vec::new(),
+        None => Vec::new(),
     };
 
     let body = req.body.as_ref().and_then(|b| b.raw.clone());
@@ -403,7 +363,7 @@ fn raw_request_v2_0(item: &v2_0_0::Item) -> Option<RawRequest> {
         })
         .unwrap_or_default();
 
-    Some(RawRequest {
+    RawRequest {
         name,
         description,
         method,
@@ -411,7 +371,7 @@ fn raw_request_v2_0(item: &v2_0_0::Item) -> Option<RawRequest> {
         headers,
         body,
         responses,
-    })
+    }
 }
 
 fn description_text_v2_0(d: &v2_0_0::DescriptionUnion) -> Option<String> {
@@ -482,11 +442,12 @@ fn push_v1_request(
 fn raw_request_v1(req: &v1_0_0::Request) -> RawRequest {
     // v1 stores the complete URL as a plain string.
     let raw_url = req.url.clone();
-    // v1 raw body is `Option<RawModeData>`; take the string variant.
-    let body = match &req.raw_mode_data {
-        Some(v1_0_0::RawModeData::String(s)) => Some(s.clone()),
-        _ => None,
-    };
+    // v1 raw body may be any JSON shape; only a string carries a payload apic maps.
+    let body = req
+        .raw_mode_data
+        .as_ref()
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     RawRequest {
         name: req.name.clone(),
         description: req.description.clone(),
@@ -652,7 +613,7 @@ mod tests {
     fn v2_1_collection(json: &str) -> v2_1_0::Spec {
         match crate::converter::from_slice(json.as_bytes()).unwrap() {
             PostmanCollection::V2_1_0(s) => s,
-            other => panic!("expected v2.1, got {:?}", other.version()),
+            _ => panic!("expected a v2.1 collection"),
         }
     }
 
@@ -682,11 +643,18 @@ mod tests {
     }
 
     #[test]
-    fn v2_1_bearer_auth_becomes_header() {
+    fn v2_1_auth_block_is_ignored() {
+        // apic has no auth concept; Postman `auth` blocks (any shape, including
+        // the empty `"auth": {}` "inherit from parent") are ignored, never
+        // mapped to a header, and never cause a parse failure.
         let json = r#"{
           "info": { "name": "X", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
           "item": [
-            { "name": "Me",
+            { "name": "Empty",
+              "request": { "method": "POST", "auth": {},
+                "url": { "raw": "https://api.example.com/login" } },
+              "response": [] },
+            { "name": "Bearer",
               "request": { "method": "GET",
                 "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "abc123" } ] },
                 "url": { "raw": "https://api.example.com/me" } },
@@ -694,38 +662,11 @@ mod tests {
           ]
         }"#;
         let mapped = map_v2_1(&v2_1_collection(json));
-        let auth = mapped[0]
-            .contract
-            .headers
-            .iter()
-            .find(|h| h.name == "Authorization")
-            .expect("authorization header");
-        assert_eq!(auth.value, "Bearer abc123");
-    }
-
-    #[test]
-    fn v2_1_empty_auth_object_is_accepted() {
-        // Real exports use `"auth": {}` to mean "inherit from parent"; the
-        // `type` field is absent and must default to noauth rather than fail.
-        let json = r#"{
-          "info": { "name": "X", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
-          "item": [
-            { "name": "Login",
-              "request": { "method": "POST", "auth": {},
-                "url": { "raw": "https://api.example.com/login" } },
-              "response": [] }
-          ]
-        }"#;
-        let mapped = map_v2_1(&v2_1_collection(json));
-        assert_eq!(mapped.len(), 1);
-        // Inherited/empty auth yields no synthesized Authorization header.
-        assert!(
-            mapped[0]
-                .contract
-                .headers
-                .iter()
-                .all(|h| h.name != "Authorization")
-        );
+        assert_eq!(mapped.len(), 2);
+        // Neither the empty nor the populated auth block produces a header.
+        for contract in mapped.iter().map(|m| &m.contract) {
+            assert!(contract.headers.iter().all(|h| h.name != "Authorization"));
+        }
     }
 
     #[test]
@@ -740,7 +681,7 @@ mod tests {
         }"#;
         let spec = match crate::converter::from_slice(json.as_bytes()).unwrap() {
             PostmanCollection::V1_0_0(s) => s,
-            other => panic!("expected v1, got {:?}", other.version()),
+            _ => panic!("expected a v1 collection"),
         };
         let mapped = map_v1(&spec);
         assert_eq!(mapped.len(), 1);
@@ -753,7 +694,7 @@ mod tests {
     fn v2_0_collection(json: &str) -> v2_0_0::Spec {
         match crate::converter::from_slice(json.as_bytes()).unwrap() {
             PostmanCollection::V2_0_0(s) => s,
-            other => panic!("expected v2.0, got {:?}", other.version()),
+            _ => panic!("expected a v2.0 collection"),
         }
     }
 
@@ -811,7 +752,7 @@ mod tests {
         }"#;
         let spec = match crate::converter::from_slice(json.as_bytes()).unwrap() {
             PostmanCollection::V1_0_0(s) => s,
-            other => panic!("expected v1, got {:?}", other.version()),
+            _ => panic!("expected a v1 collection"),
         };
         let mapped = map_v1(&spec);
         assert_eq!(mapped.len(), 1);
