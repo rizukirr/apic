@@ -70,8 +70,8 @@ enum Commands {
     /// fuzzy fragment (`user`, `logn`). Exact matches win over fuzzy ones.
     Read {
         /// Contract to read — path, extensionless path, or fuzzy fragment.
-        #[arg(long, short = 'f', value_name = "FILENAME")]
-        filename: String,
+        #[arg(long, short = 'f', value_name = "QUERY")]
+        find: String,
 
         /// Show only the response with this HTTP status code (e.g. `401`).
         #[arg(long, short = 's', value_name = "CODE")]
@@ -102,23 +102,22 @@ enum Commands {
     },
     /// Check that contracts parse and conform to the schema.
     ///
-    /// With no filename, every contract under the working directory is checked.
-    /// Prints `ok`/`FAIL` per file and exits non-zero if any contract is
-    /// invalid, so it can gate CI or a pre-commit hook.
+    /// With no query, every contract under the working directory is checked.
+    /// A query ending in `/` (e.g. `auth/`) validates every contract under that
+    /// folder, recursively; otherwise the query resolves to a single contract
+    /// like `read` (path, extensionless, or fuzzy). Prints `ok`/`FAIL` per file
+    /// and exits non-zero if any contract is invalid, so it can gate CI or a
+    /// pre-commit hook.
     Validate {
-        /// Validate only this contract (path, extensionless, or fuzzy). Omit to
-        /// check every contract.
-        #[arg(
-            long,
-            short = 'f',
-            value_name = "FILENAME",
-            conflicts_with = "template"
-        )]
-        filename: Option<String>,
+        /// Validate a single contract (path, extensionless, or fuzzy), or every
+        /// contract under a folder when the query ends in `/`. Omit to check
+        /// every contract.
+        #[arg(long, short = 'f', value_name = "QUERY", conflicts_with = "template")]
+        find: Option<String>,
 
         /// Validate the project template (`.apic/template.json`) instead of
         /// contracts. Reports `ok`/`FAIL` and exits non-zero on failure.
-        #[arg(long, conflicts_with = "filename")]
+        #[arg(long, conflicts_with = "find")]
         template: bool,
     },
     /// Edit an existing contract in the interactive TUI.
@@ -135,11 +134,11 @@ enum Commands {
         #[arg(
             long,
             short = 'f',
-            value_name = "FILENAME",
+            value_name = "QUERY",
             required_unless_present = "template",
             conflicts_with = "template"
         )]
-        filename: Option<String>,
+        find: Option<String>,
 
         /// Edit in this external editor (e.g. `nvim` or `"code --wait"`) instead
         /// of the built-in TUI, overriding `$VISUAL` and `$EDITOR`.
@@ -160,8 +159,8 @@ enum Commands {
     /// prompting.
     Remove {
         /// Contract to remove — path, extensionless path, or fuzzy fragment.
-        #[arg(long, short = 'f', value_name = "FILENAME")]
-        filename: String,
+        #[arg(long, short = 'f', value_name = "QUERY")]
+        find: String,
     },
     /// Import a Postman collection as apic contract files.
     ///
@@ -416,12 +415,13 @@ fn read(content: &str, status: Option<u16>, example: bool) -> Result<(), String>
 
 /// Validates contracts under the working directory, printing one line per file.
 ///
-/// With `filename`, the reference is resolved like `read` — exact path,
-/// basename, then fuzzy, prompting when ambiguous; otherwise every contract
+/// A `find` query ending in `/` validates every contract under that folder,
+/// recursively. Otherwise the reference is resolved like `read` — exact path,
+/// basename, then fuzzy, prompting when ambiguous; with no query every contract
 /// is checked. Each file is read (subject to the size cap) and parsed against
 /// the contract schema. Prints `ok`/`FAIL` per file and a summary, and exits
 /// the process non-zero if any contract is invalid so it can gate CI.
-fn validate_cmd(template: bool, filename: Option<&str>) -> Result<(), String> {
+fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
     if template {
         return validate_template_cmd();
     }
@@ -436,8 +436,30 @@ fn validate_cmd(template: bool, filename: Option<&str>) -> Result<(), String> {
 
     let root = read_config_file().and_then(|c| c.get_root_dir()).ok();
 
-    // Narrow to a single contract when a filename is given.
-    let targets: Vec<PathBuf> = match filename {
+    let targets: Vec<PathBuf> = match find {
+        // Folder mode: a query ending in `/` validates every contract beneath
+        // that directory, at any depth.
+        Some(name) if name.ends_with('/') => {
+            let base = root
+                .clone()
+                .ok_or("Not in an apic project (run `apic init`)")?;
+            let dir = confine_to_dir(&base, Path::new(name))?;
+            if !dir.is_dir() {
+                eprintln!("No such folder: {}", sanitize(name));
+                std::process::exit(1);
+            }
+            let in_dir: Vec<PathBuf> = files
+                .iter()
+                .filter(|f| f.starts_with(&dir))
+                .cloned()
+                .collect();
+            if in_dir.is_empty() {
+                println!("No contracts found under {}", sanitize(name));
+                return Ok(());
+            }
+            in_dir
+        }
+        // Single contract resolved like `read`.
         Some(name) => match resolve_one(name)? {
             Resolved::Path(path) => vec![path],
             Resolved::Cancelled => return cancelled(),
@@ -455,7 +477,9 @@ fn validate_cmd(template: bool, filename: Option<&str>) -> Result<(), String> {
             .as_ref()
             .and_then(|r| path.strip_prefix(r).ok())
             .unwrap_or(path);
-        let shown = sanitize(&shown.to_string_lossy());
+        // Normalize to forward slashes so output matches the rest of apic and is
+        // stable across platforms (Windows would otherwise show backslashes).
+        let shown = sanitize(&to_slash(shown));
 
         let result = read_file(path)
             .map_err(|err| err.to_string())
@@ -575,7 +599,7 @@ fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Res
     }
 
     // The parser requires `-f` unless `--template` is given, so this is safe.
-    let filename = filename.expect("filename is required without --template");
+    let filename = filename.expect("a find query is required without --template");
     match resolve_one(filename)? {
         Resolved::Path(path) => {
             if editor.is_some() {
@@ -775,17 +799,17 @@ pub fn run() {
         Commands::Init { set_dir } => init_cmd(set_dir.as_deref()),
         Commands::List { filter, absolute } => list_cmd(filter.as_deref(), absolute),
         Commands::Read {
-            filename,
+            find,
             status,
             example,
-        } => read_cmd(&filename, status, example),
-        Commands::Validate { filename, template } => validate_cmd(template, filename.as_deref()),
+        } => read_cmd(&find, status, example),
+        Commands::Validate { find, template } => validate_cmd(template, find.as_deref()),
         Commands::Open {
-            filename,
+            find,
             editor,
             template,
-        } => open_cmd(template, filename.as_deref(), editor.as_deref()),
-        Commands::Remove { filename } => remove_cmd(&filename),
+        } => open_cmd(template, find.as_deref(), editor.as_deref()),
+        Commands::Remove { find } => remove_cmd(&find),
         Commands::Convert {
             postman,
             destination,

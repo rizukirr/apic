@@ -239,12 +239,46 @@ fn validate_template_reports_ok_fail_and_rejects_filename() {
         .failure()
         .stdout(predicate::str::contains("FAIL"));
 
-    // `--template` and `--filename` are mutually exclusive.
+    // `--template` and `--find` are mutually exclusive.
     apic(&dir)
-        .args(["validate", "--template", "--filename", "foo"])
+        .args(["validate", "--template", "--find", "foo"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn validate_folder_query_checks_every_contract_recursively() {
+    let dir = init_project("validate_folder");
+    // Two contracts under auth/ (one nested deeper) and one outside it.
+    apic(&dir)
+        .args(["create", "--editor", "true", "-f", "auth/login.json"])
+        .assert()
+        .success();
+    apic(&dir)
+        .args(["create", "--editor", "true", "-f", "auth/sub/refresh.json"])
+        .assert()
+        .success();
+    apic(&dir)
+        .args(["create", "--editor", "true", "-f", "user/user.json"])
+        .assert()
+        .success();
+
+    // A trailing-slash query validates only the contracts under that folder,
+    // at any depth — the user/ contract is not counted.
+    apic(&dir)
+        .args(["validate", "-f", "auth/"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("auth/sub/refresh.json"))
+        .stdout(predicate::str::contains("2 passed, 0 failed"));
+
+    // A non-existent folder query fails clearly.
+    apic(&dir)
+        .args(["validate", "-f", "nope/"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No such folder"));
 }
 
 #[test]
