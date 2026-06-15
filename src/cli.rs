@@ -575,7 +575,9 @@ fn read_project_template() -> Option<String> {
 /// Without `--editor` the interactive TUI is opened on the parsed contract;
 /// with `--editor` the file is opened in the external editor (legacy behavior).
 /// With `--template` the project's `.apic/template.json` is targeted, seeded
-/// from the default first if it does not exist.
+/// from the default first if it does not exist. The TUI is seeded like `create`
+/// (template values over blanked builtin structure), so it shows the template's
+/// own schema without the builtin's placeholder headers, fields, or examples.
 fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Result<(), String> {
     if template {
         let apic_dir =
@@ -586,15 +588,15 @@ fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Res
             return open_in_editor(&path, editor)
                 .map_err(|err| format!("Failed to open editor: {err}"));
         }
-        // The template is a partial overlay; merge it onto the builtin so every
-        // required field (name, …) is present before parsing it as a contract.
+        // Seed the model from the template exactly like `create`: the project
+        // template's own values plus the builtin's scalar defaults for
+        // name/description/url, with the builtin's arrays and examples blanked.
+        // This keeps the template's schema while dropping the builtin's
+        // placeholder headers, schema fields, and examples.
         let overlay =
             read_file(&path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
-        let contract = crate::template::merge_onto_default(&overlay)
-            .map_err(|reason| format!("{} {reason}", path.display()))?;
-        let parsed = json_get(&contract, None)
-            .map_err(|err| format!("{} is not a valid contract: {err}", path.display()))?;
-        let model = crate::tui::EditModel::from_contract(parsed);
+        let model = crate::tui::seed_model(Some(&overlay))
+            .map_err(|reason| format!("{}: {reason}", path.display()))?;
         return crate::tui::run(model, &path);
     }
 

@@ -437,7 +437,7 @@ fn read_example_shows_raw_json_payloads() {
 }
 
 #[test]
-fn read_example_only_contract_renders_example_by_default() {
+fn read_example_only_contract_shows_none_by_default() {
     let dir = init_project("example_only");
     let contract = r#"{
         "name": "ping",
@@ -451,9 +451,19 @@ fn read_example_only_contract_renders_example_by_default() {
     }"#;
     fs::write(dir.join("contracts/ping.json"), contract).unwrap();
 
-    // With no schema at all, the default view falls back to the examples.
+    // With no schema, the default view shows `(none)` and does not fall back to
+    // the examples — those are reachable via --example.
     apic(&dir)
         .args(["read", "-f", "ping"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(none)"))
+        .stdout(predicate::str::contains("\"probe\": true").not())
+        .stdout(predicate::str::contains("\"pong\": true").not());
+
+    // --example still renders the raw payloads.
+    apic(&dir)
+        .args(["read", "-f", "ping", "--example"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"probe\": true"))
