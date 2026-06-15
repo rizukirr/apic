@@ -358,9 +358,9 @@ fn push_section(
         Vec::new()
     };
 
-    // BODY sections (REQUEST/RESPONSE) match `apic read`: show `(none)` when
-    // there are no schema fields and no example; show only the example when it
-    // is example-only; otherwise show the schema table plus its example.
+    // BODY sections (REQUEST/RESPONSE) match `apic read`: show the schema table
+    // plus its example when schema fields exist; otherwise show `(none)`
+    // regardless of any example (examples are reachable via `apic read -e`).
     if section.kind == SectionKind::Body {
         // The real schema fields are the `Field` rows whose cell count equals
         // the column count (NAME/TYPE/REQ/DESCRIPTION); the 2-cell `label value`
@@ -368,10 +368,6 @@ fn push_section(
         let schema_rows_exist = field_rows
             .iter()
             .any(|r| ncols > 0 && r.cells.len() == ncols);
-        let example_nonempty = section
-            .rows
-            .iter()
-            .any(|r| r.kind == RowKind::Example && !r.raw.trim().is_empty());
 
         // Always render the lead kv rows (expanded type/code/description).
         for (ri, row) in section.rows.iter().enumerate() {
@@ -417,17 +413,9 @@ fn push_section(
                     _ => {}
                 }
             }
-        } else if example_nonempty {
-            // Example-only body, like `apic read`.
-            for (ri, row) in section.rows.iter().enumerate() {
-                if row.kind == RowKind::Example {
-                    let selected = si == state.sec && ri == state.row;
-                    push_example_block(state, row, selected, lines, sel);
-                }
-            }
         } else {
-            // No schema fields and an empty example: render `(none)` and nothing
-            // else (no header line, no example row).
+            // No schema fields: render `(none)` and nothing else (no header
+            // line, no example row), even when an example is present.
             lines.push(Line::from(Span::styled(" (none)", dim())));
         }
         return;
@@ -903,7 +891,8 @@ mod tests {
             r#"{{ "name":"t","method":"GET",
                  "url":{{"protocol":"https","host":"h","path":["x"]}},
                  "headers":[{headers}],
-                 "responses":[{{"code":200,"description":"ok","schema":[],
+                 "responses":[{{"code":200,"description":"ok",
+                    "schema":[{{"name":"f","type":"int","default":null,"description":"d","required":false}}],
                     "example":{{"unique_marker_xyz":1}} }}] }}"#
         );
         let c = json_get(&json, None).unwrap();

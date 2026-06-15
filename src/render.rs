@@ -101,12 +101,9 @@ impl Printer {
                         self.example_block(example);
                     }
                 }
-                // No schema — fall back to the example, or `(none)` when the
-                // request carries neither schema nor example.
-                _ => match &request.example {
-                    Some(example) => self.example(Some(example)),
-                    None => self.none(),
-                },
+                // No schema — show `(none)` in the default view regardless of
+                // whether an example exists (examples are shown via --example).
+                _ => self.none(),
             },
             None => self.none(),
         }
@@ -126,7 +123,9 @@ impl Printer {
                         self.example_block(example);
                     }
                 } else {
-                    self.example(response.example.as_ref());
+                    // No schema — show `(none)` in the default view regardless
+                    // of whether an example exists (shown via --example).
+                    self.none();
                 }
             }
         }
