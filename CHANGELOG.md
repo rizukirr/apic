@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-06-15
+
+### Changed
+- The default schema view now renders `(none)` whenever a request or response
+  has no schema, in both `apic read` and the TUI viewer. Previously it fell back
+  to printing the example payload; example payloads remain available via
+  `apic read -e` (#20).
+- `apic open --template` now seeds the editor the same way `apic create` does —
+  the project template's own values layered over a blanked built-in structure —
+  instead of merging `.apic/template.json` onto the full built-in default. The
+  template's schema is preserved while the built-in's placeholder headers,
+  schema fields, and examples are no longer pulled in; only the built-in's
+  scalar `name`/`description`/`url` defaults fill in when the template omits
+  them (#20).
+
 ## [0.2.2] - 2026-06-13
 
 ### Added
@@ -111,7 +126,8 @@ Initial beta release.
 - CI (fmt, clippy, build, test) and unit + end-to-end test suites.
 - MIT license.
 
-[Unreleased]: https://github.com/rizukirr/apic/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/rizukirr/apic/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/rizukirr/apic/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/rizukirr/apic/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/rizukirr/apic/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/rizukirr/apic/compare/v0.1.1...v0.2.0
