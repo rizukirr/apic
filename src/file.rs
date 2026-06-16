@@ -168,6 +168,15 @@ fn normalize_lexical(path: &Path) -> PathBuf {
 /// `target` is taken as-is. The result is lexically normalized and rejected if
 /// it escapes `base` via `..` or an absolute path elsewhere.
 ///
+/// The check is also symlink-aware: lexical normalization works purely on the
+/// path string and cannot see that a component is a symlink pointing outside
+/// `base`, so `fs::write` would still escape (issue #22). Every component of the
+/// path below `base` that exists on disk is therefore checked, and the path is
+/// rejected if any of them is a symlink. Components that do not exist yet (the
+/// usual `apic create` case, where the final filename is new) are not symlinks
+/// and pass. Pure-lexical callers and tests, whose `base` does not exist on
+/// disk, see no symlinks and keep the lexical result.
+///
 /// # Errors
 ///
 /// Returns `Err` with a human-readable message if `target` resolves outside
@@ -180,14 +189,33 @@ pub fn confine_to_dir(base: &Path, target: &Path) -> Result<PathBuf, String> {
     };
     let normalized = normalize_lexical(&joined);
     let base_norm = normalize_lexical(base);
-    if normalized.starts_with(&base_norm) {
-        Ok(normalized)
-    } else {
-        Err(format!(
-            "refusing to use a path outside the working directory: {}",
-            target.display()
-        ))
+    if !normalized.starts_with(&base_norm) {
+        return Err(escape_error(target));
     }
+
+    // Reject a symlink anywhere below `base`: such a component could redirect the
+    // operation outside the working directory even though the path is lexically
+    // contained. Only the components under `base` are user-influenced, so the
+    // trusted `base` itself is not probed.
+    if let Ok(relative) = normalized.strip_prefix(&base_norm) {
+        let mut probe = base_norm.clone();
+        for component in relative.components() {
+            probe.push(component);
+            if probe.is_symlink() {
+                return Err(escape_error(target));
+            }
+        }
+    }
+
+    Ok(normalized)
+}
+
+/// The "outside the working directory" rejection message for `target`.
+fn escape_error(target: &Path) -> String {
+    format!(
+        "refusing to use a path outside the working directory: {}",
+        target.display()
+    )
 }
 
 #[cfg(test)]
@@ -277,6 +305,54 @@ mod tests {
             confine_to_dir(base, Path::new("auth/../user/x.json")).unwrap(),
             PathBuf::from("/home/u/project/user/x.json")
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn confine_rejects_symlinked_dir_component_escaping_base() {
+        // A path that is lexically inside base but whose intermediate component
+        // is a symlink to an outside directory must be rejected (issue #22).
+        let base = temp_dir("confine_symlink_dir").canonicalize().unwrap();
+        let outside = temp_dir("confine_symlink_dir_out");
+        std::os::unix::fs::symlink(&outside, base.join("link")).unwrap();
+
+        // The target file does not exist yet, but its parent `link` is a symlink.
+        assert!(confine_to_dir(&base, Path::new("link/escaped.json")).is_err());
+
+        fs::remove_dir_all(&base).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn confine_rejects_symlinked_final_component() {
+        // A symlinked file as the final component is also rejected, not followed.
+        let base = temp_dir("confine_symlink_file").canonicalize().unwrap();
+        let outside = temp_dir("confine_symlink_file_out");
+        let target_outside = outside.join("real.json");
+        fs::write(&target_outside, "{}").unwrap();
+        std::os::unix::fs::symlink(&target_outside, base.join("alias.json")).unwrap();
+
+        assert!(confine_to_dir(&base, Path::new("alias.json")).is_err());
+
+        fs::remove_dir_all(&base).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn confine_allows_real_nonexistent_target_inside_base() {
+        // The normal `apic create` case: a genuinely-inside path whose final
+        // components do not exist yet is accepted.
+        let base = temp_dir("confine_real_inside").canonicalize().unwrap();
+        fs::create_dir_all(base.join("auth")).unwrap();
+
+        assert_eq!(
+            confine_to_dir(&base, Path::new("auth/new.json")).unwrap(),
+            base.join("auth/new.json")
+        );
+
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
