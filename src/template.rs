@@ -7,6 +7,7 @@
 //! init` seeds that file from the default, and it is never overwritten once it
 //! exists.
 
+use crate::config::find_apic_dir;
 use serde::Serialize;
 use serde_json::Value;
 use std::fs;
@@ -83,6 +84,204 @@ fn resolve_at(apic_dir: &Path) -> Result<String, String> {
     match merge_onto_default(&overlay) {
         Ok(contract) => Ok(contract),
         Err(reason) => Err(format!("{} {reason}", path.display())),
+    }
+}
+
+/// Template-conformance rules for `apic validate`, loaded once from
+/// `.apic/template.json` and reused for every contract.
+///
+/// The template is treated as a *partial*: only the sections it actually
+/// declares are enforced, so an empty template (or none at all) enforces
+/// nothing. The checks compare structure — header/field/segment **names** — and,
+/// for `url.protocol`/`url.host`, exact **values**; placeholder values elsewhere
+/// (descriptions, examples, types) are ignored.
+pub struct TemplateRules {
+    /// The parsed template, or `None` when there is nothing to enforce
+    /// (outside a project, or no template file present).
+    template: Option<Value>,
+}
+
+/// Loads the project's template-conformance rules. A missing project or missing
+/// template file yields rules that enforce nothing; malformed template JSON is an
+/// `Err` so `validate` can report it.
+pub fn load_rules() -> Result<TemplateRules, String> {
+    let apic_dir = match find_apic_dir() {
+        Some(dir) => dir,
+        None => return Ok(TemplateRules { template: None }),
+    };
+    let template_path = path(&apic_dir);
+    let template_src = match fs::read_to_string(&template_path) {
+        Ok(src) => src,
+        Err(_) => return Ok(TemplateRules { template: None }),
+    };
+    let template: Value = serde_json::from_str(&template_src)
+        .map_err(|err| format!("{}: is not valid JSON: {err}", template_path.display()))?;
+    Ok(TemplateRules {
+        template: Some(template),
+    })
+}
+
+impl TemplateRules {
+    /// Returns the conformance issues for the contract `content_json`, one short
+    /// message per violation. An empty list means the contract conforms (or the
+    /// template enforces nothing). Malformed contract JSON is an `Err`.
+    pub fn check(&self, content_json: &str) -> Result<Vec<String>, String> {
+        let template = match &self.template {
+            Some(template) => template,
+            None => return Ok(Vec::new()),
+        };
+        let contract: Value = serde_json::from_str(content_json)
+            .map_err(|err| format!("contract is not valid JSON: {err}"))?;
+
+        let mut issues = Vec::new();
+        check_headers(template, &contract, &mut issues);
+        check_url(template, &contract, &mut issues);
+        check_schema(
+            template.pointer("/request/schema"),
+            contract.pointer("/request/schema"),
+            "request",
+            &mut issues,
+        );
+        check_responses(template, &contract, &mut issues);
+        Ok(issues)
+    }
+}
+
+/// Every header name the template declares must appear in the contract.
+/// Header names are compared case-insensitively, matching HTTP semantics.
+fn check_headers(template: &Value, contract: &Value, issues: &mut Vec<String>) {
+    let required = object_names(template.get("headers"));
+    let present = object_names(contract.get("headers"));
+    for name in required {
+        if !present.iter().any(|have| have.eq_ignore_ascii_case(&name)) {
+            issues.push(format!("missing header `{name}`"));
+        }
+    }
+}
+
+/// `url.protocol`/`url.host` must match the template's values exactly; each
+/// `path` segment and each `query`/`variable` name the template declares must be
+/// present in the contract (extras are allowed).
+fn check_url(template: &Value, contract: &Value, issues: &mut Vec<String>) {
+    let (Some(t_url), c_url) = (template.get("url"), contract.get("url")) else {
+        return;
+    };
+    let c_url = c_url.unwrap_or(&Value::Null);
+
+    for field in ["protocol", "host"] {
+        if let Some(want) = t_url.get(field).and_then(Value::as_str) {
+            let got = c_url.get(field).and_then(Value::as_str).unwrap_or("");
+            if got != want {
+                issues.push(format!("url.{field} must be `{want}` (found `{got}`)"));
+            }
+        }
+    }
+
+    // Path segments are plain strings, not named objects.
+    if let Some(Value::Array(segments)) = t_url.get("path") {
+        let present: Vec<&str> = match c_url.get("path") {
+            Some(Value::Array(items)) => items.iter().filter_map(Value::as_str).collect(),
+            _ => Vec::new(),
+        };
+        for seg in segments.iter().filter_map(Value::as_str) {
+            if !present.contains(&seg) {
+                issues.push(format!("url.path missing segment `{seg}`"));
+            }
+        }
+    }
+
+    for section in ["query", "variable"] {
+        let required = object_names(t_url.get(section));
+        let present = object_names(c_url.get(section));
+        for name in required {
+            if !present.contains(&name) {
+                issues.push(format!("url.{section} missing `{name}`"));
+            }
+        }
+    }
+}
+
+/// For each response code the template declares, the contract must carry that
+/// code and contain every schema field name the template's response declares.
+fn check_responses(template: &Value, contract: &Value, issues: &mut Vec<String>) {
+    let Some(Value::Array(t_responses)) = template.get("responses") else {
+        return;
+    };
+    let empty = Vec::new();
+    let c_responses = match contract.get("responses") {
+        Some(Value::Array(items)) => items,
+        _ => &empty,
+    };
+    for t_resp in t_responses {
+        let Some(code) = t_resp.get("code").and_then(Value::as_u64) else {
+            continue;
+        };
+        let matched = c_responses
+            .iter()
+            .find(|c| c.get("code").and_then(Value::as_u64) == Some(code));
+        match matched {
+            None => issues.push(format!("missing response `{code}`")),
+            Some(c_resp) => check_schema(
+                t_resp.get("schema"),
+                c_resp.get("schema"),
+                &format!("response {code}"),
+                issues,
+            ),
+        }
+    }
+}
+
+/// Every field name declared by the template `schema` (descending into nested
+/// `properties`, names joined with `.`) must be declared by the contract schema.
+/// `label` prefixes the issue message, e.g. `request` or `response 200`.
+fn check_schema(template: Option<&Value>, contract: Option<&Value>, label: &str, issues: &mut Vec<String>) {
+    let Some(t_schema) = template else { return };
+    let mut required = Vec::new();
+    schema_field_names(t_schema, "", &mut required);
+    if required.is_empty() {
+        return;
+    }
+    let mut present = Vec::new();
+    if let Some(c_schema) = contract {
+        schema_field_names(c_schema, "", &mut present);
+    }
+    for name in required {
+        if !present.contains(&name) {
+            issues.push(format!("{label} schema missing field `{name}`"));
+        }
+    }
+}
+
+/// Collects the `name` of each object in a JSON array (e.g. headers, query,
+/// variable). A non-array or absent value yields an empty list.
+fn object_names(array: Option<&Value>) -> Vec<String> {
+    match array {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.get("name").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Collects dotted field names from a `schema` array, descending into nested
+/// `properties`: `[{name:"data", properties:[{name:"x"}]}]` -> `["data", "data.x"]`.
+fn schema_field_names(schema: &Value, prefix: &str, out: &mut Vec<String>) {
+    let Value::Array(items) = schema else { return };
+    for item in items {
+        let Some(name) = item.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let full = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}.{name}")
+        };
+        if let Some(props) = item.get("properties") {
+            schema_field_names(props, &full, out);
+        }
+        out.push(full);
     }
 }
 
@@ -331,5 +530,129 @@ mod tests {
         let dir = temp_apic("check_absent");
         assert!(matches!(check_at(&dir), TemplateCheck::Absent));
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Builds rules from a template JSON literal (bypassing the filesystem).
+    fn rules(template: &str) -> TemplateRules {
+        TemplateRules {
+            template: Some(serde_json::from_str(template).unwrap()),
+        }
+    }
+
+    /// Conformance issues for `contract` against `template`.
+    fn issues(template: &str, contract: &str) -> Vec<String> {
+        rules(template).check(contract).unwrap()
+    }
+
+    #[test]
+    fn empty_template_enforces_nothing() {
+        assert!(issues("{}", r#"{ "name": "x" }"#).is_empty());
+    }
+
+    #[test]
+    fn no_template_enforces_nothing() {
+        let rules = TemplateRules { template: None };
+        assert!(rules.check("{ not even json").unwrap().is_empty());
+    }
+
+    #[test]
+    fn header_must_be_present_case_insensitive() {
+        let template = r#"{ "headers": [ { "name": "Authorization", "value": "" } ] }"#;
+        let ok = r#"{ "headers": [ { "name": "authorization", "value": "Bearer t" } ] }"#;
+        let bad = r#"{ "headers": [ { "name": "Content-Type", "value": "x" } ] }"#;
+        assert!(issues(template, ok).is_empty());
+        assert_eq!(issues(template, bad), vec!["missing header `Authorization`"]);
+    }
+
+    #[test]
+    fn url_protocol_and_host_must_match_exactly() {
+        let template = r#"{ "url": { "protocol": "https", "host": "api.example.com" } }"#;
+        let bad = r#"{ "url": { "protocol": "http", "host": "other.com" } }"#;
+        let found = issues(template, bad);
+        assert!(found.iter().any(|i| i == "url.protocol must be `https` (found `http`)"));
+        assert!(found.iter().any(|i| i == "url.host must be `api.example.com` (found `other.com`)"));
+    }
+
+    #[test]
+    fn url_path_query_variable_must_be_present() {
+        let template = r#"{ "url": {
+            "path": ["resource", "{id}"],
+            "query": [ { "name": "page" } ],
+            "variable": [ { "name": "id" } ]
+        } }"#;
+        let bad = r#"{ "url": { "path": ["resource"], "query": [], "variable": [] } }"#;
+        let found = issues(template, bad);
+        assert!(found.contains(&"url.path missing segment `{id}`".to_string()));
+        assert!(found.contains(&"url.query missing `page`".to_string()));
+        assert!(found.contains(&"url.variable missing `id`".to_string()));
+    }
+
+    #[test]
+    fn url_extras_in_contract_are_allowed() {
+        let template = r#"{ "url": { "query": [ { "name": "page" } ] } }"#;
+        let ok = r#"{ "url": { "query": [ { "name": "page" }, { "name": "limit" } ] } }"#;
+        assert!(issues(template, ok).is_empty());
+    }
+
+    #[test]
+    fn request_schema_field_names_match_recursively() {
+        let template = r#"{ "request": { "schema": [
+            { "name": "data", "properties": [ { "name": "id" } ] }
+        ] } }"#;
+        let ok = r#"{ "request": { "schema": [
+            { "name": "data", "properties": [ { "name": "id" }, { "name": "extra" } ] }
+        ] } }"#;
+        let bad = r#"{ "request": { "schema": [ { "name": "data", "properties": [] } ] } }"#;
+        assert!(issues(template, ok).is_empty());
+        assert_eq!(
+            issues(template, bad),
+            vec!["request schema missing field `data.id`"]
+        );
+    }
+
+    #[test]
+    fn response_must_have_matching_code_and_schema() {
+        let template = r#"{ "responses": [
+            { "code": 200, "schema": [ { "name": "status" }, { "name": "message" } ] }
+        ] }"#;
+        let missing_code = r#"{ "responses": [ { "code": 400, "schema": [] } ] }"#;
+        let missing_field = r#"{ "responses": [ { "code": 200, "schema": [ { "name": "status" } ] } ] }"#;
+        assert_eq!(issues(template, missing_code), vec!["missing response `200`"]);
+        assert_eq!(
+            issues(template, missing_field),
+            vec!["response 200 schema missing field `message`"]
+        );
+    }
+
+    #[test]
+    fn partial_template_ignores_undeclared_sections() {
+        // Only headers declared -> url/request/response are not enforced.
+        let template = r#"{ "headers": [ { "name": "Authorization", "value": "" } ] }"#;
+        let contract = r#"{ "headers": [ { "name": "Authorization", "value": "x" } ],
+            "url": { "protocol": "ftp", "host": "anything" } }"#;
+        assert!(issues(template, contract).is_empty());
+    }
+
+    #[test]
+    fn check_errors_on_malformed_contract() {
+        assert!(rules(r#"{ "headers": [] }"#).check("{ not json").is_err());
+    }
+
+    #[test]
+    fn object_names_collects_names_or_empty() {
+        let v: Value = serde_json::from_str(r#"{ "h": [ { "name": "A" }, { "name": "B" } ] }"#).unwrap();
+        assert_eq!(object_names(v.get("h")), vec!["A".to_string(), "B".to_string()]);
+        assert!(object_names(v.get("missing")).is_empty());
+    }
+
+    #[test]
+    fn schema_field_names_flattens_nested_properties() {
+        let v: Value = serde_json::from_str(
+            r#"[ { "name": "data", "properties": [ { "name": "x" } ] }, { "name": "top" } ]"#,
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        schema_field_names(&v, "", &mut out);
+        assert_eq!(out, vec!["data.x", "data", "top"]);
     }
 }

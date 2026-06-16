@@ -471,6 +471,21 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
         None => files,
     };
 
+    // Exclude anything inside `.apic/` (notably `template.json`) from the scan:
+    // the template may be a partial that is not a valid stand-alone contract, and
+    // it has its own check via `apic validate --template`.
+    let targets: Vec<PathBuf> = match crate::config::find_apic_dir() {
+        Some(apic_dir) => targets
+            .into_iter()
+            .filter(|p| !p.starts_with(&apic_dir))
+            .collect(),
+        None => targets,
+    };
+
+    // Template-conformance rules from `.apic/template.json`, loaded once and
+    // reused for all targets; they enforce nothing when the template is absent.
+    let rules = crate::template::load_rules()?;
+
     let mut failed = 0usize;
     for path in &targets {
         let shown = root
@@ -483,7 +498,15 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
 
         let result = read_file(path)
             .map_err(|err| err.to_string())
-            .and_then(|content| validate_contract(&content).map_err(|err| err.to_string()));
+            .and_then(|content| {
+                validate_contract(&content).map_err(|err| err.to_string())?;
+                let issues = rules.check(&content)?;
+                if issues.is_empty() {
+                    Ok(())
+                } else {
+                    Err(issues.join("; "))
+                }
+            });
 
         match result {
             Ok(()) => println!("ok   {shown}"),
