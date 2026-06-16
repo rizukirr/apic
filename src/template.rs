@@ -234,7 +234,12 @@ fn check_responses(template: &Value, contract: &Value, issues: &mut Vec<String>)
 /// Every field name declared by the template `schema` (descending into nested
 /// `properties`, names joined with `.`) must be declared by the contract schema.
 /// `label` prefixes the issue message, e.g. `request` or `response 200`.
-fn check_schema(template: Option<&Value>, contract: Option<&Value>, label: &str, issues: &mut Vec<String>) {
+fn check_schema(
+    template: Option<&Value>,
+    contract: Option<&Value>,
+    label: &str,
+    issues: &mut Vec<String>,
+) {
     let Some(t_schema) = template else { return };
     let mut required = Vec::new();
     schema_field_names(t_schema, "", &mut required);
@@ -561,7 +566,10 @@ mod tests {
         let ok = r#"{ "headers": [ { "name": "authorization", "value": "Bearer t" } ] }"#;
         let bad = r#"{ "headers": [ { "name": "Content-Type", "value": "x" } ] }"#;
         assert!(issues(template, ok).is_empty());
-        assert_eq!(issues(template, bad), vec!["missing header `Authorization`"]);
+        assert_eq!(
+            issues(template, bad),
+            vec!["missing header `Authorization`"]
+        );
     }
 
     #[test]
@@ -569,8 +577,16 @@ mod tests {
         let template = r#"{ "url": { "protocol": "https", "host": "api.example.com" } }"#;
         let bad = r#"{ "url": { "protocol": "http", "host": "other.com" } }"#;
         let found = issues(template, bad);
-        assert!(found.iter().any(|i| i == "url.protocol must be `https` (found `http`)"));
-        assert!(found.iter().any(|i| i == "url.host must be `api.example.com` (found `other.com`)"));
+        assert!(
+            found
+                .iter()
+                .any(|i| i == "url.protocol must be `https` (found `http`)")
+        );
+        assert!(
+            found
+                .iter()
+                .any(|i| i == "url.host must be `api.example.com` (found `other.com`)")
+        );
     }
 
     #[test]
@@ -616,8 +632,12 @@ mod tests {
             { "code": 200, "schema": [ { "name": "status" }, { "name": "message" } ] }
         ] }"#;
         let missing_code = r#"{ "responses": [ { "code": 400, "schema": [] } ] }"#;
-        let missing_field = r#"{ "responses": [ { "code": 200, "schema": [ { "name": "status" } ] } ] }"#;
-        assert_eq!(issues(template, missing_code), vec!["missing response `200`"]);
+        let missing_field =
+            r#"{ "responses": [ { "code": 200, "schema": [ { "name": "status" } ] } ] }"#;
+        assert_eq!(
+            issues(template, missing_code),
+            vec!["missing response `200`"]
+        );
         assert_eq!(
             issues(template, missing_field),
             vec!["response 200 schema missing field `message`"]
@@ -640,8 +660,12 @@ mod tests {
 
     #[test]
     fn object_names_collects_names_or_empty() {
-        let v: Value = serde_json::from_str(r#"{ "h": [ { "name": "A" }, { "name": "B" } ] }"#).unwrap();
-        assert_eq!(object_names(v.get("h")), vec!["A".to_string(), "B".to_string()]);
+        let v: Value =
+            serde_json::from_str(r#"{ "h": [ { "name": "A" }, { "name": "B" } ] }"#).unwrap();
+        assert_eq!(
+            object_names(v.get("h")),
+            vec!["A".to_string(), "B".to_string()]
+        );
         assert!(object_names(v.get("missing")).is_empty());
     }
 
