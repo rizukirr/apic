@@ -211,10 +211,6 @@ FAIL user/user.json: EOF while parsing an object at line 12 column 1
 2 passed, 1 failed
 ```
 
-> The long flag is `--find` on the commands that resolve an existing contract
-> (`read`, `open`, `remove`, `validate`); the short `-f` is unchanged. `create`
-> keeps `--filename` because it names a new file rather than finding one.
-
 ### `apic convert --postman <file> [--destination <dir>]`
 Imports a Postman collection as apic contracts, one JSON file per request,
 mirroring the collection's folder nesting. Accepts Postman Collection exports of
