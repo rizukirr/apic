@@ -5,7 +5,7 @@ use crate::file::{confine_to_dir, read_file, to_slash};
 use crate::fuzzy::{fuzzy_find, fuzzy_match_path};
 use crate::json::{json_get, scan_json_file, validate as validate_contract};
 use crate::picker;
-use crate::render::{render, sanitize};
+use crate::render::{home_relative, render, sanitize};
 use crate::tree;
 use clap::{Parser, Subcommand};
 use std::fs;
@@ -222,7 +222,7 @@ pub fn list(is_absolute: bool) -> Option<Vec<PathBuf>> {
     let root = match read_config_file().and_then(|conf| conf.get_root_dir()) {
         Ok(root) => root,
         Err(err) => {
-            eprintln!("{}", err);
+            eprintln!("{}", home_relative(&err));
             std::process::exit(1);
         }
     };
@@ -377,7 +377,11 @@ fn read_cmd(filename: &str, status: Option<u16>, example: bool) -> Result<(), St
         Resolved::Path(path) => match read_file(&path) {
             Ok(content) => read(&content, status, example),
             Err(err) => {
-                eprintln!("Failed to read {}: {}", path.display(), err);
+                eprintln!(
+                    "Failed to read {}: {}",
+                    home_relative(&sanitize(&to_slash(&path))),
+                    err
+                );
                 println!("No contract found");
                 Ok(())
             }
@@ -511,7 +515,7 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
         match result {
             Ok(()) => println!("ok   {shown}"),
             Err(err) => {
-                println!("FAIL {shown}: {}", sanitize(&err));
+                println!("FAIL {shown}: {}", home_relative(&sanitize(&err)));
                 failed += 1;
             }
         }
@@ -574,7 +578,7 @@ fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
         }
         fs::write(&path, contract)
             .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
-        println!("Created {}", sanitize(&path.to_string_lossy()));
+        println!("Created {}", home_relative(&sanitize(&to_slash(&path))));
         return open_in_editor(&path, editor)
             .map_err(|err| format!("Failed to open editor: {err}"));
     }
@@ -842,7 +846,7 @@ pub fn run() {
     };
 
     if let Err(err) = result {
-        eprintln!("Error: {err}");
+        eprintln!("Error: {}", home_relative(&err));
         std::process::exit(1);
     }
 }
