@@ -1,25 +1,25 @@
 # apic
 
-**API contracts, the Git way.** `apic` is a high-performance CLI/TUI designed for total freedom in contract collaboration. By storing your API contracts as plain JSON files in your repository, your architecture becomes natively diffable, reviewable, and versioned. No more silos—just your code and your contracts in perfect sync.
+**API contracts, the Git way.** `apic` is a high-performance CLI/TUI designed for total freedom in contract collaboration. By storing your API contracts as plain JSON files in your repository, your architecture becomes natively diffable, reviewable, and versioned. No more silos, just your code and your contracts in perfect sync.
 
 https://github.com/user-attachments/assets/89b5fb4b-7942-49a1-9bee-41308d234236
 
 ## Why?
 
-Mainstream API tooling gates collaboration behind paywalls—forcing you to pay per team member just to share a workspace. Costs scale aggressively as teams grow. 
+Mainstream API tooling gates collaboration behind paywalls, forcing you to pay per team member just to share a workspace. Costs scale aggressively as teams grow. 
 
-`apic` flips the script: because contracts live as plain JSON files in your repository, **your existing Git workflow *is* the collaboration layer**. No seats, no separate accounts—if a developer can clone the repo, they can collaborate on the contract.
+`apic` flips the script: because contracts live as plain JSON files in your repository, **your existing Git workflow *is* the collaboration layer**. No seats, no separate accounts, if a developer can clone the repo, they can collaborate on the contract.
 
 This approach brings immediate advantages:
 
-*   **Zero-Cost Collaboration** — Sharing is a simple `git push`. Everyone with repository access already has full collaboration capabilities.
-*   **Atomic Versioning** — Contracts change in the exact same commit as the implementation, preserving full history and `git blame`.
-*   **Native Code Review** — Contract modifications show up as clean diffs in Pull Requests, reviewed by the same team, on the same platform.
-*   **Terminal-First Readability** — No raw JSON eye-strain. `apic read` renders your contracts into clean, colorized tables directly in your shell.
+*   **Zero-Cost Collaboration**, Sharing is a simple `git push`. Everyone with repository access already has full collaboration capabilities.
+*   **Atomic Versioning**, Contracts change in the exact same commit as the implementation, preserving full history and `git blame`.
+*   **Native Code Review**, Contract modifications show up as clean diffs in Pull Requests, reviewed by the same team, on the same platform.
+*   **Terminal-First Readability**, No raw JSON eye-strain. `apic read` renders your contracts into clean, colorized tables directly in your shell.
 
 ## Install
 
-**crates.io** (recommended) — installs the `apic` command:
+**crates.io** (recommended), installs the `apic` command:
 
 ```bash
 cargo install apic-cli
@@ -35,7 +35,7 @@ cargo install --path .
 
 To run without installing, use `cargo run -- <args>` from the project directory.
 
-**Prebuilt binaries** — grab the archive for your platform from the
+**Prebuilt binaries**, grab the archive for your platform from the
 [latest release](https://github.com/rizukirr/apic/releases), verify the
 `.sha256` checksum, extract, and put `apic` on your `PATH`. Builds are provided
 for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), and Windows (x86_64).
@@ -60,8 +60,8 @@ apic read -f login
 ### Editing contracts
 
 `apic create <file>` and `apic open <file>` open an interactive terminal editor
-(TUI) by default. It shows the contract exactly as `apic read` renders it — the
-same header, sections, tables, and inline JSON examples — and lets you edit in
+(TUI) by default. It shows the contract exactly as `apic read` renders it, the
+same header, sections, tables, and inline JSON examples, and lets you edit in
 place:
 
 - **Navigate:** `↑/↓` (or `j/k`) select a row; `Enter` steps into the row's cells;
@@ -72,7 +72,7 @@ place:
 - **Expand:** `Enter` on the `METHOD url` line reveals the protocol, host, and
   path; `Enter` on a `REQUEST`/`RESPONSE` title reveals its code, description, and
   type. `Esc` collapses either.
-- **Add / delete:** `a` adds a row to the current section — a nested field when
+- **Add / delete:** `a` adds a row to the current section, a nested field when
   you're on an `object` field, or a new response on the `+ add response` line;
   `d` deletes the selected row after a confirmation.
 - **Examples:** `Enter` on an example edits its JSON in a pop-up; `g` generates a
@@ -92,7 +92,7 @@ files are scanned from (defaults to the current directory).
 ### `apic config [--set-dir <dir>]`
 Updates project configuration.
 
-- `--set-dir <dir>` — change the working directory that contracts are scanned
+- `--set-dir <dir>`, change the working directory that contracts are scanned
   from (must exist).
 
 ### `apic create -f <filename> [-e <editor>]`
@@ -111,20 +111,20 @@ the file to be saved.
 ### `apic list [--filter <query>] [--absolute <true|false>]`
 Lists discovered `.json` contract files under the working directory.
 
-- `--filter <query>` — show only contracts whose path fuzzy-matches the query,
+- `--filter <query>`, show only contracts whose path fuzzy-matches the query,
   best match first (e.g. `apic list --filter user`).
-- `--absolute <true|false>` — print absolute paths or paths relative to the
+- `--absolute <true|false>`, print absolute paths or paths relative to the
   working directory (`false`, the default).
 
 ### `apic read -f <query> [-s <status>]`
 Renders a contract as formatted tables. `-s <status>` filters the response
 section to a single HTTP status code.
 
-`<query>` is resolved flexibly — an exact match wins, then fuzzy:
+`<query>` is resolved flexibly, an exact match wins, then fuzzy:
 
-1. a path relative to the working directory — `user/user.json`
-2. the same without the `.json` extension — `user/user`, `auth/login`
-3. a fuzzy fragment — `user`, `logn`
+1. a path relative to the working directory, `user/user.json`
+2. the same without the `.json` extension, `user/user`, `auth/login`
+3. a fuzzy fragment, `user`, `logn`
 
 ```bash
 apic read -f user/user.json   # exact path
@@ -137,7 +137,7 @@ apic read -f login --example  # show raw JSON example payloads
 By default each schema table is followed by its example payload (when the
 contract provides one), labeled `Example:`, so structure and a concrete
 payload read together. With `--example` (or `-e`) the schema tables are
-skipped entirely and only the raw JSON payloads print — the compact
+skipped entirely and only the raw JSON payloads print, the compact
 copy-paste view:
 
 ```text
@@ -158,7 +158,7 @@ copy-paste view:
 ### `apic open (-f <query> | --template) [-e <editor>]`
 Resolves `<query>` exactly like `read` (path, extensionless, or fuzzy) and
 opens the matching contract in the interactive TUI. Pass `-e`/`--editor` to open
-it in your external editor instead — the same editor resolution as `apic create`.
+it in your external editor instead, the same editor resolution as `apic create`.
 
 Pass `--template` instead of `-f` to edit the project template
 (`.apic/template.json`) that `apic create` scaffolds from; it is seeded from
@@ -194,7 +194,7 @@ contract under the working directory is checked. A query ending in `/` (e.g.
 `auth/`) validates every contract under that folder, recursively; otherwise the
 query resolves to a single contract like `read` (path, extensionless, or fuzzy).
 Prints `ok`/`FAIL` per file with the parse error (line and column) for failures,
-and **exits non-zero if any contract is invalid** — so it drops straight into a
+and **exits non-zero if any contract is invalid**, so it drops straight into a
 CI step or pre-commit hook.
 
 ```bash
@@ -216,13 +216,13 @@ FAIL user/user.json: EOF while parsing an object at line 12 column 1
 > keeps `--filename` because it names a new file rather than finding one.
 
 ### `apic convert --postman <file> [--destination <dir>]`
-Imports a Postman collection as apic contracts — one JSON file per request,
+Imports a Postman collection as apic contracts, one JSON file per request,
 mirroring the collection's folder nesting. Accepts Postman Collection exports of
 v1.0.0, v2.0.0, and v2.1.0 (auto-detected).
 
-- `--postman <file>` — the Postman collection JSON to import.
-- `--destination <dir>` — where to write the contracts, relative to the working
-  directory (created if missing). **Optional** — defaults to the working
+- `--postman <file>`, the Postman collection JSON to import.
+- `--destination <dir>`, where to write the contracts, relative to the working
+  directory (created if missing). **Optional**, defaults to the working
   directory itself. The path is confined to the working directory (`..`/absolute
   escapes are rejected) and existing files are never overwritten.
 
@@ -250,11 +250,11 @@ Converted 12 contract(s) into imported (1 warning)
 `apic` treats contract files and paths as untrusted, so it is safe to run
 against contracts from any source:
 
-- **Terminal-escape safe** — all file-derived strings (contract fields, file
+- **Terminal-escape safe**, all file-derived strings (contract fields, file
   names) are stripped of control characters before printing.
-- **Path-confined** — `apic create` refuses paths that escape the working
+- **Path-confined**, `apic create` refuses paths that escape the working
   directory via `..` or an absolute path elsewhere.
-- **Bounded** — contract files larger than 5 MiB are rejected before reading,
+- **Bounded**, contract files larger than 5 MiB are rejected before reading,
   and pathologically nested JSON is rejected rather than overflowing the stack.
 
 ## Contract format
@@ -264,7 +264,7 @@ A contract is a single JSON object describing one endpoint. See
 template that `apic create` writes.
 
 `apic init` writes a starter template to `.apic/template.json`. Edit it to set
-a project-wide convention — for example a standing `device-id` header — and
+a project-wide convention, for example a standing `device-id` header, and
 every `apic create` reuses it. The file is never overwritten once it exists; if
 it is missing or malformed, `apic create` falls back to the built-in default.
 
@@ -343,7 +343,7 @@ it is missing or malformed, `apic create` falls back to the built-in default.
 ```
 
 Both `schema` (field-level detail, rendered as tables) and `example` (a raw
-JSON payload) are optional in the request and in each response — early-stage
+JSON payload) are optional in the request and in each response, early-stage
 contracts often start with just an example, formal ones with just a schema.
 The default view shows the example beneath its schema table (or alone when
 there is no schema), and `read --example` shows only the payloads.
@@ -357,7 +357,7 @@ there is no schema), and `read --example` shows only the payloads.
 | `method` | yes | HTTP method: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, or `OPTIONS`. |
 | `url` | yes | Request URL, broken into parts (see below). |
 | `headers` | yes | Array of headers (`name`, `value`). |
-| `request` | no | Request body: `{ "type": <body shape>, "schema": [fields], "example": <raw JSON> }` — all parts optional; `type` defaults to `"object"` (see [Array bodies](#array-bodies)). |
+| `request` | no | Request body: `{ "type": <body shape>, "schema": [fields], "example": <raw JSON> }`, all parts optional; `type` defaults to `"object"` (see [Array bodies](#array-bodies)). |
 | `responses` | yes | Array of responses (`code`, `description`, optional `type`, optional `schema`, optional `example`). |
 
 The `url` object has:
@@ -368,14 +368,14 @@ The `url` object has:
 | `host` | yes | Host, e.g. `api.example.com`. |
 | `path` | no | Path segments as an array, e.g. `["auth", "login"]`. |
 | `query` | no | Array of query parameters (`name`, `value`, `description`, `required`). |
-| `variable` | no | Array of path variables (`name`, optional `type` — defaults to `string`, `description`). |
+| `variable` | no | Array of path variables (`name`, optional `type`, defaults to `string`, `description`). |
 
 A **field** (in the request `schema` and response `schema`) has:
 
 | Field | Description |
 |-------|-------------|
 | `name` | Field name. |
-| `type` | Data type (`string`, `int`, `file`, `object`, …). Append `[]` for a list — `string[]`, `object[]` (see [Array bodies](#array-bodies)). |
+| `type` | Data type (`string`, `int`, `file`, `object`, …). Append `[]` for a list, `string[]`, `object[]` (see [Array bodies](#array-bodies)). |
 | `default` | Default value as a string, or `null`. |
 | `description` | Field description. |
 | `required` | Whether the field is required. |
@@ -436,13 +436,13 @@ REQUEST
 
 ### Array bodies
 
-A request or response body can be a JSON **array** instead of a single object —
+A request or response body can be a JSON **array** instead of a single object , 
 useful for bulk requests and list endpoints. Set the body-level `"type"` to an
 array form, and `apic` reads the `schema` fields as a description of **each
 element**:
 
-- `"object"` — a single object (the default when `type` is omitted).
-- `"object[]"` — an array of objects; `schema` describes each element's fields.
+- `"object"`, a single object (the default when `type` is omitted).
+- `"object[]"`, an array of objects; `schema` describes each element's fields.
 - A field's own `"type"` may carry the same `[]` suffix: `"string[]"` is a list
   of scalars (e.g. `["a", "b"]`), `"object[]"` a list of objects whose fields go
   in `properties`.
@@ -509,7 +509,7 @@ working_dir = "api-contract"
 ```
 
 `working_dir` is stored relative to the project root, so `.apic/config.toml`
-is safe to commit and share — it resolves correctly on any clone. `apic`
+is safe to commit and share, it resolves correctly on any clone. `apic`
 locates the project by walking up from the current directory to find the
 `.apic` directory, so commands work from anywhere inside the project tree.
 
