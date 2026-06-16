@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[allow(clippy::upper_case_acronyms)]
-pub enum Method {
+pub(crate) enum Method {
     GET,
     POST,
     PUT,
@@ -17,7 +17,7 @@ pub enum Method {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct JsonContent {
+pub(crate) struct JsonContent {
     pub(crate) name: String,
     pub(crate) description: Option<String>,
     pub(crate) method: Method,
@@ -31,7 +31,7 @@ pub struct JsonContent {
 /// or both. Either part may be omitted — early-stage contracts often have only
 /// an example, formal ones only a schema.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct RequestBody {
+pub(crate) struct RequestBody {
     /// Body shape: `"object"` (default) or an array form like `"object[]"`.
     #[serde(alias = "type", default = "default_body_type")]
     pub(crate) dtype: String,
@@ -42,7 +42,7 @@ pub struct RequestBody {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Url {
+pub(crate) struct Url {
     pub(crate) protocol: String,
     pub(crate) host: String,
     pub(crate) path: Option<Vec<String>>,
@@ -54,7 +54,7 @@ pub struct Url {
 /// `{id}` placeholder; this documents what it means. `type` defaults to
 /// `string` when omitted, and `required` defaults to `false` when omitted.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Variable {
+pub(crate) struct Variable {
     pub(crate) name: String,
     #[serde(alias = "type", default = "default_variable_type")]
     pub(crate) dtype: String,
@@ -74,7 +74,7 @@ fn default_body_type() -> String {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Query {
+pub(crate) struct Query {
     pub(crate) name: String,
     pub(crate) value: String,
     pub(crate) description: Option<String>,
@@ -82,13 +82,13 @@ pub struct Query {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Header {
+pub(crate) struct Header {
     pub(crate) name: String,
     pub(crate) value: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Response {
+pub(crate) struct Response {
     pub code: u16,
     pub description: String,
     /// Body shape: `"object"` (default) or an array form like `"object[]"`.
@@ -103,7 +103,7 @@ pub struct Response {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Schema {
+pub(crate) struct Schema {
     pub(crate) name: String,
     #[serde(alias = "type")]
     pub(crate) dtype: String,
@@ -118,7 +118,7 @@ pub struct Schema {
     pub(crate) accept: Option<String>,
 }
 
-pub fn method_str(method: &Method) -> String {
+pub(crate) fn method_str(method: &Method) -> String {
     match method {
         Method::GET => "GET".to_string(),
         Method::POST => "POST".to_string(),
@@ -145,7 +145,7 @@ pub(crate) fn method_all() -> [Method; 7] {
 
 /// Splits a type string into its base type and array-ness:
 /// `"object[]" -> ("object", true)`, `"string" -> ("string", false)`.
-pub fn parse_type(dtype: &str) -> (&str, bool) {
+pub(crate) fn parse_type(dtype: &str) -> (&str, bool) {
     match dtype.strip_suffix("[]") {
         Some(base) => (base, true),
         None => (dtype, false),
@@ -162,7 +162,7 @@ pub(crate) fn any_accept(fields: &[Schema]) -> bool {
 
 // Scaffolding for the upcoming `method set` command; not yet wired in.
 #[allow(dead_code)]
-pub fn method_from_str(method: &str) -> Method {
+pub(crate) fn method_from_str(method: &str) -> Method {
     match method.to_uppercase().as_str() {
         "GET" => Method::GET,
         "POST" => Method::POST,
@@ -179,7 +179,7 @@ pub fn method_from_str(method: &str) -> Method {
 ///
 /// Paths are returned absolute when `is_absolute` is `true`, otherwise
 /// relative to `root`. Returns `None` when no JSON files exist.
-pub fn scan_json_file(root: &Path, is_absolute: bool) -> Option<Vec<PathBuf>> {
+pub(crate) fn scan_json_file(root: &Path, is_absolute: bool) -> Option<Vec<PathBuf>> {
     let json_file = match find_file_by_ext_downward(root.to_path_buf(), &["json"]) {
         FindFileResult::Found(files) => files,
         FindFileResult::NotFound => return None,
@@ -208,13 +208,13 @@ pub fn scan_json_file(root: &Path, is_absolute: bool) -> Option<Vec<PathBuf>> {
 ///
 /// Returns the parse error (with line/column) when the document does not
 /// conform to the contract schema.
-pub fn validate(json: &str) -> Result<(), serde_json::Error> {
+pub(crate) fn validate(json: &str) -> Result<(), serde_json::Error> {
     serde_json::from_str::<JsonContent>(json).map(|_| ())
 }
 
 /// Parses a JSON contract, keeping only the responses whose code matches
 /// `status` (all responses when `status` is `None`).
-pub fn json_get(json: &str, status: Option<u16>) -> Result<JsonContent, serde_json::Error> {
+pub(crate) fn json_get(json: &str, status: Option<u16>) -> Result<JsonContent, serde_json::Error> {
     let mut json_content: JsonContent = serde_json::from_str(json)?;
     if let Some(status) = status {
         json_content.responses.retain(|r| r.code == status);

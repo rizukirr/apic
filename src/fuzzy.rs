@@ -129,7 +129,7 @@ pub(crate) fn fuzzy_match_path(query: &str, candidate: &str) -> Option<(i32, Vec
 
 /// Scores how well `candidate` matches `query`; see [`fuzzy_match`] for the
 /// scoring rules. This is `fuzzy_match` minus the matched-index bookkeeping.
-pub(crate) fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
+fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
     fuzzy_match(query, candidate).map(|(score, _)| score)
 }
 
@@ -150,7 +150,7 @@ pub(crate) fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
 /// let hits = fuzzy_find("main", &items).unwrap();
 /// assert_eq!(hits[0].0, "src/main.rs");
 /// ```
-pub fn fuzzy_find<'a>(query: &str, items: &'a [String]) -> Option<Vec<(&'a String, i32)>> {
+pub(crate) fn fuzzy_find<'a>(query: &str, items: &'a [String]) -> Option<Vec<(&'a String, i32)>> {
     let mut results: Vec<(&String, i32)> = items
         .iter()
         .filter_map(|item| fuzzy_score(query, item).map(|score| (item, score)))

@@ -3,6 +3,12 @@
 //! Binary entry point. The command-line interface and all subcommand handling
 //! live in [`cli`]; everything below is wiring for the supporting modules.
 
+// `apic` is a binary, not a library, so no item is ever part of an external
+// API. `unreachable_pub` flags any `pub` that is therefore needlessly broad and
+// should be `pub(crate)`, keeping visibility honest and letting dead-code
+// analysis see crate-internal items.
+#![warn(unreachable_pub)]
+
 mod cli;
 mod config;
 mod convert;

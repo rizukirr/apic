@@ -188,7 +188,7 @@ enum Commands {
 ///
 /// A `None` value is a no-op. Prints a success message on change; returns the
 /// error message on failure so the caller can set a non-zero exit code.
-pub fn update_working_dir(working_dir: Option<&str>) -> Result<(), String> {
+fn update_working_dir(working_dir: Option<&str>) -> Result<(), String> {
     match working_dir {
         Some(dir) => {
             read_config_file().and_then(|mut conf| conf.update_root_dir(dir))?;
@@ -204,7 +204,7 @@ pub fn update_working_dir(working_dir: Option<&str>) -> Result<(), String> {
 /// The directory creation and config write are delegated to [`Config::init`].
 /// On an already-initialized project a missing `template.json` is seeded
 /// rather than erroring.
-pub fn init_cmd(working_dir: Option<&str>) -> Result<(), String> {
+fn init_cmd(working_dir: Option<&str>) -> Result<(), String> {
     match Config::init(working_dir)? {
         InitOutcome::Initialized => println!("Successfully initialized"),
         InitOutcome::TemplateSeeded => {
@@ -218,7 +218,7 @@ pub fn init_cmd(working_dir: Option<&str>) -> Result<(), String> {
 ///
 /// Returns `None` when no files are found. If the project is not initialized,
 /// an error is printed and the process exits.
-pub fn list(is_absolute: bool) -> Option<Vec<PathBuf>> {
+pub(crate) fn list(is_absolute: bool) -> Option<Vec<PathBuf>> {
     let root = match read_config_file().and_then(|conf| conf.get_root_dir()) {
         Ok(root) => root,
         Err(err) => {
@@ -813,7 +813,7 @@ fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), String> {
 /// Parses command-line arguments and runs the selected subcommand.
 ///
 /// This is the CLI entry point invoked from `main`.
-pub fn run() {
+pub(crate) fn run() {
     let cli = Cli::parse();
     let result: Result<(), String> = match cli.command {
         Commands::Config { set_dir } => update_working_dir(set_dir.as_deref()),

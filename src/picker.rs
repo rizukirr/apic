@@ -73,7 +73,7 @@ fn draw(
 /// user cancels (Esc / `q` / Ctrl-C). On confirm the picker lines are cleared
 /// and replaced with a one-line summary so scroll-back stays clean. The
 /// caller must ensure stdin and stdout are terminals before calling.
-pub fn pick(prompt: &str, labels: &[String]) -> io::Result<Option<usize>> {
+pub(crate) fn pick(prompt: &str, labels: &[String]) -> io::Result<Option<usize>> {
     let mut out = io::stdout();
     let guard = RawGuard::new()?;
     let mut selected = 0usize;
