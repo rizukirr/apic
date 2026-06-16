@@ -9,7 +9,7 @@ use walkdir::WalkDir;
 ///
 /// Contracts are small JSON documents; this cap turns a hostile or accidental
 /// multi-gigabyte file into a clean error instead of exhausting memory.
-pub const MAX_CONTRACT_BYTES: u64 = 5 * 1024 * 1024;
+pub(crate) const MAX_CONTRACT_BYTES: u64 = 5 * 1024 * 1024;
 
 /// Renders a path with `/` separators on every platform.
 ///
@@ -19,13 +19,13 @@ pub const MAX_CONTRACT_BYTES: u64 = 5 * 1024 * 1024;
 /// normalized form is also valid for filesystem access. Windows filenames
 /// cannot contain `\`, so swapping the platform separator never corrupts a
 /// name; on Unix `MAIN_SEPARATOR` is already `/`, making this a no-op.
-pub fn to_slash(path: &Path) -> String {
+pub(crate) fn to_slash(path: &Path) -> String {
     path.to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/")
 }
 
 /// Outcome of a file search: either the matching paths or nothing found.
-pub enum FindFileResult {
+pub(crate) enum FindFileResult {
     Found(Vec<PathBuf>),
     NotFound,
 }
@@ -35,7 +35,7 @@ pub enum FindFileResult {
 ///
 /// Symlinks are not followed. Returns [`FindFileResult::NotFound`] if no file
 /// matches.
-pub fn find_file_by_ext_downward(start: PathBuf, extensions: &[&str]) -> FindFileResult {
+pub(crate) fn find_file_by_ext_downward(start: PathBuf, extensions: &[&str]) -> FindFileResult {
     let pwd = start.to_path_buf();
     let mut files = Vec::new();
 
@@ -63,7 +63,7 @@ pub fn find_file_by_ext_downward(start: PathBuf, extensions: &[&str]) -> FindFil
 /// For each directory walked (files are skipped), each name is joined and
 /// checked for existence. Symlinks are not followed. Returns
 /// [`FindFileResult::NotFound`] if nothing matches.
-pub fn find_file_downward(start: PathBuf, names: &[PathBuf]) -> FindFileResult {
+pub(crate) fn find_file_downward(start: PathBuf, names: &[PathBuf]) -> FindFileResult {
     let mut files = Vec::new();
 
     for entry in WalkDir::new(&start)
@@ -93,7 +93,7 @@ pub fn find_file_downward(start: PathBuf, names: &[PathBuf]) -> FindFileResult {
 /// not searched again in higher ancestors. The walk stops when every name has
 /// been found or the root is reached. Returns [`FindFileResult::NotFound`] if
 /// nothing matches.
-pub fn find_file_upward(start: PathBuf, names: &[PathBuf]) -> FindFileResult {
+pub(crate) fn find_file_upward(start: PathBuf, names: &[PathBuf]) -> FindFileResult {
     let mut pwd = start;
     let mut files = Vec::new();
     let mut remaining: Vec<&PathBuf> = names.iter().collect();
@@ -130,7 +130,7 @@ pub fn find_file_upward(start: PathBuf, names: &[PathBuf]) -> FindFileResult {
 ///
 /// Returns an [`io::Error`] if the file cannot be opened or read, exceeds the
 /// size cap, or is not valid UTF-8.
-pub fn read_file(path: &Path) -> Result<String, io::Error> {
+pub(crate) fn read_file(path: &Path) -> Result<String, io::Error> {
     let meta = fs::metadata(path)?;
     if meta.len() > MAX_CONTRACT_BYTES {
         return Err(io::Error::new(
@@ -181,7 +181,7 @@ fn normalize_lexical(path: &Path) -> PathBuf {
 ///
 /// Returns `Err` with a human-readable message if `target` resolves outside
 /// `base`.
-pub fn confine_to_dir(base: &Path, target: &Path) -> Result<PathBuf, String> {
+pub(crate) fn confine_to_dir(base: &Path, target: &Path) -> Result<PathBuf, String> {
     let joined = if target.is_absolute() {
         target.to_path_buf()
     } else {

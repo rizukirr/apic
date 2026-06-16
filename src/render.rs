@@ -12,7 +12,7 @@ use std::io::IsTerminal;
 ///
 /// With `example_mode` the request and response sections print their raw JSON
 /// example payloads instead of schema tables.
-pub fn render(contract: &JsonContent, example_mode: bool) {
+pub(crate) fn render(contract: &JsonContent, example_mode: bool) {
     let p = Printer::new(example_mode);
     p.contract(contract);
 }

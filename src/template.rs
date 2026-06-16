@@ -15,13 +15,13 @@ use std::path::{Path, PathBuf};
 
 /// The built-in contract template: the seed for `.apic/template.json` and the
 /// fallback used when no usable project template is present.
-pub const DEFAULT: &str = include_str!("templates/contract.json");
+pub(crate) const DEFAULT: &str = include_str!("templates/contract.json");
 
 /// Name of the per-project template file inside the `.apic` directory.
 const TEMPLATE_FILE: &str = "template.json";
 
 /// Returns the path to the per-project template inside `apic_dir`.
-pub fn path(apic_dir: &Path) -> PathBuf {
+pub(crate) fn path(apic_dir: &Path) -> PathBuf {
     apic_dir.join(TEMPLATE_FILE)
 }
 
@@ -30,7 +30,7 @@ pub fn path(apic_dir: &Path) -> PathBuf {
 ///
 /// Returns `true` when the file was written and `false` when it was already
 /// present, so callers can report whether they actually seeded it.
-pub fn seed_if_missing(apic_dir: &Path) -> Result<bool, String> {
+pub(crate) fn seed_if_missing(apic_dir: &Path) -> Result<bool, String> {
     let path = path(apic_dir);
     if path.exists() {
         return Ok(false);
@@ -48,7 +48,7 @@ pub fn seed_if_missing(apic_dir: &Path) -> Result<bool, String> {
 /// want to change. A missing or unreadable file falls back to the plain default;
 /// a template that exists but does not merge into a valid contract is returned as
 /// an `Err` so `create` can abort. Outside a project the default is returned.
-pub fn resolve_for_create() -> Result<String, String> {
+pub(crate) fn resolve_for_create() -> Result<String, String> {
     match crate::config::find_apic_dir() {
         Some(apic_dir) => resolve_at(&apic_dir),
         None => Ok(DEFAULT.to_string()),
@@ -95,7 +95,7 @@ fn resolve_at(apic_dir: &Path) -> Result<String, String> {
 /// nothing. The checks compare structure — header/field/segment **names** — and,
 /// for `url.protocol`/`url.host`, exact **values**; placeholder values elsewhere
 /// (descriptions, examples, types) are ignored.
-pub struct TemplateRules {
+pub(crate) struct TemplateRules {
     /// The parsed template, or `None` when there is nothing to enforce
     /// (outside a project, or no template file present).
     template: Option<Value>,
@@ -104,7 +104,7 @@ pub struct TemplateRules {
 /// Loads the project's template-conformance rules. A missing project or missing
 /// template file yields rules that enforce nothing; malformed template JSON is an
 /// `Err` so `validate` can report it.
-pub fn load_rules() -> Result<TemplateRules, String> {
+pub(crate) fn load_rules() -> Result<TemplateRules, String> {
     let apic_dir = match find_apic_dir() {
         Some(dir) => dir,
         None => return Ok(TemplateRules { template: None }),
@@ -125,7 +125,7 @@ impl TemplateRules {
     /// Returns the conformance issues for the contract `content_json`, one short
     /// message per violation. An empty list means the contract conforms (or the
     /// template enforces nothing). Malformed contract JSON is an `Err`.
-    pub fn check(&self, content_json: &str) -> Result<Vec<String>, String> {
+    pub(crate) fn check(&self, content_json: &str) -> Result<Vec<String>, String> {
         let template = match &self.template {
             Some(template) => template,
             None => return Ok(Vec::new()),
@@ -291,7 +291,7 @@ fn schema_field_names(schema: &Value, prefix: &str, out: &mut Vec<String>) {
 }
 
 /// Validation outcome for `apic validate --template`.
-pub enum TemplateCheck {
+pub(crate) enum TemplateCheck {
     /// No project, or no readable template file present — nothing to validate.
     Absent,
     /// The template merges onto the default and yields a valid contract.
@@ -304,7 +304,7 @@ pub enum TemplateCheck {
 ///
 /// Returns [`TemplateCheck::Absent`] outside a project; otherwise delegates to
 /// [`check_at`].
-pub fn check_template() -> TemplateCheck {
+pub(crate) fn check_template() -> TemplateCheck {
     match crate::config::find_apic_dir() {
         Some(apic_dir) => check_at(&apic_dir),
         None => TemplateCheck::Absent,
@@ -334,7 +334,7 @@ fn check_at(apic_dir: &Path) -> TemplateCheck {
 /// The default provides every field; `overlay` only needs the values it wants
 /// to change. The result is validated so a partial template that merges into an
 /// invalid contract is rejected (the caller then falls back to the default).
-pub(crate) fn merge_onto_default(overlay: &str) -> Result<String, String> {
+fn merge_onto_default(overlay: &str) -> Result<String, String> {
     let mut base: Value = serde_json::from_str(DEFAULT)
         .map_err(|err| format!("built-in template is not valid JSON: {err}"))?;
     let overlay: Value =

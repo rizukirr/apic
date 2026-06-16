@@ -79,7 +79,7 @@ pub(crate) struct EditSchema {
 
 impl EditBody {
     /// A request body with no fields and no example.
-    pub fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         EditBody {
             dtype: "object".to_string(),
             schema: Vec::new(),
@@ -90,7 +90,7 @@ impl EditBody {
 
 impl EditResponse {
     /// A blank response shell with an empty code (the user types it).
-    pub fn blank() -> Self {
+    pub(crate) fn blank() -> Self {
         EditResponse {
             code: String::new(),
             description: String::new(),
@@ -136,7 +136,7 @@ fn schema_to_edit(s: Schema) -> EditSchema {
 
 impl EditModel {
     /// Lifts a parsed contract into an editable working copy.
-    pub fn from_contract(c: JsonContent) -> Self {
+    pub(crate) fn from_contract(c: JsonContent) -> Self {
         EditModel {
             name: c.name,
             description: opt_to_string(c.description),
@@ -251,7 +251,7 @@ impl EditModel {
     /// Returns `Err` (never panics) when an example buffer is malformed JSON, a
     /// response code is non-numeric, or the assembled document fails contract
     /// validation. The error is suitable for display on the TUI status line.
-    pub fn to_json(&self) -> Result<String, String> {
+    pub(crate) fn to_json(&self) -> Result<String, String> {
         let mut root = serde_json::Map::new();
         root.insert("name".into(), Value::String(self.name.clone()));
         if let Some(d) = str_opt(&self.description) {
@@ -383,7 +383,7 @@ impl EditModel {
     }
 
     /// Serializes and writes the contract to `path`, creating parent dirs.
-    pub fn save(&self, path: &Path) -> Result<(), String> {
+    pub(crate) fn save(&self, path: &Path) -> Result<(), String> {
         let contract = self.to_json()?;
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
@@ -410,13 +410,13 @@ fn schema_node_mut<'a>(fields: &'a mut [EditSchema], path: &[usize]) -> Option<&
 impl EditModel {
     /// Mutable access to a request-body schema node by path ([] is invalid;
     /// use the top-level vec directly for inserts).
-    pub fn schema_at_mut_request(&mut self, path: &[usize]) -> Option<&mut EditSchema> {
+    pub(crate) fn schema_at_mut_request(&mut self, path: &[usize]) -> Option<&mut EditSchema> {
         let req = self.request.as_mut()?;
         schema_node_mut(&mut req.schema, path)
     }
 
     /// Mutable access to a response schema node by path.
-    pub fn schema_at_mut_response(
+    pub(crate) fn schema_at_mut_response(
         &mut self,
         resp: usize,
         path: &[usize],
@@ -427,7 +427,10 @@ impl EditModel {
 
     /// The vector that should receive a new child for `path` ([] = top-level).
     /// Returns `None` if the path does not resolve.
-    pub fn schema_children_mut_request(&mut self, path: &[usize]) -> Option<&mut Vec<EditSchema>> {
+    pub(crate) fn schema_children_mut_request(
+        &mut self,
+        path: &[usize],
+    ) -> Option<&mut Vec<EditSchema>> {
         let req = self.request.as_mut()?;
         if path.is_empty() {
             return Some(&mut req.schema);
@@ -436,7 +439,7 @@ impl EditModel {
     }
 
     /// Response counterpart of [`schema_children_mut_request`].
-    pub fn schema_children_mut_response(
+    pub(crate) fn schema_children_mut_response(
         &mut self,
         resp: usize,
         path: &[usize],
@@ -451,7 +454,7 @@ impl EditModel {
 
 /// A blank schema field for inserts.
 impl EditSchema {
-    pub fn blank() -> Self {
+    pub(crate) fn blank() -> Self {
         EditSchema {
             name: String::new(),
             dtype: "string".to_string(),

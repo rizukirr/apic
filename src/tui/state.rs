@@ -48,7 +48,7 @@ pub(crate) struct UiState {
 }
 
 impl UiState {
-    pub fn new(model: &EditModel) -> Self {
+    pub(super) fn new(model: &EditModel) -> Self {
         let sections = flatten(model, None);
         let mut s = UiState {
             sections,
@@ -67,7 +67,7 @@ impl UiState {
 
     /// Rebuilds sections after a mutation, clamping the cursor; drops cell focus
     /// if it no longer addresses a valid cell.
-    pub fn refresh(&mut self, model: &EditModel) {
+    pub(super) fn refresh(&mut self, model: &EditModel) {
         self.sections = flatten(model, self.expanded);
         if self.sec >= self.sections.len() {
             self.sec = self.sections.len().saturating_sub(1);
@@ -101,7 +101,7 @@ impl UiState {
         }
     }
 
-    pub fn current_row(&self) -> Option<&TableRow> {
+    pub(super) fn current_row(&self) -> Option<&TableRow> {
         self.sections.get(self.sec)?.rows.get(self.row)
     }
 
@@ -114,7 +114,7 @@ impl UiState {
             .map(|cell| cell.field.clone())
     }
 
-    pub fn focused_field_pub(&self) -> Option<Field> {
+    pub(super) fn focused_field_pub(&self) -> Option<Field> {
         self.focused_field()
     }
 

@@ -532,7 +532,7 @@ fn write_contracts(dest_base: &Path, mapped: &[MappedContract]) -> Result<usize,
 
 /// Run `apic convert`: parse the collection at `collection_path`, map it, and
 /// write contracts under `dest_base`.
-pub fn run(collection_path: &Path, dest_base: &Path) -> Result<(), String> {
+pub(crate) fn run(collection_path: &Path, dest_base: &Path) -> Result<(), String> {
     let collection = converter::from_path(collection_path)?;
     let mapped = map(&collection);
     if mapped.is_empty() {
