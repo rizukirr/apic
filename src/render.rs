@@ -392,6 +392,28 @@ pub(crate) fn sanitize(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
 }
 
+/// Collapses the user's home directory prefix to `~` anywhere it appears in `s`.
+///
+/// Output (especially error messages) can embed absolute paths that disclose the
+/// username and full filesystem layout. Replacing the home prefix with `~` keeps
+/// messages readable without leaking that detail. Both the native and
+/// forward-slashed forms of the home path are collapsed, since paths are
+/// displayed with `/` on every platform. Absolute paths outside home (e.g.
+/// `/tmp`) are left intact — they carry no user-identifying information. When the
+/// home directory cannot be determined, `s` is returned unchanged.
+pub(crate) fn home_relative(s: &str) -> String {
+    let Some(home) = std::env::home_dir() else {
+        return s.to_string();
+    };
+    let native = home.to_string_lossy();
+    let native = native.trim_end_matches(['/', '\\']);
+    if native.is_empty() {
+        return s.to_string();
+    }
+    let slashed = native.replace('\\', "/");
+    s.replace(native, "~").replace(&slashed, "~")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,6 +433,20 @@ mod tests {
     #[test]
     fn sanitize_keeps_normal_and_multibyte_text() {
         assert_eq!(sanitize("café /auth/login"), "café /auth/login");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn home_relative_collapses_home_prefix() {
+        // Drive the function against a known home so the test is deterministic.
+        // SAFETY: single-threaded test; no other thread reads the env here.
+        unsafe { std::env::set_var("HOME", "/home/alice") };
+        assert_eq!(
+            home_relative("Created /home/alice/project/contracts/x.json"),
+            "Created ~/project/contracts/x.json"
+        );
+        // Non-home absolute paths are left untouched.
+        assert_eq!(home_relative("wrote /tmp/out.json"), "wrote /tmp/out.json");
     }
 
     fn url(protocol: &str, host: &str, path: Option<&[&str]>) -> Url {
