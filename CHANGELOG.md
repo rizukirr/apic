@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-06-16
+
+### Added
+- `apic validate` now checks each contract for conformance against
+  `.apic/template.json`, in addition to schema validation. The template is
+  treated as a partial: only the sections it declares are enforced. Checks cover
+  headers (names, case-insensitive), `url.protocol`/`url.host` (exact values),
+  `url.path`/`query`/`variable` (declared segments and names present), and
+  `request`/`responses` schema field names (recursing into nested `properties`;
+  responses matched by code). `.apic/` is excluded from the validate scan so a
+  partial template is not itself validated as a contract (#23).
+
+### Security
+- Path confinement is now symlink-aware. `confine_to_dir` rejects a path whose
+  component is a symlink, closing a bypass where a symlinked directory or file
+  inside the working directory could redirect `apic create`, `convert
+  --destination`, or `remove` to write or resolve outside the configured root
+  (#22, #24).
+- Absolute paths in command output now collapse the user's home directory to
+  `~`, so the `Created` line and error messages no longer disclose the username
+  or full filesystem layout. Paths outside home are left intact (#25).
+
+### Changed
+- Tightened item visibility across the crate (`pub` narrowed to `pub(crate)`,
+  single-module helpers made private) and enabled the `unreachable_pub` lint as
+  a guardrail. No behavior change (#26).
+
 ## [0.2.3] - 2026-06-15
 
 ### Changed
@@ -126,7 +153,8 @@ Initial beta release.
 - CI (fmt, clippy, build, test) and unit + end-to-end test suites.
 - MIT license.
 
-[Unreleased]: https://github.com/rizukirr/apic/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/rizukirr/apic/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/rizukirr/apic/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/rizukirr/apic/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/rizukirr/apic/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/rizukirr/apic/compare/v0.2.0...v0.2.1
