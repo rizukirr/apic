@@ -27,10 +27,9 @@ pub(crate) struct Root {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum InitOutcome {
     /// A new project was created (the `.apic` directory, its `config.toml`,
-    /// and the seeded `template.json`).
+    /// and the seeded `template/convention.json`).
     Initialized,
-    /// The project already existed and only its missing `template.json` was
-    /// seeded.
+    /// The project already existed and only its missing template was seeded.
     TemplateSeeded,
 }
 
@@ -71,15 +70,15 @@ impl Config {
     }
 
     /// Initializes a new project: creates the `.apic` directory and writes a
-    /// default `config.toml` and `template.json`.
+    /// default `config.toml` and `template/convention.json`.
     ///
     /// If `working_dir` is given it becomes the root (resolved relative to the
     /// current directory when not absolute); otherwise the current directory is
     /// used.
     ///
     /// When the project already exists, this does not error outright: a missing
-    /// `template.json` is seeded (returning [`InitOutcome::TemplateSeeded`]) so
-    /// a project whose template was deleted or whose seed predates template
+    /// template is seeded (returning [`InitOutcome::TemplateSeeded`]) so a
+    /// project whose template was deleted or whose seed predates template
     /// support can be repaired by re-running `init`. Only when the template is
     /// also already present is it reported as already initialized.
     ///

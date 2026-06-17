@@ -50,8 +50,11 @@ fn init_creates_config_and_refuses_second_init() {
 #[test]
 fn init_seeds_template_file() {
     let dir = init_project("seed_template");
-    let template = dir.join(".apic/template.json");
-    assert!(template.exists(), "init should seed .apic/template.json");
+    let template = dir.join(".apic/template/convention.json");
+    assert!(
+        template.exists(),
+        "init should seed .apic/template/convention.json"
+    );
     let content = fs::read_to_string(&template).unwrap();
     // The built-in default's endpoint name.
     assert!(content.contains("endpoint-name"));
@@ -137,7 +140,7 @@ fn create_uses_customized_template() {
         "headers": [ { "name": "device-id", "value": "{device_id}" } ],
         "responses": []
     }"#;
-    fs::write(dir.join(".apic/template.json"), custom).unwrap();
+    fs::write(dir.join(".apic/template/convention.json"), custom).unwrap();
 
     apic(&dir)
         .args(["create", "--editor", "true", "-f", "foo.json"])
@@ -155,7 +158,7 @@ fn create_uses_customized_template() {
 fn create_fails_when_template_malformed() {
     let dir = init_project("malformed_template");
     let broken = "{ not valid json";
-    fs::write(dir.join(".apic/template.json"), broken).unwrap();
+    fs::write(dir.join(".apic/template/convention.json"), broken).unwrap();
 
     apic(&dir)
         .args(["create", "--editor", "true", "-f", "bar.json"])
@@ -166,7 +169,7 @@ fn create_fails_when_template_malformed() {
     // No contract is created when the template is invalid...
     assert!(!dir.join("contracts/bar.json").exists());
     // ...and the user's (broken) template is left untouched.
-    let template = fs::read_to_string(dir.join(".apic/template.json")).unwrap();
+    let template = fs::read_to_string(dir.join(".apic/template/convention.json")).unwrap();
     assert_eq!(template, broken);
 }
 
@@ -232,7 +235,7 @@ fn validate_template_reports_ok_fail_and_rejects_filename() {
         .stdout(predicate::str::contains("ok"));
 
     // A malformed template makes `validate --template` exit non-zero with `FAIL`.
-    fs::write(dir.join(".apic/template.json"), "{ not json").unwrap();
+    fs::write(dir.join(".apic/template/convention.json"), "{ not json").unwrap();
     apic(&dir)
         .args(["validate", "--template"])
         .assert()
