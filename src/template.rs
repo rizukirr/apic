@@ -53,7 +53,6 @@ pub(crate) fn resolve_path(apic_dir: &Path) -> PathBuf {
 
 /// Lists the project's templates: every `*.json` directly inside
 /// `.apic/template/`, sorted. A missing directory yields an empty list.
-#[allow(dead_code)] // wired into `cli.rs` in a later task
 pub(crate) fn list_templates(apic_dir: &Path) -> Vec<PathBuf> {
     json_files(&dir(apic_dir))
 }

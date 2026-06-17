@@ -665,3 +665,38 @@ fn list_filter_does_not_match_across_path_components() {
         .stdout(predicate::str::contains("auth/user.json"))
         .stdout(predicate::str::contains("upload.json").not());
 }
+
+#[test]
+fn create_template_authors_named_template() {
+    let dir = init_project("author_template");
+    apic(&dir)
+        .args(["create", "--template", "billing", "--editor", "true"])
+        .assert()
+        .success();
+    assert!(dir.join(".apic/template/billing.json").exists());
+}
+
+#[test]
+fn create_contract_uses_named_template() {
+    let dir = init_project("use_named_template");
+    // A second template with a distinctive header; convention.json stays seeded.
+    let graphql = r#"{
+        "name": "gql",
+        "method": "POST",
+        "url": { "protocol": "https", "host": "api.example.com", "path": ["graphql"] },
+        "headers": [ { "name": "x-gql", "value": "1" } ],
+        "responses": []
+    }"#;
+    fs::write(dir.join(".apic/template/graphql.json"), graphql).unwrap();
+
+    apic(&dir)
+        .args(["create", "-f", "q.json", "--use-template", "graphql", "--editor", "true"])
+        .assert()
+        .success();
+
+    let created = fs::read_to_string(dir.join("contracts/q.json")).unwrap();
+    assert!(
+        created.contains("x-gql"),
+        "contract should be seeded from the graphql template"
+    );
+}
