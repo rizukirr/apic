@@ -9,9 +9,9 @@ use std::{fs::File, io::Read, path::Path};
 use serde::{Deserialize, Deserializer, de};
 use serde_json::{Map, Value};
 
-pub(crate) mod v1_0_0;
-pub(crate) mod v2_0_0;
-pub(crate) mod v2_1_0;
+pub mod v1_0_0;
+pub mod v2_0_0;
+pub mod v2_1_0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SchemaVersion {
@@ -22,7 +22,7 @@ struct SchemaVersion {
 
 /// Supported versions of the Postman Collection format.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PostmanCollectionVersion {
+pub enum PostmanCollectionVersion {
     #[allow(non_camel_case_types)]
     V1_0_0,
     #[allow(non_camel_case_types)]
@@ -33,7 +33,7 @@ pub(crate) enum PostmanCollectionVersion {
 
 /// A parsed Postman Collection, tagged by the version it was detected as.
 #[derive(Debug)]
-pub(crate) enum PostmanCollection {
+pub enum PostmanCollection {
     #[allow(non_camel_case_types)]
     V1_0_0(v1_0_0::Spec),
     #[allow(non_camel_case_types)]
@@ -69,7 +69,7 @@ impl PostmanCollection {
 }
 
 /// Parse a Postman Collection from a file path.
-pub(crate) fn from_path<P>(path: P) -> Result<PostmanCollection, String>
+pub fn from_path<P>(path: P) -> Result<PostmanCollection, String>
 where
     P: AsRef<Path>,
 {
@@ -91,7 +91,7 @@ where
 }
 
 /// Parse a Postman Collection from a byte slice.
-pub(crate) fn from_slice(input: &[u8]) -> Result<PostmanCollection, String> {
+pub fn from_slice(input: &[u8]) -> Result<PostmanCollection, String> {
     let value = serde_json::from_slice::<Value>(input)
         .map_err(|err| format!("collection is not valid JSON: {err}"))?;
     PostmanCollection::from_value(value)

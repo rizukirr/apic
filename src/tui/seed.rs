@@ -11,7 +11,7 @@ use serde_json::Value;
 /// structure, but every scalar is blanked unless the project `overlay` supplies
 /// a value at that path. Arrays present in the overlay replace the builtin's.
 fn seed_value(overlay: Option<&str>) -> Result<Value, String> {
-    let mut base: Value = serde_json::from_str(crate::template::DEFAULT)
+    let mut base: Value = serde_json::from_str(apic_core::template::DEFAULT)
         .map_err(|err| format!("builtin template invalid: {err}"))?;
     strip_to_seed_defaults(&mut base);
 
@@ -65,7 +65,7 @@ fn overlay_values(base: &mut Value, overlay: &Value) {
 pub(crate) fn seed_model(overlay: Option<&str>) -> Result<EditModel, String> {
     let value = seed_value(overlay)?;
     let text = serde_json::to_string(&value).map_err(|err| format!("seed render failed: {err}"))?;
-    let contract = crate::json::json_get(&text, None)
+    let contract = apic_core::json::json_get(&text, None)
         .map_err(|err| format!("seed is not a valid contract: {err}"))?;
     Ok(EditModel::from_contract(contract))
 }

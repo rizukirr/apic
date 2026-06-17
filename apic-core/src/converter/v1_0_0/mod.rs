@@ -7,7 +7,7 @@
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct Spec {
+pub struct Spec {
     #[serde(default)]
     pub requests: Vec<Request>,
     #[serde(default)]
@@ -15,7 +15,7 @@ pub(crate) struct Spec {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct Folder {
+pub struct Folder {
     #[serde(default)]
     pub name: String,
     /// Request ids belonging to this folder, in order.
@@ -24,7 +24,7 @@ pub(crate) struct Folder {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct Request {
+pub struct Request {
     #[serde(default)]
     pub id: String,
     #[serde(default)]

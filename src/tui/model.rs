@@ -1,10 +1,10 @@
 //! Mutable working copy of a contract while it is being edited.
 //!
-//! Mirrors [`crate::json::JsonContent`] but stores free-text, numeric, and
+//! Mirrors [`apic_core::json::JsonContent`] but stores free-text, numeric, and
 //! example fields as raw `String` buffers so half-typed input is always a
 //! valid in-memory state. Conversion to a real contract happens only on save.
 
-use crate::json::Method;
+use apic_core::json::Method;
 
 /// The whole contract under edit.
 #[derive(Debug, Clone, PartialEq)]
@@ -101,14 +101,14 @@ impl EditResponse {
     }
 }
 
-use crate::json::{Header, JsonContent, Query, RequestBody, Response, Schema, Variable};
+use apic_core::json::{Header, JsonContent, Query, RequestBody, Response, Schema, Variable};
 use serde_json::Value;
 
 /// Pretty-prints a JSON example value to raw text (4-space indent), or empty
 /// string when absent. Mirrors the on-disk formatting.
 fn example_to_text(value: Option<&Value>) -> String {
     match value {
-        Some(v) => crate::template::render_pretty(v).unwrap_or_default(),
+        Some(v) => apic_core::template::render_pretty(v).unwrap_or_default(),
         None => String::new(),
     }
 }
@@ -259,7 +259,7 @@ impl EditModel {
         }
         root.insert(
             "method".into(),
-            Value::String(crate::json::method_str(&self.method)),
+            Value::String(apic_core::json::method_str(&self.method)),
         );
 
         // url
@@ -382,8 +382,8 @@ impl EditModel {
         }
         root.insert("responses".into(), Value::Array(responses));
 
-        let contract = crate::template::render_pretty(&Value::Object(root))?;
-        crate::json::validate(&contract).map_err(|err| format!("invalid contract: {err}"))?;
+        let contract = apic_core::template::render_pretty(&Value::Object(root))?;
+        apic_core::json::validate(&contract).map_err(|err| format!("invalid contract: {err}"))?;
         Ok(contract)
     }
 
@@ -486,7 +486,7 @@ pub(crate) fn example_from_schema(fields: &[EditSchema]) -> serde_json::Value {
 
 fn gen_field_value(f: &EditSchema) -> serde_json::Value {
     use serde_json::Value;
-    let (base, is_array) = crate::json::parse_type(&f.dtype);
+    let (base, is_array) = apic_core::json::parse_type(&f.dtype);
     let v = match base {
         "string" | "file" => Value::String(format!("{{{}}}", f.name)),
         "int" | "integer" | "number" | "long" | "short" => Value::Number(0.into()),
@@ -509,7 +509,7 @@ fn gen_field_value(f: &EditSchema) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json::json_get;
+    use apic_core::json::json_get;
 
     const FULL: &str = r#"{
         "name": "login",

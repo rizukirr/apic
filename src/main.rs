@@ -10,15 +10,8 @@
 #![warn(unreachable_pub)]
 
 mod cli;
-mod config;
-mod convert;
-mod converter;
-mod file;
-mod fuzzy;
-mod json;
 mod picker;
 mod render;
-mod template;
 mod tree;
 mod tui;
 

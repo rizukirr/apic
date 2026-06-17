@@ -29,7 +29,7 @@ use std::cmp::Reverse;
 /// highlights clustered on a file name should match per-component via
 /// [`fuzzy_match_path`] (an empty query matches everything with a score of `0`
 /// and no indices); `None` if the query is not a subsequence of `candidate`.
-pub(crate) fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usize>)> {
+pub fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usize>)> {
     if query.is_empty() {
         return Some((0, Vec::new()));
     }
@@ -109,7 +109,7 @@ pub(crate) fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usiz
 /// positions in the full `candidate` string. A query containing a path
 /// separator (platform-aware: `/` everywhere, `\\` only on Windows) falls back
 /// to whole-path matching.
-pub(crate) fn fuzzy_match_path(query: &str, candidate: &str) -> Option<(i32, Vec<usize>)> {
+pub fn fuzzy_match_path(query: &str, candidate: &str) -> Option<(i32, Vec<usize>)> {
     if query.chars().any(std::path::is_separator) {
         return fuzzy_match(query, candidate);
     }
@@ -150,7 +150,7 @@ fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
 /// let hits = fuzzy_find("main", &items).unwrap();
 /// assert_eq!(hits[0].0, "src/main.rs");
 /// ```
-pub(crate) fn fuzzy_find<'a>(query: &str, items: &'a [String]) -> Option<Vec<(&'a String, i32)>> {
+pub fn fuzzy_find<'a>(query: &str, items: &'a [String]) -> Option<Vec<(&'a String, i32)>> {
     let mut results: Vec<(&String, i32)> = items
         .iter()
         .filter_map(|item| fuzzy_score(query, item).map(|score| (item, score)))

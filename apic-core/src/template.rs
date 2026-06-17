@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 /// The built-in contract template: the seed for `.apic/template/convention.json`
 /// and the fallback used when no usable project template is present.
-pub(crate) const DEFAULT: &str = include_str!("templates/contract.json");
+pub const DEFAULT: &str = include_str!("templates/contract.json");
 
 /// Name of the per-project template directory inside the `.apic` directory.
 const TEMPLATE_DIR: &str = "template";
@@ -27,12 +27,12 @@ const DEFAULT_TEMPLATE: &str = "convention.json";
 const LEGACY_TEMPLATE_FILE: &str = "template.json";
 
 /// Returns the per-project template directory inside `apic_dir`.
-pub(crate) fn dir(apic_dir: &Path) -> PathBuf {
+pub fn dir(apic_dir: &Path) -> PathBuf {
     apic_dir.join(TEMPLATE_DIR)
 }
 
 /// Returns the path to the default template inside `apic_dir`.
-pub(crate) fn default_path(apic_dir: &Path) -> PathBuf {
+pub fn default_path(apic_dir: &Path) -> PathBuf {
     dir(apic_dir).join(DEFAULT_TEMPLATE)
 }
 
@@ -42,7 +42,7 @@ pub(crate) fn default_path(apic_dir: &Path) -> PathBuf {
 /// template (its name does not matter). With zero or several files the default
 /// `convention.json` path is returned. The picker that chooses among several
 /// templates is a later change; today every reader resolves to a single file.
-pub(crate) fn resolve_path(apic_dir: &Path) -> PathBuf {
+pub fn resolve_path(apic_dir: &Path) -> PathBuf {
     let mut jsons = json_files(&dir(apic_dir));
     if jsons.len() == 1 {
         jsons.pop().expect("len checked to be 1")
@@ -53,7 +53,7 @@ pub(crate) fn resolve_path(apic_dir: &Path) -> PathBuf {
 
 /// Lists the project's templates: every `*.json` directly inside
 /// `.apic/template/`, sorted. A missing directory yields an empty list.
-pub(crate) fn list_templates(apic_dir: &Path) -> Vec<PathBuf> {
+pub fn list_templates(apic_dir: &Path) -> Vec<PathBuf> {
     json_files(&dir(apic_dir))
 }
 
@@ -82,7 +82,7 @@ fn json_files(dir: &Path) -> Vec<PathBuf> {
 ///
 /// Returns `true` when a template was written or migrated and `false` when one
 /// was already present, so callers can report whether they actually seeded it.
-pub(crate) fn seed_if_missing(apic_dir: &Path) -> Result<bool, String> {
+pub fn seed_if_missing(apic_dir: &Path) -> Result<bool, String> {
     let dir = dir(apic_dir);
     if !dir.exists() {
         fs::create_dir_all(&dir)
@@ -138,7 +138,7 @@ fn migrate(from: &Path, to: &Path) -> Result<(), String> {
 /// back to the plain default; a template that exists but does not merge into a
 /// valid contract is returned as an `Err` so `create` can abort. Outside a
 /// project the default is returned.
-pub(crate) fn resolve_for_create() -> Result<(String, Vec<String>), String> {
+pub fn resolve_for_create() -> Result<(String, Vec<String>), String> {
     match crate::config::find_apic_dir() {
         Some(apic_dir) => resolve_at(&apic_dir),
         None => Ok((DEFAULT.to_string(), Vec::new())),
@@ -166,7 +166,7 @@ fn resolve_at(apic_dir: &Path) -> Result<(String, Vec<String>), String> {
 /// (see [`merge_onto_default`]). A missing or unreadable file falls back to the
 /// plain default with a warning (returned as `Ok`); a file that exists but does
 /// not merge into a valid contract is an `Err` so `create` can abort.
-pub(crate) fn resolve_contract_from(path: &Path) -> Result<(String, Vec<String>), String> {
+pub fn resolve_contract_from(path: &Path) -> Result<(String, Vec<String>), String> {
     let overlay = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(err) => {
@@ -193,7 +193,7 @@ pub(crate) fn resolve_contract_from(path: &Path) -> Result<(String, Vec<String>)
 /// nothing. The checks compare structure — header/field/segment **names** — and,
 /// for `url.protocol`/`url.host`, exact **values**; placeholder values elsewhere
 /// (descriptions, examples, types) are ignored.
-pub(crate) struct TemplateRules {
+pub struct TemplateRules {
     /// The parsed template, or `None` when there is nothing to enforce
     /// (outside a project, or no template file present).
     template: Option<Value>,
@@ -206,7 +206,7 @@ pub(crate) struct TemplateRules {
 /// Conformance is checked against the resolved template (the sole template, or
 /// `convention.json` when several exist); contracts do not record which template
 /// they were seeded from, so `convention.json` is the canonical convention.
-pub(crate) fn load_rules() -> Result<TemplateRules, String> {
+pub fn load_rules() -> Result<TemplateRules, String> {
     let apic_dir = match find_apic_dir() {
         Some(dir) => dir,
         None => return Ok(TemplateRules { template: None }),
@@ -227,7 +227,7 @@ impl TemplateRules {
     /// Returns the conformance issues for the contract `content_json`, one short
     /// message per violation. An empty list means the contract conforms (or the
     /// template enforces nothing). Malformed contract JSON is an `Err`.
-    pub(crate) fn check(&self, content_json: &str) -> Result<Vec<String>, String> {
+    pub fn check(&self, content_json: &str) -> Result<Vec<String>, String> {
         let template = match &self.template {
             Some(template) => template,
             None => return Ok(Vec::new()),
@@ -393,7 +393,7 @@ fn schema_field_names(schema: &Value, prefix: &str, out: &mut Vec<String>) {
 }
 
 /// Validation outcome for `apic validate --template`.
-pub(crate) enum TemplateCheck {
+pub enum TemplateCheck {
     /// No project, or no readable template file present — nothing to validate.
     Absent,
     /// The template merges onto the default and yields a valid contract.
@@ -407,7 +407,7 @@ pub(crate) enum TemplateCheck {
 /// A missing or unreadable file is [`TemplateCheck::Absent`]; a present file is
 /// `Valid`/`Invalid` based on the same [`merge_onto_default`] used to build the
 /// contract.
-pub(crate) fn check_path(path: &Path) -> TemplateCheck {
+pub fn check_path(path: &Path) -> TemplateCheck {
     let overlay = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(_) => return TemplateCheck::Absent,
@@ -454,7 +454,7 @@ fn merge(base: &mut Value, overlay: Value) {
 
 /// Serializes `value` as pretty JSON with four-space indentation, matching the
 /// style of the embedded template.
-pub(crate) fn render_pretty(value: &Value) -> Result<String, String> {
+pub fn render_pretty(value: &Value) -> Result<String, String> {
     let mut buf = Vec::new();
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut serializer = serde_json::Serializer::with_formatter(&mut buf, formatter);

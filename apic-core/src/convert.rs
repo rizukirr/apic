@@ -206,7 +206,7 @@ fn build_contract(raw: RawRequest) -> JsonContent {
 }
 
 /// One contract destined for a file at `rel_path` (relative to `--destination`).
-pub(crate) struct MappedContract {
+pub struct MappedContract {
     pub rel_path: PathBuf,
     pub contract: JsonContent,
     /// A lossy-mapping note surfaced to the user (e.g. an unsupported HTTP
@@ -531,15 +531,15 @@ fn write_contracts(dest_base: &Path, mapped: &[MappedContract]) -> Result<usize,
 }
 
 /// The result of a successful `convert::run`, for the caller to report.
-pub(crate) struct ConvertOutcome {
-    pub(crate) written: usize,
-    pub(crate) destination: std::path::PathBuf,
-    pub(crate) warnings: Vec<String>,
+pub struct ConvertOutcome {
+    pub written: usize,
+    pub destination: std::path::PathBuf,
+    pub warnings: Vec<String>,
 }
 
 /// Parses the collection at `collection_path`, maps it, writes contracts under
 /// `dest_base`, and returns what happened. Does not print — the caller reports.
-pub(crate) fn run(collection_path: &Path, dest_base: &Path) -> Result<ConvertOutcome, String> {
+pub fn run(collection_path: &Path, dest_base: &Path) -> Result<ConvertOutcome, String> {
     let collection = converter::from_path(collection_path)?;
     let mapped = map(&collection);
     if mapped.is_empty() {

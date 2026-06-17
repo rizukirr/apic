@@ -298,7 +298,7 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
     let mut out = Vec::new();
 
     // Header block: name, description, URL.
-    let method_s = crate::json::method_str(&m.method);
+    let method_s = apic_core::json::method_str(&m.method);
     let url_expanded = expanded == Some(Expand::Url);
     let mut head_rows = vec![
         TableRow {
@@ -506,7 +506,7 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json::json_get;
+    use apic_core::json::json_get;
 
     fn model() -> EditModel {
         let c = json_get(

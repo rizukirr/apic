@@ -7,7 +7,7 @@
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct Spec {
+pub struct Spec {
     #[serde(default)]
     pub item: Vec<Items>,
 }
@@ -17,7 +17,7 @@ pub(crate) struct Spec {
 /// Disambiguated by required fields — a leaf has `request`, a folder has `item`.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-pub(crate) enum Items {
+pub enum Items {
     Item(Item),
     ItemGroup(ItemGroup),
 }
@@ -25,7 +25,7 @@ pub(crate) enum Items {
 /// A single request and its saved responses. The required `request` field is
 /// what distinguishes a leaf from a folder during untagged matching.
 #[derive(Debug, Deserialize)]
-pub(crate) struct Item {
+pub struct Item {
     pub name: Option<String>,
     pub description: Option<DescriptionUnion>,
     pub request: RequestClass,
@@ -34,13 +34,13 @@ pub(crate) struct Item {
 
 /// A folder grouping nested items.
 #[derive(Debug, Deserialize)]
-pub(crate) struct ItemGroup {
+pub struct ItemGroup {
     pub name: Option<String>,
     pub item: Vec<Items>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct RequestClass {
+pub struct RequestClass {
     pub method: Option<String>,
     pub url: Option<Url>,
     pub header: Option<Vec<Header>>,
@@ -50,18 +50,18 @@ pub(crate) struct RequestClass {
 /// A URL is either the literal string or a broken-down object with a `raw` form.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-pub(crate) enum Url {
+pub enum Url {
     String(String),
     UrlClass(UrlClass),
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct UrlClass {
+pub struct UrlClass {
     pub raw: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct Header {
+pub struct Header {
     #[serde(default)]
     pub key: String,
     #[serde(default)]
@@ -70,12 +70,12 @@ pub(crate) struct Header {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct Body {
+pub struct Body {
     pub raw: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct ResponseClass {
+pub struct ResponseClass {
     pub code: Option<i64>,
     pub status: Option<String>,
     pub body: Option<String>,
@@ -84,12 +84,12 @@ pub(crate) struct ResponseClass {
 /// A description is either a raw string or an object holding the text.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-pub(crate) enum DescriptionUnion {
+pub enum DescriptionUnion {
     Description(Description),
     String(String),
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct Description {
+pub struct Description {
     pub content: Option<String>,
 }
