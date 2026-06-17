@@ -82,13 +82,45 @@ fn json_files(dir: &Path) -> Vec<PathBuf> {
 /// Returns `true` when the file was written and `false` when it was already
 /// present, so callers can report whether they actually seeded it.
 pub(crate) fn seed_if_missing(apic_dir: &Path) -> Result<bool, String> {
-    let path = path(apic_dir);
-    if path.exists() {
+    let dir = dir(apic_dir);
+    if !dir.exists() {
+        fs::create_dir_all(&dir)
+            .map_err(|err| format!("Failed to create {}: {}", dir.display(), err))?;
+    }
+
+    // One-time migration: an existing single-file template becomes the default,
+    // unless the directory already holds a template (then leave the legacy file).
+    let legacy = apic_dir.join(LEGACY_TEMPLATE_FILE);
+    if legacy.is_file() && json_files(&dir).is_empty() {
+        migrate(&legacy, &default_path(apic_dir))?;
+        return Ok(true);
+    }
+
+    let target = resolve_path(apic_dir);
+    if target.exists() {
         return Ok(false);
     }
-    fs::write(&path, DEFAULT)
+    fs::write(&target, DEFAULT)
         .map(|()| true)
-        .map_err(|err| format!("Failed to write {}: {}", path.display(), err))
+        .map_err(|err| format!("Failed to write {}: {}", target.display(), err))
+}
+
+/// Moves `from` to `to`, falling back to copy + remove when a plain rename fails
+/// (e.g. across filesystems).
+fn migrate(from: &Path, to: &Path) -> Result<(), String> {
+    if fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    fs::copy(from, to).map_err(|err| {
+        format!(
+            "Failed to migrate {} to {}: {}",
+            from.display(),
+            to.display(),
+            err
+        )
+    })?;
+    fs::remove_file(from)
+        .map_err(|err| format!("Failed to remove {} after migration: {}", from.display(), err))
 }
 
 /// Returns the contract body that `apic create` should write.
@@ -483,7 +515,7 @@ mod tests {
     fn seed_if_missing_writes_default_when_absent() {
         let dir = temp_apic("seed_absent");
         assert!(seed_if_missing(&dir).unwrap());
-        let written = fs::read_to_string(dir.join("template.json")).unwrap();
+        let written = fs::read_to_string(default_path(&dir)).unwrap();
         assert_eq!(written, DEFAULT);
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -492,10 +524,33 @@ mod tests {
     fn seed_if_missing_does_not_overwrite_existing() {
         let dir = temp_apic("seed_existing");
         let custom = r#"{ "marker": "mine" }"#;
-        fs::write(dir.join("template.json"), custom).unwrap();
+        write_default_template(&dir, custom);
         assert!(!seed_if_missing(&dir).unwrap());
-        let after = fs::read_to_string(dir.join("template.json")).unwrap();
+        let after = fs::read_to_string(default_path(&dir)).unwrap();
         assert_eq!(after, custom);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn seed_if_missing_migrates_legacy_template() {
+        let dir = temp_apic("seed_migrate");
+        let custom = r#"{ "marker": "legacy" }"#;
+        fs::write(dir.join("template.json"), custom).unwrap();
+        assert!(seed_if_missing(&dir).unwrap());
+        assert_eq!(fs::read_to_string(default_path(&dir)).unwrap(), custom);
+        assert!(!dir.join("template.json").exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn seed_if_missing_skips_migration_when_dir_has_template() {
+        let dir = temp_apic("seed_no_clobber");
+        fs::write(dir.join("template.json"), r#"{ "marker": "legacy" }"#).unwrap();
+        let existing = r#"{ "marker": "existing" }"#;
+        write_default_template(&dir, existing);
+        assert!(!seed_if_missing(&dir).unwrap());
+        assert_eq!(fs::read_to_string(default_path(&dir)).unwrap(), existing);
+        assert!(dir.join("template.json").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 
