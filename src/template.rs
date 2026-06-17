@@ -1,11 +1,11 @@
 //! The contract template used by `apic create`.
 //!
 //! The default template is embedded at compile time and supplies a complete
-//! contract. A project can customize it by editing `.apic/template.json`, which
-//! is overlaid onto the default — so the project template only needs to carry
-//! the fields it wants to change and may be a small partial contract. `apic
-//! init` seeds that file from the default, and it is never overwritten once it
-//! exists.
+//! contract. A project can customize it by editing `.apic/template/convention.json`,
+//! which is overlaid onto the default — so the project template only needs to
+//! carry the fields it wants to change and may be a small partial contract.
+//! `apic init` seeds that file from the default, and it is never overwritten once
+//! it exists.
 
 use crate::config::find_apic_dir;
 use serde::Serialize;
@@ -13,8 +13,8 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The built-in contract template: the seed for `.apic/template.json` and the
-/// fallback used when no usable project template is present.
+/// The built-in contract template: the seed for `.apic/template/convention.json`
+/// and the fallback used when no usable project template is present.
 pub(crate) const DEFAULT: &str = include_str!("templates/contract.json");
 
 /// Name of the per-project template directory inside the `.apic` directory.
@@ -68,11 +68,14 @@ fn json_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Writes the default template to `<apic_dir>/template.json` when that file
-/// does not already exist. An existing template is left untouched.
+/// Ensures `<apic_dir>/template/` holds a template, creating the directory and
+/// seeding `convention.json` from the default when none is present. A legacy
+/// `<apic_dir>/template.json` is migrated into the directory as `convention.json`
+/// (one-time), unless the directory already holds a template. An existing
+/// template is left untouched.
 ///
-/// Returns `true` when the file was written and `false` when it was already
-/// present, so callers can report whether they actually seeded it.
+/// Returns `true` when a template was written or migrated and `false` when one
+/// was already present, so callers can report whether they actually seeded it.
 pub(crate) fn seed_if_missing(apic_dir: &Path) -> Result<bool, String> {
     let dir = dir(apic_dir);
     if !dir.exists() {
@@ -111,18 +114,24 @@ fn migrate(from: &Path, to: &Path) -> Result<(), String> {
             err
         )
     })?;
-    fs::remove_file(from)
-        .map_err(|err| format!("Failed to remove {} after migration: {}", from.display(), err))
+    fs::remove_file(from).map_err(|err| {
+        format!(
+            "Failed to remove {} after migration: {}",
+            from.display(),
+            err
+        )
+    })
 }
 
 /// Returns the contract body that `apic create` should write.
 ///
-/// The embedded default is always the base. Inside a project the per-project
-/// `.apic/template.json` is seeded when missing, then overlaid onto the default
-/// (see [`merge_onto_default`]) so the user only has to specify the fields they
-/// want to change. A missing or unreadable file falls back to the plain default;
-/// a template that exists but does not merge into a valid contract is returned as
-/// an `Err` so `create` can abort. Outside a project the default is returned.
+/// The embedded default is always the base. Inside a project the resolved
+/// per-project template (see [`resolve_path`]) is seeded when missing, then
+/// overlaid onto the default (see [`merge_onto_default`]) so the user only has to
+/// specify the fields they want to change. A missing or unreadable file falls
+/// back to the plain default; a template that exists but does not merge into a
+/// valid contract is returned as an `Err` so `create` can abort. Outside a
+/// project the default is returned.
 pub(crate) fn resolve_for_create() -> Result<String, String> {
     match crate::config::find_apic_dir() {
         Some(apic_dir) => resolve_at(&apic_dir),
@@ -162,8 +171,8 @@ fn resolve_at(apic_dir: &Path) -> Result<String, String> {
     }
 }
 
-/// Template-conformance rules for `apic validate`, loaded once from
-/// `.apic/template.json` and reused for every contract.
+/// Template-conformance rules for `apic validate`, loaded once from the resolved
+/// project template (see [`resolve_path`]) and reused for every contract.
 ///
 /// The template is treated as a *partial*: only the sections it actually
 /// declares are enforced, so an empty template (or none at all) enforces
@@ -386,7 +395,7 @@ pub(crate) fn check_template() -> TemplateCheck {
     }
 }
 
-/// Read-only validity check of `<apic_dir>/template.json`.
+/// Read-only validity check of the resolved project template (see [`resolve_path`]).
 ///
 /// A missing or unreadable file is [`TemplateCheck::Absent`] (consistent with
 /// `create` treating those as non-fatal); a present file is `Valid`/`Invalid`
