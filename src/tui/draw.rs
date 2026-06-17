@@ -839,7 +839,7 @@ mod tests {
         let c = json_get(
             r#"{ "name":"t","method":"GET",
                  "url":{"protocol":"https","host":"h","path":["x"],
-                        "query":[{"name":"page","value":"1","description":"d","required":false}]},
+                        "query":[{"name":"page","type":"1","description":"d","required":false}]},
                  "headers":[],"responses":[] }"#,
             None,
         )

@@ -62,13 +62,13 @@ impl Printer {
                     .map(|q| {
                         vec![
                             q.name.clone(),
-                            q.value.clone(),
+                            q.dtype.clone(),
                             req_mark(q.required),
                             q.description.clone().unwrap_or_default(),
                         ]
                     })
                     .collect();
-                self.table(Some(&["NAME", "VALUE", "REQ", "DESCRIPTION"]), &rows);
+                self.table(Some(&["NAME", "TYPE", "REQ", "DESCRIPTION"]), &rows);
             }
             _ => self.none(),
         }

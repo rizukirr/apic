@@ -82,23 +82,44 @@ enum Commands {
         #[arg(long, short = 'e')]
         example: bool,
     },
-    /// Scaffold a new contract and edit it in the interactive TUI.
+    /// Scaffold a new contract — or, with `--template`, a new project template.
     ///
     /// Opens a full-screen editor seeded from the project template's structure;
     /// the file is written when you save. Pass `--editor` to scaffold the file
     /// to disk and open it in `$VISUAL`/`$EDITOR` instead. The path is resolved
     /// against the working directory and confined to it; a `..` escape or an
     /// absolute path elsewhere is rejected. Refuses to overwrite an existing file.
+    ///
+    /// With `--template <name>` a new template is authored at
+    /// `.apic/template/<name>.json` instead of a contract. `--use-template <name>`
+    /// picks which existing template seeds the new contract or template, skipping
+    /// the interactive picker shown when several templates exist.
     Create {
         /// Path for the new contract, relative to the working directory
-        /// (e.g. `auth/login.json`).
-        #[arg(long, short = 'f', value_name = "FILENAME")]
+        /// (e.g. `auth/login.json`). Required unless `--template` is given.
+        #[arg(
+            long,
+            short = 'f',
+            value_name = "FILENAME",
+            required_unless_present = "template"
+        )]
         filename: Option<String>,
 
         /// Edit in this external editor (e.g. `nvim` or `"code --wait"`) instead
         /// of the built-in TUI, overriding `$VISUAL` and `$EDITOR`.
         #[arg(long, short = 'e', value_name = "EDITOR")]
         editor: Option<String>,
+
+        /// Author a new template at `.apic/template/<NAME>.json` instead of a
+        /// contract (flat name; seeded from the built-in default or
+        /// `--use-template`).
+        #[arg(long, short = 't', value_name = "NAME", conflicts_with = "filename")]
+        template: Option<String>,
+
+        /// Seed the new contract or template from this existing template
+        /// (fuzzy-matched in `.apic/template/`), skipping the interactive picker.
+        #[arg(long, value_name = "NAME")]
+        use_template: Option<String>,
     },
     /// Check that contracts parse and conform to the schema.
     ///
@@ -302,6 +323,164 @@ fn classify(filename: &str, root: &Path, files: &[PathBuf]) -> Resolution {
             }
         }
         None => Resolution::None,
+    }
+}
+
+/// Classifies a `--use-template` `name` against the project `templates`.
+///
+/// Matches by basename: an exact basename (with or without `.json`) wins;
+/// failing that, a fuzzy match over the template basenames with tie detection on
+/// the top score. Mirrors [`classify`] without the working-directory confinement.
+fn classify_template(name: &str, templates: &[PathBuf]) -> Resolution {
+    let target = if name.ends_with(".json") {
+        name.to_string()
+    } else {
+        format!("{name}.json")
+    };
+    let exact: Vec<PathBuf> = templates
+        .iter()
+        .filter(|t| t.file_name().is_some_and(|n| n.to_string_lossy() == target))
+        .cloned()
+        .collect();
+    match exact.len() {
+        1 => return Resolution::One(exact.into_iter().next().unwrap()),
+        n if n > 1 => return Resolution::Many(exact),
+        _ => {}
+    }
+
+    // Fuzzy fallback over the template file names, with tie detection on the top
+    // score, mapping each surviving name back to its path.
+    let names: Vec<String> = templates
+        .iter()
+        .map(|t| {
+            t.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    match fuzzy_find(name, &names) {
+        Some(hits) => {
+            let top = hits[0].1;
+            let tied: Vec<PathBuf> = hits
+                .iter()
+                .take_while(|(_, score)| *score == top)
+                .filter_map(|&(fname, _)| {
+                    templates
+                        .iter()
+                        .find(|t| {
+                            t.file_name().map(|n| n.to_string_lossy()).as_deref()
+                                == Some(fname.as_str())
+                        })
+                        .cloned()
+                })
+                .collect();
+            match tied.len() {
+                1 => Resolution::One(tied.into_iter().next().unwrap()),
+                0 => Resolution::None,
+                _ => Resolution::Many(tied),
+            }
+        }
+        None => Resolution::None,
+    }
+}
+
+/// Which template a `create` should seed from.
+enum TemplateChoice {
+    /// Seed from this specific template file.
+    Template(PathBuf),
+    /// No specific template — use the project default (`convention.json`, then
+    /// the built-in).
+    Default,
+    /// The user cancelled an interactive pick.
+    Cancelled,
+}
+
+/// Chooses which template `create` seeds from.
+///
+/// With `use_template`, the name is fuzzy-resolved against the project templates
+/// (exact basename first): a unique match is used, no match errors, a tie shows
+/// the picker on a terminal and errors otherwise. Without it, a single template
+/// is used, several show the picker on a terminal (falling back to the default
+/// when non-interactive), and none yields the default.
+fn select_create_template(
+    apic_dir: &Path,
+    use_template: Option<&str>,
+) -> Result<TemplateChoice, String> {
+    let templates = crate::template::list_templates(apic_dir);
+    let root = apic_dir.parent().unwrap_or(apic_dir);
+
+    match use_template {
+        Some(name) => match classify_template(name, &templates) {
+            Resolution::One(path) => Ok(TemplateChoice::Template(path)),
+            Resolution::None => Err(no_template_error(name, &templates, root)),
+            Resolution::Many(candidates) => pick_template(name, candidates, root),
+        },
+        None => match templates.len() {
+            0 => Ok(TemplateChoice::Default),
+            1 => Ok(TemplateChoice::Template(
+                templates.into_iter().next().unwrap(),
+            )),
+            _ => {
+                if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+                    pick_template("", templates, root)
+                } else {
+                    Ok(TemplateChoice::Default)
+                }
+            }
+        },
+    }
+}
+
+/// Builds the "no template matches" error, listing what is available.
+fn no_template_error(name: &str, templates: &[PathBuf], root: &Path) -> String {
+    let mut msg = format!("no template matching '{}'", sanitize(name));
+    if templates.is_empty() {
+        msg.push_str("; no templates in .apic/template/");
+    } else {
+        msg.push_str("; available:\n");
+        for t in templates {
+            msg.push_str(&format!("  {}\n", rel_display(t, root)));
+        }
+    }
+    msg
+}
+
+/// Shows the template picker on a terminal; errors with the candidate list when
+/// non-interactive so scripts fail loudly instead of hanging.
+fn pick_template(
+    name: &str,
+    candidates: Vec<PathBuf>,
+    root: &Path,
+) -> Result<TemplateChoice, String> {
+    let labels: Vec<String> = candidates.iter().map(|c| rel_display(c, root)).collect();
+    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+        let mut msg = if name.is_empty() {
+            format!(
+                "{} templates available, pick one with --use-template:\n",
+                labels.len()
+            )
+        } else {
+            format!("'{}' matches {} templates:\n", sanitize(name), labels.len())
+        };
+        for label in &labels {
+            msg.push_str(&format!("  {label}\n"));
+        }
+        msg.push_str(&format!("Specify one, e.g. --use-template {}", labels[0]));
+        return Err(msg);
+    }
+    let prompt = if name.is_empty() {
+        format!("{} templates available:", candidates.len())
+    } else {
+        format!(
+            "{} templates match \"{}\":",
+            candidates.len(),
+            sanitize(name)
+        )
+    };
+    match picker::pick(&prompt, &labels).map_err(|err| format!("picker failed: {err}"))? {
+        Some(idx) => Ok(TemplateChoice::Template(candidates[idx].clone())),
+        None => Ok(TemplateChoice::Cancelled),
     }
 }
 
@@ -568,14 +747,98 @@ fn template_display_path() -> String {
     }
 }
 
-/// Creates a new contract. Without `--editor` the interactive TUI is opened,
-/// seeded from the project template's structure; with `--editor` the contract
-/// is scaffolded to disk and opened in the external editor (legacy behavior).
+/// Dispatches `apic create`: `--template <name>` authors a template, otherwise a
+/// contract is created at `-f <filename>`. `--use-template` selects the seed
+/// template for either mode.
+fn create_cmd(
+    filename: Option<&str>,
+    template: Option<&str>,
+    use_template: Option<&str>,
+    editor: Option<&str>,
+) -> Result<(), String> {
+    if let Some(name) = template {
+        return create_template_cmd(name, use_template, editor);
+    }
+    // clap guarantees `-f` is present when `--template` is absent.
+    let filename = filename.expect("clap requires -f unless --template is given");
+    create_contract_cmd(filename, use_template, editor)
+}
+
+/// Authors a new template at `.apic/template/<name>.json`.
+///
+/// Requires an initialized project. The name is flat (no path separators). Seeds
+/// from an existing template (`--use-template`) or the built-in default. Refuses
+/// to overwrite an existing template. Without `--editor` the TUI is opened and
+/// the file is written on save; with `--editor` the seed is scaffolded to disk
+/// and opened in the external editor.
+fn create_template_cmd(
+    name: &str,
+    use_template: Option<&str>,
+    editor: Option<&str>,
+) -> Result<(), String> {
+    let apic_dir =
+        crate::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
+
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err(format!(
+            "invalid template name '{}': use a flat name without path separators",
+            sanitize(name)
+        ));
+    }
+    let file = if name.ends_with(".json") {
+        name.to_string()
+    } else {
+        format!("{name}.json")
+    };
+    let dir = crate::template::dir(&apic_dir);
+    fs::create_dir_all(&dir)
+        .map_err(|err| format!("Failed to create {}: {}", dir.display(), err))?;
+    let path = dir.join(&file);
+    if path.exists() {
+        return Err(format!("template '{}' already exists", sanitize(&file)));
+    }
+
+    // Seed source: an existing template (via --use-template) or the built-in.
+    let source = match use_template {
+        Some(src) => match select_create_template(&apic_dir, Some(src))? {
+            TemplateChoice::Template(p) => Some(p),
+            TemplateChoice::Cancelled => return cancelled(),
+            TemplateChoice::Default => None,
+        },
+        None => None,
+    };
+
+    if editor.is_some() {
+        let contract = match &source {
+            Some(p) => crate::template::resolve_contract_from(p)?,
+            None => crate::template::DEFAULT.to_string(),
+        };
+        fs::write(&path, contract)
+            .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
+        println!("Created {}", home_relative(&sanitize(&to_slash(&path))));
+        return open_in_editor(&path, editor)
+            .map_err(|err| format!("Failed to open editor: {err}"));
+    }
+
+    let overlay = match &source {
+        Some(p) => read_file(p).ok(),
+        None => None,
+    };
+    let model = crate::tui::seed_model(overlay.as_deref())?;
+    crate::tui::run(model, &path)
+}
+
+/// Creates a new contract at `filename`, seeded from the chosen template.
 ///
 /// Inside an initialized project the `filename` is resolved against the working
 /// directory and confined to it; a `..` escape or absolute path elsewhere is
-/// rejected. Refuses to overwrite an existing file.
-fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
+/// rejected. Refuses to overwrite an existing file. The seed template is chosen
+/// by [`select_create_template`] (interactive picker when ambiguous).
+fn create_contract_cmd(
+    filename: &str,
+    use_template: Option<&str>,
+    editor: Option<&str>,
+) -> Result<(), String> {
     let path = match read_config_file().and_then(|conf| conf.get_root_dir()) {
         Ok(root) => confine_to_dir(&root, Path::new(filename))?,
         Err(_) => PathBuf::from(filename),
@@ -585,9 +848,21 @@ fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
         return Err(format!("{} already exists", path.display()));
     }
 
+    let chosen = match crate::config::find_apic_dir() {
+        Some(apic_dir) => match select_create_template(&apic_dir, use_template)? {
+            TemplateChoice::Template(p) => Some(p),
+            TemplateChoice::Default => None,
+            TemplateChoice::Cancelled => return cancelled(),
+        },
+        None => None,
+    };
+
     if editor.is_some() {
         // Legacy path: scaffold to disk, then open the external editor.
-        let contract = crate::template::resolve_for_create()?;
+        let contract = match &chosen {
+            Some(p) => crate::template::resolve_contract_from(p)?,
+            None => crate::template::resolve_for_create()?,
+        };
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|err| format!("Failed to create {}: {}", parent.display(), err))?;
@@ -601,7 +876,10 @@ fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
 
     // Default path: seed an EditModel and open the TUI. The file is written only
     // when the user saves inside the TUI.
-    let overlay = read_project_template();
+    let overlay = match &chosen {
+        Some(p) => read_file(p).ok(),
+        None => read_project_template(),
+    };
     let model = crate::tui::seed_model(overlay.as_deref())?;
     crate::tui::run(model, &path)
 }
@@ -837,10 +1115,17 @@ pub(crate) fn run() {
     let cli = Cli::parse();
     let result: Result<(), String> = match cli.command {
         Commands::Config { set_dir } => update_working_dir(set_dir.as_deref()),
-        Commands::Create { filename, editor } => match filename {
-            Some(filename) => create_cmd(&filename, editor.as_deref()),
-            None => Err("no filename provided, use 'apic create -f <filename>'".to_string()),
-        },
+        Commands::Create {
+            filename,
+            editor,
+            template,
+            use_template,
+        } => create_cmd(
+            filename.as_deref(),
+            template.as_deref(),
+            use_template.as_deref(),
+            editor.as_deref(),
+        ),
         Commands::Init { set_dir } => init_cmd(set_dir.as_deref()),
         Commands::List { filter, absolute } => list_cmd(filter.as_deref(), absolute),
         Commands::Read {
@@ -970,5 +1255,49 @@ mod tests {
     fn classify_no_match_returns_none() {
         let (root, files) = fake("/proj", &["a/user.json"]);
         assert!(matches!(classify("qqqq", &root, &files), Resolution::None));
+    }
+
+    #[test]
+    fn classify_template_exact_basename_with_and_without_ext() {
+        let (_root, files) = fake("/tmp/.apic/template", &["convention.json", "graphql.json"]);
+        for q in ["convention", "convention.json"] {
+            match classify_template(q, &files) {
+                Resolution::One(p) => {
+                    assert_eq!(p, PathBuf::from("/tmp/.apic/template/convention.json"))
+                }
+                other => panic!("expected One for {q}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn classify_template_fuzzy_unique_match() {
+        let (_root, files) = fake("/tmp/.apic/template", &["convention.json", "graphql.json"]);
+        match classify_template("graph", &files) {
+            Resolution::One(p) => {
+                assert_eq!(p, PathBuf::from("/tmp/.apic/template/graphql.json"))
+            }
+            other => panic!("expected One, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_template_no_match_is_none() {
+        let (_root, files) = fake("/tmp/.apic/template", &["convention.json"]);
+        assert!(matches!(
+            classify_template("zzz_no_match", &files),
+            Resolution::None
+        ));
+    }
+
+    #[test]
+    fn classify_template_fuzzy_tie_is_many() {
+        // "usr" is a subsequence of both basenames at identical positions, so the
+        // two score equally — the same tie the read fuzzy-tie e2e relies on.
+        let (_root, files) = fake("/tmp/.apic/template", &["user-a.json", "user-b.json"]);
+        match classify_template("usr", &files) {
+            Resolution::Many(c) => assert_eq!(c.len(), 2),
+            other => panic!("expected Many, got {other:?}"),
+        }
     }
 }

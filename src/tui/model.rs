@@ -36,7 +36,7 @@ pub(crate) struct EditHeader {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct EditQuery {
     pub name: String,
-    pub value: String,
+    pub dtype: String,       // data type, e.g. "string", "int"
     pub description: String, // empty => None
     pub required: bool,
 }
@@ -152,7 +152,7 @@ impl EditModel {
                     .into_iter()
                     .map(|q: Query| EditQuery {
                         name: q.name,
-                        value: q.value,
+                        dtype: q.dtype,
                         description: opt_to_string(q.description),
                         required: q.required,
                     })
@@ -282,7 +282,12 @@ impl EditModel {
                         .map(|q| {
                             let mut m = serde_json::Map::new();
                             m.insert("name".into(), Value::String(q.name.clone()));
-                            m.insert("value".into(), Value::String(q.value.clone()));
+                            let dtype = if q.dtype.trim().is_empty() {
+                                "string"
+                            } else {
+                                q.dtype.as_str()
+                            };
+                            m.insert("type".into(), Value::String(dtype.to_string()));
                             if let Some(d) = str_opt(&q.description) {
                                 m.insert("description".into(), Value::String(d.to_string()));
                             }
@@ -513,7 +518,7 @@ mod tests {
         "url": {
             "protocol": "https", "host": "api.example.com",
             "path": ["auth", "{id}"],
-            "query": [{ "name": "page", "value": "1", "description": "Page", "required": false }],
+            "query": [{ "name": "page", "type": "1", "description": "Page", "required": false }],
             "variable": [{ "name": "id", "type": "int", "description": "User id", "required": true }]
         },
         "headers": [{ "name": "Content-Type", "value": "application/json" }],

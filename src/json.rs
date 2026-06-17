@@ -33,7 +33,7 @@ pub(crate) struct JsonContent {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct RequestBody {
     /// Body shape: `"object"` (default) or an array form like `"object[]"`.
-    #[serde(alias = "type", default = "default_body_type")]
+    #[serde(rename = "type", default = "default_body_type")]
     pub(crate) dtype: String,
     #[serde(default)]
     pub(crate) schema: Option<Vec<Schema>>,
@@ -56,7 +56,7 @@ pub(crate) struct Url {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct Variable {
     pub(crate) name: String,
-    #[serde(alias = "type", default = "default_variable_type")]
+    #[serde(rename = "type", default = "default_variable_type")]
     pub(crate) dtype: String,
     pub(crate) description: Option<String>,
     #[serde(default)]
@@ -68,6 +68,11 @@ fn default_variable_type() -> String {
     "string".to_string()
 }
 
+/// Query parameters default to `string` when `type` is omitted.
+fn default_query_type() -> String {
+    "string".to_string()
+}
+
 /// Request/response bodies default to a single `object` when `type` is omitted.
 fn default_body_type() -> String {
     "object".to_string()
@@ -76,7 +81,8 @@ fn default_body_type() -> String {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct Query {
     pub(crate) name: String,
-    pub(crate) value: String,
+    #[serde(rename = "type", default = "default_query_type")]
+    pub(crate) dtype: String,
     pub(crate) description: Option<String>,
     pub(crate) required: bool,
 }
@@ -92,7 +98,7 @@ pub(crate) struct Response {
     pub code: u16,
     pub description: String,
     /// Body shape: `"object"` (default) or an array form like `"object[]"`.
-    #[serde(alias = "type", default = "default_body_type")]
+    #[serde(rename = "type", default = "default_body_type")]
     pub dtype: String,
     /// Field-level schema; may be omitted when only an example is provided.
     #[serde(default)]
@@ -105,7 +111,7 @@ pub(crate) struct Response {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct Schema {
     pub(crate) name: String,
-    #[serde(alias = "type")]
+    #[serde(rename = "type")]
     pub(crate) dtype: String,
     pub(crate) default: Option<String>,
     pub(crate) description: String,
@@ -237,6 +243,55 @@ mod tests {
             { "code": 404, "description": "no", "schema": [] }
         ]
     }"#;
+
+    #[test]
+    fn query_reads_type_field() {
+        let q: Query =
+            serde_json::from_str(r#"{ "name": "page", "type": "int", "required": false }"#)
+                .unwrap();
+        assert_eq!(q.dtype, "int");
+    }
+
+    #[test]
+    fn query_type_defaults_to_string_when_absent() {
+        let q: Query = serde_json::from_str(r#"{ "name": "page", "required": false }"#).unwrap();
+        assert_eq!(q.dtype, "string");
+    }
+
+    #[test]
+    fn query_legacy_value_key_is_ignored() {
+        // Old contracts carried an example `value`; it is dropped, type defaults.
+        let q: Query =
+            serde_json::from_str(r#"{ "name": "page", "value": "1", "required": false }"#).unwrap();
+        assert_eq!(q.dtype, "string");
+    }
+
+    #[test]
+    fn query_serializes_type_key() {
+        let q = Query {
+            name: "page".into(),
+            dtype: "int".into(),
+            description: None,
+            required: false,
+        };
+        let json = serde_json::to_string(&q).unwrap();
+        assert!(json.contains("\"type\":\"int\""), "got: {json}");
+        assert!(!json.contains("\"dtype\""), "got: {json}");
+    }
+
+    #[test]
+    fn variable_serializes_type_key() {
+        // Derived Serialize (used by `apic convert`) must emit `type`, not `dtype`.
+        let v = Variable {
+            name: "id".into(),
+            dtype: "int".into(),
+            description: None,
+            required: true,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("\"type\":\"int\""), "got: {json}");
+        assert!(!json.contains("\"dtype\""), "got: {json}");
+    }
 
     #[test]
     fn parse_type_splits_the_array_suffix() {

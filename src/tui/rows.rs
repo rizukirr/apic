@@ -29,7 +29,7 @@ pub(crate) enum Field {
     PathSeg(usize),
     PathAdd,
     QueryName(usize),
-    QueryValue(usize),
+    QueryType(usize),
     QueryDesc(usize),
     QueryRequired(usize),
     QueryAdd,
@@ -386,7 +386,7 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
     for (i, q) in m.url.query.iter().enumerate() {
         q_rows.push(field_row(vec![
             text(Field::QueryName(i), q.name.clone()),
-            text(Field::QueryValue(i), q.value.clone()),
+            text(Field::QueryType(i), q.dtype.clone()),
             bool_cell(Field::QueryRequired(i), q.required),
             text(Field::QueryDesc(i), q.description.clone()),
         ]));
@@ -394,7 +394,7 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
     out.push(Section {
         title: "QUERY".into(),
         kind: SectionKind::Table,
-        headers: Some(vec!["NAME", "VALUE", "REQ", "DESCRIPTION"]),
+        headers: Some(vec!["NAME", "TYPE", "REQ", "DESCRIPTION"]),
         rows: q_rows,
         add: Some(Field::QueryAdd),
         expand: None,

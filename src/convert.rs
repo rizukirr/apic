@@ -99,10 +99,10 @@ fn split_raw_url(raw: &str) -> Url {
             .split('&')
             .filter(|pair| !pair.is_empty())
             .map(|pair| {
-                let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+                let (k, _) = pair.split_once('=').unwrap_or((pair, ""));
                 Query {
                     name: k.to_string(),
-                    value: v.to_string(),
+                    dtype: "string".to_string(),
                     description: None,
                     required: false,
                 }
@@ -593,7 +593,7 @@ mod tests {
         let q = u.query.unwrap();
         assert_eq!(q.len(), 2);
         assert_eq!(q[0].name, "limit");
-        assert_eq!(q[0].value, "10");
+        assert_eq!(q[0].dtype, "string");
         let vars = u.variable.unwrap();
         assert_eq!(vars.len(), 1);
         assert_eq!(vars[0].name, "id");
@@ -805,12 +805,13 @@ mod tests {
         assert_eq!(u.path, Some(vec!["v1".into(), "items".into()]));
         let q = u.query.unwrap();
         assert_eq!(q.len(), 2);
-        // Only the first '=' splits key from value; the rest stays in the value.
+        // Only the first '=' splits key from value; the value is dropped and the
+        // query type defaults to "string".
         assert_eq!(q[0].name, "filter");
-        assert_eq!(q[0].value, "a=b");
-        // Percent-encoding is preserved verbatim (no decoding).
+        assert_eq!(q[0].dtype, "string");
+        // Percent-encoding in the (dropped) value does not affect the parsed name.
         assert_eq!(q[1].name, "q");
-        assert_eq!(q[1].value, "x%20y");
+        assert_eq!(q[1].dtype, "string");
     }
 
     #[test]
