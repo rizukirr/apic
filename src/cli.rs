@@ -308,6 +308,61 @@ fn classify(filename: &str, root: &Path, files: &[PathBuf]) -> Resolution {
     }
 }
 
+/// Classifies a `--use-template` `name` against the project `templates`.
+///
+/// Matches by basename: an exact basename (with or without `.json`) wins;
+/// failing that, a fuzzy match over the template basenames with tie detection on
+/// the top score. Mirrors [`classify`] without the working-directory confinement.
+#[allow(dead_code)] // wired into create selection in a later task
+fn classify_template(name: &str, templates: &[PathBuf]) -> Resolution {
+    let target = if name.ends_with(".json") {
+        name.to_string()
+    } else {
+        format!("{name}.json")
+    };
+    let exact: Vec<PathBuf> = templates
+        .iter()
+        .filter(|t| t.file_name().is_some_and(|n| n.to_string_lossy() == target))
+        .cloned()
+        .collect();
+    match exact.len() {
+        1 => return Resolution::One(exact.into_iter().next().unwrap()),
+        n if n > 1 => return Resolution::Many(exact),
+        _ => {}
+    }
+
+    // Fuzzy fallback over the template file names, with tie detection on the top
+    // score, mapping each surviving name back to its path.
+    let names: Vec<String> = templates
+        .iter()
+        .map(|t| t.file_name().unwrap_or_default().to_string_lossy().into_owned())
+        .collect();
+    match fuzzy_find(name, &names) {
+        Some(hits) => {
+            let top = hits[0].1;
+            let tied: Vec<PathBuf> = hits
+                .iter()
+                .take_while(|(_, score)| *score == top)
+                .filter_map(|&(fname, _)| {
+                    templates
+                        .iter()
+                        .find(|t| {
+                            t.file_name().map(|n| n.to_string_lossy()).as_deref()
+                                == Some(fname.as_str())
+                        })
+                        .cloned()
+                })
+                .collect();
+            match tied.len() {
+                1 => Resolution::One(tied.into_iter().next().unwrap()),
+                0 => Resolution::None,
+                _ => Resolution::Many(tied),
+            }
+        }
+        None => Resolution::None,
+    }
+}
+
 /// A contract reference resolved down to a single decision.
 enum Resolved {
     /// Exactly one contract — proceed.
@@ -977,5 +1032,49 @@ mod tests {
     fn classify_no_match_returns_none() {
         let (root, files) = fake("/proj", &["a/user.json"]);
         assert!(matches!(classify("qqqq", &root, &files), Resolution::None));
+    }
+
+    #[test]
+    fn classify_template_exact_basename_with_and_without_ext() {
+        let (_root, files) = fake("/tmp/.apic/template", &["convention.json", "graphql.json"]);
+        for q in ["convention", "convention.json"] {
+            match classify_template(q, &files) {
+                Resolution::One(p) => {
+                    assert_eq!(p, PathBuf::from("/tmp/.apic/template/convention.json"))
+                }
+                other => panic!("expected One for {q}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn classify_template_fuzzy_unique_match() {
+        let (_root, files) = fake("/tmp/.apic/template", &["convention.json", "graphql.json"]);
+        match classify_template("graph", &files) {
+            Resolution::One(p) => {
+                assert_eq!(p, PathBuf::from("/tmp/.apic/template/graphql.json"))
+            }
+            other => panic!("expected One, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_template_no_match_is_none() {
+        let (_root, files) = fake("/tmp/.apic/template", &["convention.json"]);
+        assert!(matches!(
+            classify_template("zzz_no_match", &files),
+            Resolution::None
+        ));
+    }
+
+    #[test]
+    fn classify_template_fuzzy_tie_is_many() {
+        // "usr" is a subsequence of both basenames at identical positions, so the
+        // two score equally — the same tie the read fuzzy-tie e2e relies on.
+        let (_root, files) = fake("/tmp/.apic/template", &["user-a.json", "user-b.json"]);
+        match classify_template("usr", &files) {
+            Resolution::Many(c) => assert_eq!(c.len(), 2),
+            other => panic!("expected Many, got {other:?}"),
+        }
     }
 }
