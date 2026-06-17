@@ -198,6 +198,10 @@ pub(crate) struct TemplateRules {
 /// Loads the project's template-conformance rules. A missing project or missing
 /// template file yields rules that enforce nothing; malformed template JSON is an
 /// `Err` so `validate` can report it.
+///
+/// Conformance is checked against the resolved template (the sole template, or
+/// `convention.json` when several exist); contracts do not record which template
+/// they were seeded from, so `convention.json` is the canonical convention.
 pub(crate) fn load_rules() -> Result<TemplateRules, String> {
     let apic_dir = match find_apic_dir() {
         Some(dir) => dir,
@@ -394,25 +398,13 @@ pub(crate) enum TemplateCheck {
     Invalid(String),
 }
 
-/// Checks the project template without writing anything.
+/// Read-only validity check of the template file at `path`.
 ///
-/// Returns [`TemplateCheck::Absent`] outside a project; otherwise delegates to
-/// [`check_at`].
-pub(crate) fn check_template() -> TemplateCheck {
-    match crate::config::find_apic_dir() {
-        Some(apic_dir) => check_at(&apic_dir),
-        None => TemplateCheck::Absent,
-    }
-}
-
-/// Read-only validity check of the resolved project template (see [`resolve_path`]).
-///
-/// A missing or unreadable file is [`TemplateCheck::Absent`] (consistent with
-/// `create` treating those as non-fatal); a present file is `Valid`/`Invalid`
-/// based on the same [`merge_onto_default`] used to build the contract.
-fn check_at(apic_dir: &Path) -> TemplateCheck {
-    let path = resolve_path(apic_dir);
-    let overlay = match fs::read_to_string(&path) {
+/// A missing or unreadable file is [`TemplateCheck::Absent`]; a present file is
+/// `Valid`/`Invalid` based on the same [`merge_onto_default`] used to build the
+/// contract.
+pub(crate) fn check_path(path: &Path) -> TemplateCheck {
+    let overlay = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(_) => return TemplateCheck::Absent,
     };
@@ -689,33 +681,45 @@ mod tests {
     }
 
     #[test]
-    fn check_at_reports_valid_for_good_overlay() {
+    fn check_path_reports_valid_for_good_overlay() {
         let dir = temp_apic("check_valid");
         write_default_template(&dir, r#"{ "method": "GET" }"#);
-        assert!(matches!(check_at(&dir), TemplateCheck::Valid));
+        assert!(matches!(
+            check_path(&default_path(&dir)),
+            TemplateCheck::Valid
+        ));
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn check_at_reports_invalid_for_malformed_json() {
+    fn check_path_reports_invalid_for_malformed_json() {
         let dir = temp_apic("check_malformed");
         write_default_template(&dir, "{ not json");
-        assert!(matches!(check_at(&dir), TemplateCheck::Invalid(_)));
+        assert!(matches!(
+            check_path(&default_path(&dir)),
+            TemplateCheck::Invalid(_)
+        ));
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn check_at_reports_invalid_when_merge_yields_invalid_contract() {
+    fn check_path_reports_invalid_when_merge_yields_invalid_contract() {
         let dir = temp_apic("check_invalid_merge");
         write_default_template(&dir, r#"{ "method": 123 }"#);
-        assert!(matches!(check_at(&dir), TemplateCheck::Invalid(_)));
+        assert!(matches!(
+            check_path(&default_path(&dir)),
+            TemplateCheck::Invalid(_)
+        ));
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn check_at_reports_absent_when_template_missing() {
+    fn check_path_reports_absent_when_file_missing() {
         let dir = temp_apic("check_absent");
-        assert!(matches!(check_at(&dir), TemplateCheck::Absent));
+        assert!(matches!(
+            check_path(&default_path(&dir)),
+            TemplateCheck::Absent
+        ));
         fs::remove_dir_all(&dir).unwrap();
     }
 

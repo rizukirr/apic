@@ -720,43 +720,51 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// Validates the project template (in `.apic/template/`) for `apic validate
+/// Validates every project template in `.apic/template/` for `apic validate
 /// --template`.
 ///
-/// Prints `ok`/`FAIL` using the same convention as contract validation and
-/// exits non-zero when the template is invalid, so it can gate CI. A missing
-/// template is not a failure — `create` would use the built-in default.
+/// Prints `ok`/`FAIL` per template using the same convention as contract
+/// validation and exits non-zero when any template is invalid, so it can gate
+/// CI. An empty template directory (or no project) is not a failure — `create`
+/// would use the built-in default.
 fn validate_template_cmd() -> Result<(), String> {
-    let label = template_display_path();
-    match crate::template::check_template() {
-        crate::template::TemplateCheck::Absent => {
+    let apic_dir = match crate::config::find_apic_dir() {
+        Some(dir) => dir,
+        None => {
             println!("No project template found; create will use the built-in template");
-            Ok(())
+            return Ok(());
         }
-        crate::template::TemplateCheck::Valid => {
-            println!("ok   {label}");
-            Ok(())
-        }
-        crate::template::TemplateCheck::Invalid(reason) => {
-            println!("FAIL {label}: {}", sanitize(&reason));
-            std::process::exit(1);
-        }
+    };
+    let templates = crate::template::list_templates(&apic_dir);
+    if templates.is_empty() {
+        println!("No project template found; create will use the built-in template");
+        return Ok(());
     }
-}
 
-/// The resolved project template path, shown relative to the project root (e.g.
-/// `.apic/template/convention.json`). Falls back to the default location when no
-/// project is found.
-fn template_display_path() -> String {
-    match crate::config::find_apic_dir() {
-        Some(apic_dir) => {
-            let resolved = crate::template::resolve_path(&apic_dir);
-            let root = apic_dir.parent().unwrap_or(&apic_dir);
-            let shown = resolved.strip_prefix(root).unwrap_or(&resolved);
-            to_slash(shown)
+    let root = apic_dir.parent().unwrap_or(&apic_dir);
+    let mut failed = 0usize;
+    for path in &templates {
+        let shown = rel_display(path, root);
+        match crate::template::check_path(path) {
+            crate::template::TemplateCheck::Valid => println!("ok   {shown}"),
+            crate::template::TemplateCheck::Invalid(reason) => {
+                println!("FAIL {shown}: {}", sanitize(&reason));
+                failed += 1;
+            }
+            // list_templates yields existing files, so a read failure is
+            // unexpected; count it as a failure rather than skip it silently.
+            crate::template::TemplateCheck::Absent => {
+                println!("FAIL {shown}: could not read template");
+                failed += 1;
+            }
         }
-        None => ".apic/template/convention.json".to_string(),
     }
+
+    println!("\n{} passed, {} failed", templates.len() - failed, failed);
+    if failed > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// Dispatches `apic create`: `--template <name>` authors a template, otherwise a
