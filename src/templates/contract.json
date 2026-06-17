@@ -9,7 +9,7 @@
         "query": [
             {
                 "name": "page",
-                "value": "1",
+                "type": "int",
                 "description": "Page number",
                 "required": false
             }
