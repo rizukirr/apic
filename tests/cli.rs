@@ -690,7 +690,15 @@ fn create_contract_uses_named_template() {
     fs::write(dir.join(".apic/template/graphql.json"), graphql).unwrap();
 
     apic(&dir)
-        .args(["create", "-f", "q.json", "--use-template", "graphql", "--editor", "true"])
+        .args([
+            "create",
+            "-f",
+            "q.json",
+            "--use-template",
+            "graphql",
+            "--editor",
+            "true",
+        ])
         .assert()
         .success();
 
@@ -699,4 +707,111 @@ fn create_contract_uses_named_template() {
         created.contains("x-gql"),
         "contract should be seeded from the graphql template"
     );
+}
+
+#[test]
+fn create_template_seeds_from_existing() {
+    let dir = init_project("author_from_existing");
+    // Customize convention.json with a distinctive header.
+    let custom = r#"{
+        "name": "custom",
+        "method": "GET",
+        "url": { "protocol": "https", "host": "api.example.com", "path": ["x"] },
+        "headers": [ { "name": "device-id", "value": "{device_id}" } ],
+        "responses": []
+    }"#;
+    fs::write(dir.join(".apic/template/convention.json"), custom).unwrap();
+
+    apic(&dir)
+        .args([
+            "create",
+            "--template",
+            "billing",
+            "--use-template",
+            "convention",
+            "--editor",
+            "true",
+        ])
+        .assert()
+        .success();
+
+    let authored = fs::read_to_string(dir.join(".apic/template/billing.json")).unwrap();
+    assert!(
+        authored.contains("device-id"),
+        "new template should be seeded from convention"
+    );
+}
+
+#[test]
+fn create_template_refuses_overwrite() {
+    let dir = init_project("template_overwrite");
+    apic(&dir)
+        .args(["create", "--template", "dup", "--editor", "true"])
+        .assert()
+        .success();
+    apic(&dir)
+        .args(["create", "--template", "dup", "--editor", "true"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
+}
+
+#[test]
+fn create_template_rejects_path_traversal() {
+    let dir = init_project("template_traversal");
+    apic(&dir)
+        .args(["create", "--template", "../escape", "--editor", "true"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid template name"));
+    assert!(!dir.join(".apic/escape.json").exists());
+}
+
+#[test]
+fn create_contract_falls_back_to_convention_when_ambiguous_non_tty() {
+    let dir = init_project("fallback_convention");
+    // Mark convention.json so we can detect it was the seed.
+    let conv = r#"{
+        "name": "conv",
+        "method": "GET",
+        "url": { "protocol": "https", "host": "api.example.com", "path": ["c"] },
+        "headers": [ { "name": "x-conv", "value": "1" } ],
+        "responses": []
+    }"#;
+    fs::write(dir.join(".apic/template/convention.json"), conv).unwrap();
+    fs::write(
+        dir.join(".apic/template/graphql.json"),
+        r#"{ "headers": [ { "name": "x-gql", "value": "1" } ] }"#,
+    )
+    .unwrap();
+
+    // No --use-template + multiple templates + non-interactive -> convention.json.
+    apic(&dir)
+        .args(["create", "-f", "q.json", "--editor", "true"])
+        .assert()
+        .success();
+
+    let created = fs::read_to_string(dir.join("contracts/q.json")).unwrap();
+    assert!(created.contains("x-conv"));
+    assert!(!created.contains("x-gql"));
+}
+
+#[test]
+fn create_unknown_use_template_errors_with_available() {
+    let dir = init_project("bad_use_template");
+    fs::write(dir.join(".apic/template/graphql.json"), "{}").unwrap();
+    apic(&dir)
+        .args([
+            "create",
+            "-f",
+            "q.json",
+            "--use-template",
+            "zzz_no_match",
+            "--editor",
+            "true",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no template matching"))
+        .stderr(predicate::str::contains("convention.json"));
 }

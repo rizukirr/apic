@@ -347,7 +347,12 @@ fn classify_template(name: &str, templates: &[PathBuf]) -> Resolution {
     // score, mapping each surviving name back to its path.
     let names: Vec<String> = templates
         .iter()
-        .map(|t| t.file_name().unwrap_or_default().to_string_lossy().into_owned())
+        .map(|t| {
+            t.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        })
         .collect();
     match fuzzy_find(name, &names) {
         Some(hits) => {
@@ -408,7 +413,9 @@ fn select_create_template(
         },
         None => match templates.len() {
             0 => Ok(TemplateChoice::Default),
-            1 => Ok(TemplateChoice::Template(templates.into_iter().next().unwrap())),
+            1 => Ok(TemplateChoice::Template(
+                templates.into_iter().next().unwrap(),
+            )),
             _ => {
                 if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
                     pick_template("", templates, root)
@@ -460,7 +467,11 @@ fn pick_template(
     let prompt = if name.is_empty() {
         format!("{} templates available:", candidates.len())
     } else {
-        format!("{} templates match \"{}\":", candidates.len(), sanitize(name))
+        format!(
+            "{} templates match \"{}\":",
+            candidates.len(),
+            sanitize(name)
+        )
     };
     match picker::pick(&prompt, &labels).map_err(|err| format!("picker failed: {err}"))? {
         Some(idx) => Ok(TemplateChoice::Template(candidates[idx].clone())),
