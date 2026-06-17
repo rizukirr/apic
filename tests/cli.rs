@@ -855,3 +855,43 @@ fn remove_unknown_template_errors_with_available() {
         .stderr(predicate::str::contains("no template matching"))
         .stderr(predicate::str::contains("convention.json"));
 }
+
+#[test]
+fn validate_template_checks_all_templates_and_fails_on_any_invalid() {
+    let dir = init_project("validate_all_templates");
+    // convention.json is valid (seeded); add a malformed second template.
+    fs::write(dir.join(".apic/template/broken.json"), "{ not json").unwrap();
+    apic(&dir)
+        .args(["validate", "--template"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("FAIL"))
+        .stdout(predicate::str::contains("broken.json"));
+}
+
+#[test]
+fn validate_template_passes_when_all_templates_valid() {
+    let dir = init_project("validate_all_valid");
+    // A second, valid template alongside the seeded convention.json.
+    apic(&dir)
+        .args(["create", "--template", "mobile", "--editor", "true"])
+        .assert()
+        .success();
+    apic(&dir)
+        .args(["validate", "--template"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("convention.json"))
+        .stdout(predicate::str::contains("mobile.json"));
+}
+
+#[test]
+fn validate_template_reports_none_when_dir_empty() {
+    let dir = init_project("validate_no_templates");
+    fs::remove_file(dir.join(".apic/template/convention.json")).unwrap();
+    apic(&dir)
+        .args(["validate", "--template"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No project template found"));
+}
