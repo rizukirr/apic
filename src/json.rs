@@ -33,7 +33,7 @@ pub(crate) struct JsonContent {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct RequestBody {
     /// Body shape: `"object"` (default) or an array form like `"object[]"`.
-    #[serde(alias = "type", default = "default_body_type")]
+    #[serde(rename = "type", default = "default_body_type")]
     pub(crate) dtype: String,
     #[serde(default)]
     pub(crate) schema: Option<Vec<Schema>>,
@@ -56,7 +56,7 @@ pub(crate) struct Url {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct Variable {
     pub(crate) name: String,
-    #[serde(alias = "type", default = "default_variable_type")]
+    #[serde(rename = "type", default = "default_variable_type")]
     pub(crate) dtype: String,
     pub(crate) description: Option<String>,
     #[serde(default)]
@@ -98,7 +98,7 @@ pub(crate) struct Response {
     pub code: u16,
     pub description: String,
     /// Body shape: `"object"` (default) or an array form like `"object[]"`.
-    #[serde(alias = "type", default = "default_body_type")]
+    #[serde(rename = "type", default = "default_body_type")]
     pub dtype: String,
     /// Field-level schema; may be omitted when only an example is provided.
     #[serde(default)]
@@ -111,7 +111,7 @@ pub(crate) struct Response {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct Schema {
     pub(crate) name: String,
-    #[serde(alias = "type")]
+    #[serde(rename = "type")]
     pub(crate) dtype: String,
     pub(crate) default: Option<String>,
     pub(crate) description: String,
@@ -275,6 +275,20 @@ mod tests {
             required: false,
         };
         let json = serde_json::to_string(&q).unwrap();
+        assert!(json.contains("\"type\":\"int\""), "got: {json}");
+        assert!(!json.contains("\"dtype\""), "got: {json}");
+    }
+
+    #[test]
+    fn variable_serializes_type_key() {
+        // Derived Serialize (used by `apic convert`) must emit `type`, not `dtype`.
+        let v = Variable {
+            name: "id".into(),
+            dtype: "int".into(),
+            description: None,
+            required: true,
+        };
+        let json = serde_json::to_string(&v).unwrap();
         assert!(json.contains("\"type\":\"int\""), "got: {json}");
         assert!(!json.contains("\"dtype\""), "got: {json}");
     }
