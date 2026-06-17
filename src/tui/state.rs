@@ -577,7 +577,7 @@ fn add_row(state: &mut UiState, model: &mut EditModel, field: &Field) {
         Field::PathAdd => model.url.path.push(String::new()),
         Field::QueryAdd => model.url.query.push(EditQuery {
             name: String::new(),
-            value: String::new(),
+            dtype: String::new(),
             description: String::new(),
             required: false,
         }),
@@ -765,7 +765,7 @@ fn set_field(model: &mut EditModel, field: &Field, value: String) {
             }
         }
         Field::QueryName(i) => set_query(model, *i, |q| q.name = value.clone()),
-        Field::QueryType(i) => set_query(model, *i, |q| q.value = value.clone()),
+        Field::QueryType(i) => set_query(model, *i, |q| q.dtype = value.clone()),
         Field::QueryDesc(i) => set_query(model, *i, |q| q.description = value.clone()),
         Field::VarName(i) => set_var(model, *i, |v| v.name = value.clone()),
         Field::VarType(i) => set_var(model, *i, |v| v.dtype = value.clone()),
@@ -892,7 +892,7 @@ mod tests {
         let c = json_get(
             r#"{ "name":"t","description":"d","method":"GET",
                  "url":{"protocol":"https","host":"h","path":["x"],
-                        "query":[{"name":"page","value":"1","description":"d","required":false}]},
+                        "query":[{"name":"page","type":"1","description":"d","required":false}]},
                  "headers":[{"name":"A","value":"B"}],
                  "responses":[{"code":200,"description":"ok","schema":[]}] }"#,
             None,
@@ -1120,7 +1120,7 @@ mod tests {
         let c = json_get(
             r#"{ "name":"t","method":"GET",
                  "url":{"protocol":"https","host":"h","path":["x"],
-                        "query":[{"name":"page","value":"1","description":"d","required":false}]},
+                        "query":[{"name":"page","type":"1","description":"d","required":false}]},
                  "headers":[],"responses":[] }"#,
             None,
         )
@@ -1140,7 +1140,7 @@ mod tests {
         // typing continues into the value cell (prefilled "1")
         handle_insert(&mut s, &mut m, key(KeyCode::Char('2')));
         handle_insert(&mut s, &mut m, key(KeyCode::Enter));
-        assert_eq!(m.url.query[0].value, "12");
+        assert_eq!(m.url.query[0].dtype, "12");
     }
 
     #[test]
