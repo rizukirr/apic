@@ -185,7 +185,7 @@ fn is_deletable(field: &Field) -> bool {
         field,
         Field::PathSeg(_)
             | Field::QueryName(_)
-            | Field::QueryValue(_)
+            | Field::QueryType(_)
             | Field::QueryDesc(_)
             | Field::QueryRequired(_)
             | Field::VarName(_)
@@ -621,7 +621,7 @@ fn delete_row(state: &mut UiState, model: &mut EditModel, field: &Field) {
     match field {
         Field::PathSeg(i) => drop_at(&mut model.url.path, *i),
         Field::QueryName(i)
-        | Field::QueryValue(i)
+        | Field::QueryType(i)
         | Field::QueryDesc(i)
         | Field::QueryRequired(i) => drop_at(&mut model.url.query, *i),
         Field::VarName(i) | Field::VarType(i) | Field::VarDesc(i) | Field::VarRequired(i) => {
@@ -765,7 +765,7 @@ fn set_field(model: &mut EditModel, field: &Field, value: String) {
             }
         }
         Field::QueryName(i) => set_query(model, *i, |q| q.name = value.clone()),
-        Field::QueryValue(i) => set_query(model, *i, |q| q.value = value.clone()),
+        Field::QueryType(i) => set_query(model, *i, |q| q.value = value.clone()),
         Field::QueryDesc(i) => set_query(model, *i, |q| q.description = value.clone()),
         Field::VarName(i) => set_var(model, *i, |v| v.name = value.clone()),
         Field::VarType(i) => set_var(model, *i, |v| v.dtype = value.clone()),
@@ -1132,7 +1132,7 @@ mod tests {
         assert!(matches!(s.mode, Mode::Insert(_)));
         handle_insert(&mut s, &mut m, key(KeyCode::Tab)); // commit + jump to the value cell
         assert_eq!(m.url.query[0].name, "page"); // committed unchanged
-        assert!(matches!(s.focused_field_pub(), Some(Field::QueryValue(_))));
+        assert!(matches!(s.focused_field_pub(), Some(Field::QueryType(_))));
         assert!(
             matches!(s.mode, Mode::Insert(_)),
             "stays in insert on the next text cell"
