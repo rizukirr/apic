@@ -115,7 +115,7 @@ enum Commands {
         #[arg(long, short = 'f', value_name = "QUERY", conflicts_with = "template")]
         find: Option<String>,
 
-        /// Validate the project template (`.apic/template.json`) instead of
+        /// Validate the project template (in `.apic/template/`) instead of
         /// contracts. Reports `ok`/`FAIL` and exits non-zero on failure.
         #[arg(long, conflicts_with = "find")]
         template: bool,
@@ -127,7 +127,7 @@ enum Commands {
     /// editor instead. Uses the same editor resolution as `create`.
     ///
     /// Pass `--template` instead of a filename to edit the project template
-    /// (`.apic/template.json`) that `apic create` scaffolds from.
+    /// (in `.apic/template/`) that `apic create` scaffolds from.
     Open {
         /// Contract to open — path, extensionless path, or fuzzy fragment.
         /// Required unless `--template` is given.
@@ -145,7 +145,7 @@ enum Commands {
         #[arg(long, short = 'e', value_name = "EDITOR")]
         editor: Option<String>,
 
-        /// Open the project template (`.apic/template.json`) instead of a
+        /// Open the project template (in `.apic/template/`) instead of a
         /// contract, seeding it from the default if it does not exist yet.
         #[arg(long)]
         template: bool,
@@ -202,8 +202,8 @@ fn update_working_dir(working_dir: Option<&str>) -> Result<(), String> {
 /// Initializes a new `.apic` project, optionally pointing at `working_dir`.
 ///
 /// The directory creation and config write are delegated to [`Config::init`].
-/// On an already-initialized project a missing `template.json` is seeded
-/// rather than erroring.
+/// On an already-initialized project a missing template is seeded rather than
+/// erroring.
 fn init_cmd(working_dir: Option<&str>) -> Result<(), String> {
     match Config::init(working_dir)? {
         InitOutcome::Initialized => println!("Successfully initialized"),
@@ -475,9 +475,9 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
         None => files,
     };
 
-    // Exclude anything inside `.apic/` (notably `template.json`) from the scan:
-    // the template may be a partial that is not a valid stand-alone contract, and
-    // it has its own check via `apic validate --template`.
+    // Exclude anything inside `.apic/` (notably the `template/` dir) from the
+    // scan: a template may be a partial that is not a valid stand-alone contract,
+    // and it has its own check via `apic validate --template`.
     let targets: Vec<PathBuf> = match crate::config::find_apic_dir() {
         Some(apic_dir) => targets
             .into_iter()
@@ -486,7 +486,7 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
         None => targets,
     };
 
-    // Template-conformance rules from `.apic/template.json`, loaded once and
+    // Template-conformance rules from the project template, loaded once and
     // reused for all targets; they enforce nothing when the template is absent.
     let rules = crate::template::load_rules()?;
 
@@ -529,26 +529,42 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// Validates the project template (`.apic/template.json`) for `apic validate
+/// Validates the project template (in `.apic/template/`) for `apic validate
 /// --template`.
 ///
 /// Prints `ok`/`FAIL` using the same convention as contract validation and
 /// exits non-zero when the template is invalid, so it can gate CI. A missing
 /// template is not a failure — `create` would use the built-in default.
 fn validate_template_cmd() -> Result<(), String> {
+    let label = template_display_path();
     match crate::template::check_template() {
         crate::template::TemplateCheck::Absent => {
             println!("No project template found; create will use the built-in template");
             Ok(())
         }
         crate::template::TemplateCheck::Valid => {
-            println!("ok   .apic/template.json");
+            println!("ok   {label}");
             Ok(())
         }
         crate::template::TemplateCheck::Invalid(reason) => {
-            println!("FAIL .apic/template.json: {}", sanitize(&reason));
+            println!("FAIL {label}: {}", sanitize(&reason));
             std::process::exit(1);
         }
+    }
+}
+
+/// The resolved project template path, shown relative to the project root (e.g.
+/// `.apic/template/convention.json`). Falls back to the default location when no
+/// project is found.
+fn template_display_path() -> String {
+    match crate::config::find_apic_dir() {
+        Some(apic_dir) => {
+            let resolved = crate::template::resolve_path(&apic_dir);
+            let root = apic_dir.parent().unwrap_or(&apic_dir);
+            let shown = resolved.strip_prefix(root).unwrap_or(&resolved);
+            to_slash(shown)
+        }
+        None => ".apic/template/convention.json".to_string(),
     }
 }
 
@@ -590,19 +606,19 @@ fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
     crate::tui::run(model, &path)
 }
 
-/// Reads `.apic/template.json` if present, for seeding the create TUI.
+/// Reads the resolved project template if present, for seeding the create TUI.
 fn read_project_template() -> Option<String> {
     let apic_dir = crate::config::find_apic_dir()?;
     crate::template::seed_if_missing(&apic_dir).ok()?;
-    fs::read_to_string(crate::template::path(&apic_dir)).ok()
+    fs::read_to_string(crate::template::resolve_path(&apic_dir)).ok()
 }
 
 /// Opens a contract for editing, or the project template when `template` is set.
 ///
 /// Without `--editor` the interactive TUI is opened on the parsed contract;
 /// with `--editor` the file is opened in the external editor (legacy behavior).
-/// With `--template` the project's `.apic/template.json` is targeted, seeded
-/// from the default first if it does not exist. The TUI is seeded like `create`
+/// With `--template` the project's template in `.apic/template/` is targeted,
+/// seeded from the default first if it does not exist. The TUI is seeded like `create`
 /// (template values over blanked builtin structure), so it shows the template's
 /// own schema without the builtin's placeholder headers, fields, or examples.
 fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Result<(), String> {
@@ -610,7 +626,7 @@ fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Res
         let apic_dir =
             crate::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
         crate::template::seed_if_missing(&apic_dir)?;
-        let path = crate::template::path(&apic_dir);
+        let path = crate::template::resolve_path(&apic_dir);
         if editor.is_some() {
             return open_in_editor(&path, editor)
                 .map_err(|err| format!("Failed to open editor: {err}"));

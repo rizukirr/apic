@@ -1,11 +1,11 @@
 //! The contract template used by `apic create`.
 //!
 //! The default template is embedded at compile time and supplies a complete
-//! contract. A project can customize it by editing `.apic/template.json`, which
-//! is overlaid onto the default — so the project template only needs to carry
-//! the fields it wants to change and may be a small partial contract. `apic
-//! init` seeds that file from the default, and it is never overwritten once it
-//! exists.
+//! contract. A project can customize it by editing `.apic/template/convention.json`,
+//! which is overlaid onto the default — so the project template only needs to
+//! carry the fields it wants to change and may be a small partial contract.
+//! `apic init` seeds that file from the default, and it is never overwritten once
+//! it exists.
 
 use crate::config::find_apic_dir;
 use serde::Serialize;
@@ -13,41 +13,125 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The built-in contract template: the seed for `.apic/template.json` and the
-/// fallback used when no usable project template is present.
+/// The built-in contract template: the seed for `.apic/template/convention.json`
+/// and the fallback used when no usable project template is present.
 pub(crate) const DEFAULT: &str = include_str!("templates/contract.json");
 
-/// Name of the per-project template file inside the `.apic` directory.
-const TEMPLATE_FILE: &str = "template.json";
+/// Name of the per-project template directory inside the `.apic` directory.
+const TEMPLATE_DIR: &str = "template";
 
-/// Returns the path to the per-project template inside `apic_dir`.
-pub(crate) fn path(apic_dir: &Path) -> PathBuf {
-    apic_dir.join(TEMPLATE_FILE)
+/// File name of the default template inside the template directory.
+const DEFAULT_TEMPLATE: &str = "convention.json";
+
+/// Legacy single-file template location, migrated into the directory on seed.
+const LEGACY_TEMPLATE_FILE: &str = "template.json";
+
+/// Returns the per-project template directory inside `apic_dir`.
+pub(crate) fn dir(apic_dir: &Path) -> PathBuf {
+    apic_dir.join(TEMPLATE_DIR)
 }
 
-/// Writes the default template to `<apic_dir>/template.json` when that file
-/// does not already exist. An existing template is left untouched.
+/// Returns the path to the default template inside `apic_dir`.
+pub(crate) fn default_path(apic_dir: &Path) -> PathBuf {
+    dir(apic_dir).join(DEFAULT_TEMPLATE)
+}
+
+/// Returns the template file a reader should use for `apic_dir`.
 ///
-/// Returns `true` when the file was written and `false` when it was already
-/// present, so callers can report whether they actually seeded it.
+/// When the template directory holds exactly one `*.json` file, that file is the
+/// template (its name does not matter). With zero or several files the default
+/// `convention.json` path is returned. The picker that chooses among several
+/// templates is a later change; today every reader resolves to a single file.
+pub(crate) fn resolve_path(apic_dir: &Path) -> PathBuf {
+    let mut jsons = json_files(&dir(apic_dir));
+    if jsons.len() == 1 {
+        jsons.pop().expect("len checked to be 1")
+    } else {
+        default_path(apic_dir)
+    }
+}
+
+/// Collects the `*.json` files directly inside `dir`, sorted for determinism.
+/// A missing or unreadable directory yields an empty list.
+fn json_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = match fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("json")
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    files.sort();
+    files
+}
+
+/// Ensures `<apic_dir>/template/` holds a template, creating the directory and
+/// seeding `convention.json` from the default when none is present. A legacy
+/// `<apic_dir>/template.json` is migrated into the directory as `convention.json`
+/// (one-time), unless the directory already holds a template. An existing
+/// template is left untouched.
+///
+/// Returns `true` when a template was written or migrated and `false` when one
+/// was already present, so callers can report whether they actually seeded it.
 pub(crate) fn seed_if_missing(apic_dir: &Path) -> Result<bool, String> {
-    let path = path(apic_dir);
-    if path.exists() {
+    let dir = dir(apic_dir);
+    if !dir.exists() {
+        fs::create_dir_all(&dir)
+            .map_err(|err| format!("Failed to create {}: {}", dir.display(), err))?;
+    }
+
+    // One-time migration: an existing single-file template becomes the default,
+    // unless the directory already holds a template (then leave the legacy file).
+    let legacy = apic_dir.join(LEGACY_TEMPLATE_FILE);
+    if legacy.is_file() && json_files(&dir).is_empty() {
+        migrate(&legacy, &default_path(apic_dir))?;
+        return Ok(true);
+    }
+
+    let target = resolve_path(apic_dir);
+    if target.exists() {
         return Ok(false);
     }
-    fs::write(&path, DEFAULT)
+    fs::write(&target, DEFAULT)
         .map(|()| true)
-        .map_err(|err| format!("Failed to write {}: {}", path.display(), err))
+        .map_err(|err| format!("Failed to write {}: {}", target.display(), err))
+}
+
+/// Moves `from` to `to`, falling back to copy + remove when a plain rename fails
+/// (e.g. across filesystems).
+fn migrate(from: &Path, to: &Path) -> Result<(), String> {
+    if fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    fs::copy(from, to).map_err(|err| {
+        format!(
+            "Failed to migrate {} to {}: {}",
+            from.display(),
+            to.display(),
+            err
+        )
+    })?;
+    fs::remove_file(from).map_err(|err| {
+        format!(
+            "Failed to remove {} after migration: {}",
+            from.display(),
+            err
+        )
+    })
 }
 
 /// Returns the contract body that `apic create` should write.
 ///
-/// The embedded default is always the base. Inside a project the per-project
-/// `.apic/template.json` is seeded when missing, then overlaid onto the default
-/// (see [`merge_onto_default`]) so the user only has to specify the fields they
-/// want to change. A missing or unreadable file falls back to the plain default;
-/// a template that exists but does not merge into a valid contract is returned as
-/// an `Err` so `create` can abort. Outside a project the default is returned.
+/// The embedded default is always the base. Inside a project the resolved
+/// per-project template (see [`resolve_path`]) is seeded when missing, then
+/// overlaid onto the default (see [`merge_onto_default`]) so the user only has to
+/// specify the fields they want to change. A missing or unreadable file falls
+/// back to the plain default; a template that exists but does not merge into a
+/// valid contract is returned as an `Err` so `create` can abort. Outside a
+/// project the default is returned.
 pub(crate) fn resolve_for_create() -> Result<String, String> {
     match crate::config::find_apic_dir() {
         Some(apic_dir) => resolve_at(&apic_dir),
@@ -70,7 +154,7 @@ fn resolve_at(apic_dir: &Path) -> Result<String, String> {
         return Ok(fallback(err));
     }
 
-    let path = path(apic_dir);
+    let path = resolve_path(apic_dir);
     let overlay = match fs::read_to_string(&path) {
         Ok(content) => content,
         Err(err) => {
@@ -87,8 +171,8 @@ fn resolve_at(apic_dir: &Path) -> Result<String, String> {
     }
 }
 
-/// Template-conformance rules for `apic validate`, loaded once from
-/// `.apic/template.json` and reused for every contract.
+/// Template-conformance rules for `apic validate`, loaded once from the resolved
+/// project template (see [`resolve_path`]) and reused for every contract.
 ///
 /// The template is treated as a *partial*: only the sections it actually
 /// declares are enforced, so an empty template (or none at all) enforces
@@ -109,7 +193,7 @@ pub(crate) fn load_rules() -> Result<TemplateRules, String> {
         Some(dir) => dir,
         None => return Ok(TemplateRules { template: None }),
     };
-    let template_path = path(&apic_dir);
+    let template_path = resolve_path(&apic_dir);
     let template_src = match fs::read_to_string(&template_path) {
         Ok(src) => src,
         Err(_) => return Ok(TemplateRules { template: None }),
@@ -311,13 +395,13 @@ pub(crate) fn check_template() -> TemplateCheck {
     }
 }
 
-/// Read-only validity check of `<apic_dir>/template.json`.
+/// Read-only validity check of the resolved project template (see [`resolve_path`]).
 ///
 /// A missing or unreadable file is [`TemplateCheck::Absent`] (consistent with
 /// `create` treating those as non-fatal); a present file is `Valid`/`Invalid`
 /// based on the same [`merge_onto_default`] used to build the contract.
 fn check_at(apic_dir: &Path) -> TemplateCheck {
-    let path = path(apic_dir);
+    let path = resolve_path(apic_dir);
     let overlay = match fs::read_to_string(&path) {
         Ok(content) => content,
         Err(_) => return TemplateCheck::Absent,
@@ -386,17 +470,53 @@ mod tests {
         dir
     }
 
+    /// Writes `content` as the project's default template, creating the dir.
+    fn write_default_template(apic_dir: &Path, content: &str) {
+        fs::create_dir_all(dir(apic_dir)).unwrap();
+        fs::write(default_path(apic_dir), content).unwrap();
+    }
+
     #[test]
-    fn path_is_template_json_in_apic_dir() {
+    fn default_path_is_convention_in_template_dir() {
         let dir = std::path::Path::new("/tmp/.apic");
-        assert_eq!(path(dir), dir.join("template.json"));
+        assert_eq!(
+            default_path(dir),
+            dir.join("template").join("convention.json")
+        );
+    }
+
+    #[test]
+    fn resolve_path_picks_single_json_regardless_of_name() {
+        let apic = temp_apic("resolve_single");
+        fs::create_dir_all(dir(&apic)).unwrap();
+        let only = dir(&apic).join("custom.json");
+        fs::write(&only, "{}").unwrap();
+        assert_eq!(resolve_path(&apic), only);
+        fs::remove_dir_all(&apic).unwrap();
+    }
+
+    #[test]
+    fn resolve_path_falls_back_to_convention_when_multiple() {
+        let apic = temp_apic("resolve_multiple");
+        fs::create_dir_all(dir(&apic)).unwrap();
+        fs::write(dir(&apic).join("custom.json"), "{}").unwrap();
+        fs::write(default_path(&apic), "{}").unwrap();
+        assert_eq!(resolve_path(&apic), default_path(&apic));
+        fs::remove_dir_all(&apic).unwrap();
+    }
+
+    #[test]
+    fn resolve_path_falls_back_to_convention_when_empty() {
+        let apic = temp_apic("resolve_empty");
+        assert_eq!(resolve_path(&apic), default_path(&apic));
+        fs::remove_dir_all(&apic).unwrap();
     }
 
     #[test]
     fn seed_if_missing_writes_default_when_absent() {
         let dir = temp_apic("seed_absent");
         assert!(seed_if_missing(&dir).unwrap());
-        let written = fs::read_to_string(dir.join("template.json")).unwrap();
+        let written = fs::read_to_string(default_path(&dir)).unwrap();
         assert_eq!(written, DEFAULT);
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -405,10 +525,33 @@ mod tests {
     fn seed_if_missing_does_not_overwrite_existing() {
         let dir = temp_apic("seed_existing");
         let custom = r#"{ "marker": "mine" }"#;
-        fs::write(dir.join("template.json"), custom).unwrap();
+        write_default_template(&dir, custom);
         assert!(!seed_if_missing(&dir).unwrap());
-        let after = fs::read_to_string(dir.join("template.json")).unwrap();
+        let after = fs::read_to_string(default_path(&dir)).unwrap();
         assert_eq!(after, custom);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn seed_if_missing_migrates_legacy_template() {
+        let dir = temp_apic("seed_migrate");
+        let custom = r#"{ "marker": "legacy" }"#;
+        fs::write(dir.join("template.json"), custom).unwrap();
+        assert!(seed_if_missing(&dir).unwrap());
+        assert_eq!(fs::read_to_string(default_path(&dir)).unwrap(), custom);
+        assert!(!dir.join("template.json").exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn seed_if_missing_skips_migration_when_dir_has_template() {
+        let dir = temp_apic("seed_no_clobber");
+        fs::write(dir.join("template.json"), r#"{ "marker": "legacy" }"#).unwrap();
+        let existing = r#"{ "marker": "existing" }"#;
+        write_default_template(&dir, existing);
+        assert!(!seed_if_missing(&dir).unwrap());
+        assert_eq!(fs::read_to_string(default_path(&dir)).unwrap(), existing);
+        assert!(dir.join("template.json").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -470,11 +613,10 @@ mod tests {
     #[test]
     fn resolve_at_returns_ok_for_valid_partial_overlay() {
         let dir = temp_apic("resolve_valid");
-        fs::write(
-            dir.join("template.json"),
+        write_default_template(
+            &dir,
             r#"{ "headers": [ { "name": "X-Custom", "value": "1" } ] }"#,
-        )
-        .unwrap();
+        );
         let contract = resolve_at(&dir).unwrap();
         assert!(crate::json::validate(&contract).is_ok());
         fs::remove_dir_all(&dir).unwrap();
@@ -483,7 +625,7 @@ mod tests {
     #[test]
     fn resolve_at_errors_for_malformed_json() {
         let dir = temp_apic("resolve_malformed");
-        fs::write(dir.join("template.json"), "{ not json").unwrap();
+        write_default_template(&dir, "{ not json");
         assert!(resolve_at(&dir).is_err());
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -492,7 +634,7 @@ mod tests {
     fn resolve_at_errors_when_overlay_merges_to_invalid_contract() {
         let dir = temp_apic("resolve_invalid_merge");
         // method must be a string; a number makes the merged contract invalid.
-        fs::write(dir.join("template.json"), r#"{ "method": 123 }"#).unwrap();
+        write_default_template(&dir, r#"{ "method": 123 }"#);
         assert!(resolve_at(&dir).is_err());
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -502,14 +644,14 @@ mod tests {
         let dir = temp_apic("resolve_seed");
         let contract = resolve_at(&dir).unwrap();
         assert!(crate::json::validate(&contract).is_ok());
-        assert!(dir.join("template.json").exists());
+        assert!(default_path(&dir).exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn check_at_reports_valid_for_good_overlay() {
         let dir = temp_apic("check_valid");
-        fs::write(dir.join("template.json"), r#"{ "method": "GET" }"#).unwrap();
+        write_default_template(&dir, r#"{ "method": "GET" }"#);
         assert!(matches!(check_at(&dir), TemplateCheck::Valid));
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -517,7 +659,7 @@ mod tests {
     #[test]
     fn check_at_reports_invalid_for_malformed_json() {
         let dir = temp_apic("check_malformed");
-        fs::write(dir.join("template.json"), "{ not json").unwrap();
+        write_default_template(&dir, "{ not json");
         assert!(matches!(check_at(&dir), TemplateCheck::Invalid(_)));
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -525,7 +667,7 @@ mod tests {
     #[test]
     fn check_at_reports_invalid_when_merge_yields_invalid_contract() {
         let dir = temp_apic("check_invalid_merge");
-        fs::write(dir.join("template.json"), r#"{ "method": 123 }"#).unwrap();
+        write_default_template(&dir, r#"{ "method": 123 }"#);
         assert!(matches!(check_at(&dir), TemplateCheck::Invalid(_)));
         fs::remove_dir_all(&dir).unwrap();
     }

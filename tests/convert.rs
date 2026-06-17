@@ -20,7 +20,7 @@ fn convert_imports_v2_1_collection() {
     // Drop the template so `validate` below checks only schema validity of the
     // imported contracts: with no template file, conformance enforces nothing
     // (template conformance is covered by template.rs unit tests).
-    fs::remove_file(work.join(".apic/template.json")).unwrap();
+    fs::remove_file(work.join(".apic/template/convention.json")).unwrap();
 
     let fixture = format!(
         "{}/tests/fixtures/convert/petstore-v2.1.0.json",

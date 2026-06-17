@@ -1,7 +1,7 @@
 //! Create-time seeding of a new `EditModel`.
 //!
-//! Structure is the union of the builtin template and the project's
-//! `.apic/template.json`; values are taken only from the project template.
+//! Structure is the union of the builtin template and the project's resolved
+//! template in `.apic/template/`; values are taken only from the project template.
 //! Fields that exist solely because the builtin contributed them start empty.
 
 use crate::tui::model::EditModel;
@@ -17,7 +17,7 @@ fn seed_value(overlay: Option<&str>) -> Result<Value, String> {
 
     if let Some(overlay) = overlay {
         let over: Value = serde_json::from_str(overlay)
-            .map_err(|err| format!(".apic/template.json is not valid JSON: {err}"))?;
+            .map_err(|err| format!("project template is not valid JSON: {err}"))?;
         overlay_values(&mut base, &over);
     }
     Ok(base)
@@ -26,7 +26,7 @@ fn seed_value(overlay: Option<&str>) -> Result<Value, String> {
 /// Prepares the builtin template as a create seed: keeps scalar default values
 /// (name, description, method, protocol, host, types) but EMPTIES every array so
 /// a new contract starts with no leftover items, and clears every `example`.
-/// The project `.apic/template.json` overlay then replaces any arrays/values it
+/// The project template overlay then replaces any arrays/values it
 /// defines.
 fn strip_to_seed_defaults(v: &mut Value) {
     match v {
@@ -59,7 +59,7 @@ fn overlay_values(base: &mut Value, overlay: &Value) {
 
 /// Produces the seed `EditModel` for `apic create`.
 ///
-/// `overlay` is the contents of `.apic/template.json` when present. Falls back
+/// `overlay` is the contents of the resolved project template when present. Falls back
 /// to the blanked builtin structure when absent. The seed must parse as a valid
 /// contract (the builtin guarantees the required fields exist).
 pub(crate) fn seed_model(overlay: Option<&str>) -> Result<EditModel, String> {
