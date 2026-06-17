@@ -27,8 +27,9 @@ pub(crate) struct Root {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum InitOutcome {
     /// A new project was created (the `.apic` directory, its `config.toml`,
-    /// and the seeded `template/convention.json`).
-    Initialized,
+    /// and the seeded `template/convention.json`). `warning` carries a
+    /// best-effort seed-failure note for the caller to print, if any.
+    Initialized { warning: Option<String> },
     /// The project already existed and only its missing template was seeded.
     TemplateSeeded,
 }
@@ -125,9 +126,7 @@ impl Config {
         // existing template (e.g. on a re-created project) is left untouched.
         // Best-effort: a seed failure must not abort an otherwise-successful
         // init — `apic create` re-seeds and falls back to the built-in default.
-        if let Err(err) = crate::template::seed_if_missing(&makedir) {
-            eprintln!("Warning: {err}");
-        }
+        let warning = crate::template::seed_if_missing(&makedir).err();
 
         // `working_dir` is stored relative to the project root (= `pwd` here,
         // where `.apic` is created) so the config stays portable. A `None`
@@ -144,7 +143,7 @@ impl Config {
             None => PathBuf::from("."),
         };
         write_config_file(makedir.clone(), &Config::default(&working_dir))?;
-        Ok(InitOutcome::Initialized)
+        Ok(InitOutcome::Initialized { warning })
     }
 
     /// Changes the root working directory to `new_dir` and persists the config.

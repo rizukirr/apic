@@ -239,7 +239,12 @@ fn update_working_dir(working_dir: Option<&str>) -> Result<(), String> {
 /// erroring.
 fn init_cmd(working_dir: Option<&str>) -> Result<(), String> {
     match Config::init(working_dir)? {
-        InitOutcome::Initialized => println!("Successfully initialized"),
+        InitOutcome::Initialized { warning } => {
+            if let Some(warning) = warning {
+                eprintln!("Warning: {warning}");
+            }
+            println!("Successfully initialized");
+        }
         InitOutcome::TemplateSeeded => {
             println!("Already initialized; created the missing template")
         }
