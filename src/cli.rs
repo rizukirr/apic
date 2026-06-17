@@ -594,7 +594,7 @@ fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
 fn read_project_template() -> Option<String> {
     let apic_dir = crate::config::find_apic_dir()?;
     crate::template::seed_if_missing(&apic_dir).ok()?;
-    fs::read_to_string(crate::template::path(&apic_dir)).ok()
+    fs::read_to_string(crate::template::resolve_path(&apic_dir)).ok()
 }
 
 /// Opens a contract for editing, or the project template when `template` is set.
@@ -610,7 +610,7 @@ fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Res
         let apic_dir =
             crate::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
         crate::template::seed_if_missing(&apic_dir)?;
-        let path = crate::template::path(&apic_dir);
+        let path = crate::template::resolve_path(&apic_dir);
         if editor.is_some() {
             return open_in_editor(&path, editor)
                 .map_err(|err| format!("Failed to open editor: {err}"));

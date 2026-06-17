@@ -17,14 +17,6 @@ use std::path::{Path, PathBuf};
 /// fallback used when no usable project template is present.
 pub(crate) const DEFAULT: &str = include_str!("templates/contract.json");
 
-/// Name of the per-project template file inside the `.apic` directory.
-const TEMPLATE_FILE: &str = "template.json";
-
-/// Returns the path to the per-project template inside `apic_dir`.
-pub(crate) fn path(apic_dir: &Path) -> PathBuf {
-    apic_dir.join(TEMPLATE_FILE)
-}
-
 /// Name of the per-project template directory inside the `.apic` directory.
 const TEMPLATE_DIR: &str = "template";
 
@@ -153,7 +145,7 @@ fn resolve_at(apic_dir: &Path) -> Result<String, String> {
         return Ok(fallback(err));
     }
 
-    let path = path(apic_dir);
+    let path = resolve_path(apic_dir);
     let overlay = match fs::read_to_string(&path) {
         Ok(content) => content,
         Err(err) => {
@@ -192,7 +184,7 @@ pub(crate) fn load_rules() -> Result<TemplateRules, String> {
         Some(dir) => dir,
         None => return Ok(TemplateRules { template: None }),
     };
-    let template_path = path(&apic_dir);
+    let template_path = resolve_path(&apic_dir);
     let template_src = match fs::read_to_string(&template_path) {
         Ok(src) => src,
         Err(_) => return Ok(TemplateRules { template: None }),
@@ -400,7 +392,7 @@ pub(crate) fn check_template() -> TemplateCheck {
 /// `create` treating those as non-fatal); a present file is `Valid`/`Invalid`
 /// based on the same [`merge_onto_default`] used to build the contract.
 fn check_at(apic_dir: &Path) -> TemplateCheck {
-    let path = path(apic_dir);
+    let path = resolve_path(apic_dir);
     let overlay = match fs::read_to_string(&path) {
         Ok(content) => content,
         Err(_) => return TemplateCheck::Absent,
@@ -612,11 +604,10 @@ mod tests {
     #[test]
     fn resolve_at_returns_ok_for_valid_partial_overlay() {
         let dir = temp_apic("resolve_valid");
-        fs::write(
-            dir.join("template.json"),
+        write_default_template(
+            &dir,
             r#"{ "headers": [ { "name": "X-Custom", "value": "1" } ] }"#,
-        )
-        .unwrap();
+        );
         let contract = resolve_at(&dir).unwrap();
         assert!(crate::json::validate(&contract).is_ok());
         fs::remove_dir_all(&dir).unwrap();
@@ -625,7 +616,7 @@ mod tests {
     #[test]
     fn resolve_at_errors_for_malformed_json() {
         let dir = temp_apic("resolve_malformed");
-        fs::write(dir.join("template.json"), "{ not json").unwrap();
+        write_default_template(&dir, "{ not json");
         assert!(resolve_at(&dir).is_err());
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -634,7 +625,7 @@ mod tests {
     fn resolve_at_errors_when_overlay_merges_to_invalid_contract() {
         let dir = temp_apic("resolve_invalid_merge");
         // method must be a string; a number makes the merged contract invalid.
-        fs::write(dir.join("template.json"), r#"{ "method": 123 }"#).unwrap();
+        write_default_template(&dir, r#"{ "method": 123 }"#);
         assert!(resolve_at(&dir).is_err());
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -644,14 +635,14 @@ mod tests {
         let dir = temp_apic("resolve_seed");
         let contract = resolve_at(&dir).unwrap();
         assert!(crate::json::validate(&contract).is_ok());
-        assert!(dir.join("template.json").exists());
+        assert!(default_path(&dir).exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn check_at_reports_valid_for_good_overlay() {
         let dir = temp_apic("check_valid");
-        fs::write(dir.join("template.json"), r#"{ "method": "GET" }"#).unwrap();
+        write_default_template(&dir, r#"{ "method": "GET" }"#);
         assert!(matches!(check_at(&dir), TemplateCheck::Valid));
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -659,7 +650,7 @@ mod tests {
     #[test]
     fn check_at_reports_invalid_for_malformed_json() {
         let dir = temp_apic("check_malformed");
-        fs::write(dir.join("template.json"), "{ not json").unwrap();
+        write_default_template(&dir, "{ not json");
         assert!(matches!(check_at(&dir), TemplateCheck::Invalid(_)));
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -667,7 +658,7 @@ mod tests {
     #[test]
     fn check_at_reports_invalid_when_merge_yields_invalid_contract() {
         let dir = temp_apic("check_invalid_merge");
-        fs::write(dir.join("template.json"), r#"{ "method": 123 }"#).unwrap();
+        write_default_template(&dir, r#"{ "method": 123 }"#);
         assert!(matches!(check_at(&dir), TemplateCheck::Invalid(_)));
         fs::remove_dir_all(&dir).unwrap();
     }
