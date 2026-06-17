@@ -171,17 +171,29 @@ enum Commands {
         #[arg(long)]
         template: bool,
     },
-    /// Delete a contract file.
+    /// Delete a contract file, or a project template with `--template`.
     ///
     /// The filename is resolved like `read`: an exact path (`user/user.json`),
     /// without the `.json` extension (`user/user`), or a fuzzy fragment
     /// (`user`), prompting to pick when ambiguous. On an interactive terminal
     /// it asks for confirmation before deleting; in scripts it removes without
-    /// prompting.
+    /// prompting. With `--template <name>` a template in `.apic/template/` is
+    /// removed instead (fuzzy-matched the same way).
     Remove {
         /// Contract to remove — path, extensionless path, or fuzzy fragment.
-        #[arg(long, short = 'f', value_name = "QUERY")]
-        find: String,
+        /// Required unless `--template` is given.
+        #[arg(
+            long,
+            short = 'f',
+            value_name = "QUERY",
+            required_unless_present = "template"
+        )]
+        find: Option<String>,
+
+        /// Remove a project template from `.apic/template/` (fuzzy-matched)
+        /// instead of a contract.
+        #[arg(long, short = 't', value_name = "NAME", conflicts_with = "find")]
+        template: Option<String>,
     },
     /// Import a Postman collection as apic contract files.
     ///
@@ -946,12 +958,14 @@ fn open_path_in_tui(path: &Path) -> Result<(), String> {
     crate::tui::run(model, path)
 }
 
-/// Resolves `filename` to one contract and deletes it after confirmation.
-///
-/// Resolution matches `read`/`open` (exact path, basename, then fuzzy, with the
-/// interactive picker when ambiguous). On an interactive terminal the user is
-/// asked to confirm; without a terminal (scripts) the deletion proceeds.
-fn remove_cmd(filename: &str) -> Result<(), String> {
+/// Handles `apic remove`: deletes a template (`--template`) or a contract
+/// (`--find`), after confirmation on an interactive terminal.
+fn remove_cmd(filename: Option<&str>, template: Option<&str>) -> Result<(), String> {
+    if let Some(name) = template {
+        return remove_template_cmd(name);
+    }
+    // clap guarantees `--find` is present when `--template` is absent.
+    let filename = filename.expect("clap requires --find unless --template is given");
     match resolve_one(filename)? {
         Resolved::Path(path) => {
             let root = read_config_file().and_then(|c| c.get_root_dir())?;
@@ -966,6 +980,40 @@ fn remove_cmd(filename: &str) -> Result<(), String> {
         Resolved::Cancelled => cancelled(),
         Resolved::NotFound => Err(format!("No contract found matching '{filename}'")),
     }
+}
+
+/// Removes a project template from `.apic/template/` by (fuzzy) `name`.
+///
+/// Resolution matches `--use-template` (exact basename, then fuzzy with the
+/// picker when ambiguous): a unique match is removed, no match errors listing
+/// the available templates, a tie shows the picker on a terminal and errors
+/// otherwise. Confirmation matches contract removal (the prompt is skipped when
+/// stdin/stdout is not a terminal). No template is protected — removing the last
+/// one is fine, since `create` reseeds `convention.json` from the built-in.
+fn remove_template_cmd(name: &str) -> Result<(), String> {
+    let apic_dir =
+        crate::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
+    let templates = crate::template::list_templates(&apic_dir);
+    let root = apic_dir.parent().unwrap_or(&apic_dir);
+
+    let path = match classify_template(name, &templates) {
+        Resolution::One(path) => path,
+        Resolution::None => return Err(no_template_error(name, &templates, root)),
+        Resolution::Many(candidates) => match pick_template(name, candidates, root)? {
+            TemplateChoice::Template(path) => path,
+            // pick_template only returns Template or Cancelled; treat anything
+            // else as a cancel for exhaustiveness.
+            _ => return cancelled(),
+        },
+    };
+
+    let shown = rel_display(&path, root);
+    if !confirm(&format!("Remove {shown}?"))? {
+        return cancelled();
+    }
+    fs::remove_file(&path).map_err(|err| format!("Failed to remove {shown}: {err}"))?;
+    println!("Removed {shown}");
+    Ok(())
 }
 
 /// Handles `apic convert`: resolve the destination under the working directory,
@@ -1139,7 +1187,7 @@ pub(crate) fn run() {
             editor,
             template,
         } => open_cmd(template, find.as_deref(), editor.as_deref()),
-        Commands::Remove { find } => remove_cmd(&find),
+        Commands::Remove { find, template } => remove_cmd(find.as_deref(), template.as_deref()),
         Commands::Convert {
             postman,
             destination,

@@ -815,3 +815,43 @@ fn create_unknown_use_template_errors_with_available() {
         .stderr(predicate::str::contains("no template matching"))
         .stderr(predicate::str::contains("convention.json"));
 }
+
+#[test]
+fn remove_template_deletes_named_template() {
+    let dir = init_project("remove_template");
+    // Author a second template, then remove it by (fuzzy) name.
+    apic(&dir)
+        .args(["create", "--template", "billing", "--editor", "true"])
+        .assert()
+        .success();
+    assert!(dir.join(".apic/template/billing.json").exists());
+
+    apic(&dir)
+        .args(["remove", "--template", "billing"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Removed"));
+    assert!(!dir.join(".apic/template/billing.json").exists());
+}
+
+#[test]
+fn remove_template_can_remove_convention_default() {
+    let dir = init_project("remove_template_default");
+    assert!(dir.join(".apic/template/convention.json").exists());
+    apic(&dir)
+        .args(["remove", "--template", "convention"])
+        .assert()
+        .success();
+    assert!(!dir.join(".apic/template/convention.json").exists());
+}
+
+#[test]
+fn remove_unknown_template_errors_with_available() {
+    let dir = init_project("remove_template_missing");
+    apic(&dir)
+        .args(["remove", "--template", "zzz_no_match"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no template matching"))
+        .stderr(predicate::str::contains("convention.json"));
+}
