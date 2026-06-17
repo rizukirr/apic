@@ -518,6 +518,14 @@ fn cancelled() -> Result<(), String> {
     Ok(())
 }
 
+/// Prints each fallback warning to stderr, matching the previous `template`
+/// output (`Warning: <message>`).
+fn print_warnings(warnings: &[String]) {
+    for warning in warnings {
+        eprintln!("Warning: {warning}");
+    }
+}
+
 /// Resolves `filename` to exactly one contract, asking the user to pick when
 /// the reference is ambiguous.
 ///
@@ -830,7 +838,11 @@ fn create_template_cmd(
 
     if editor.is_some() {
         let contract = match &source {
-            Some(p) => crate::template::resolve_contract_from(p)?,
+            Some(p) => {
+                let (contract, warnings) = crate::template::resolve_contract_from(p)?;
+                print_warnings(&warnings);
+                contract
+            }
             None => crate::template::DEFAULT.to_string(),
         };
         fs::write(&path, contract)
@@ -880,8 +892,16 @@ fn create_contract_cmd(
     if editor.is_some() {
         // Legacy path: scaffold to disk, then open the external editor.
         let contract = match &chosen {
-            Some(p) => crate::template::resolve_contract_from(p)?,
-            None => crate::template::resolve_for_create()?,
+            Some(p) => {
+                let (contract, warnings) = crate::template::resolve_contract_from(p)?;
+                print_warnings(&warnings);
+                contract
+            }
+            None => {
+                let (contract, warnings) = crate::template::resolve_for_create()?;
+                print_warnings(&warnings);
+                contract
+            }
         };
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)

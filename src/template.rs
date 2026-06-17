@@ -138,10 +138,10 @@ fn migrate(from: &Path, to: &Path) -> Result<(), String> {
 /// back to the plain default; a template that exists but does not merge into a
 /// valid contract is returned as an `Err` so `create` can abort. Outside a
 /// project the default is returned.
-pub(crate) fn resolve_for_create() -> Result<String, String> {
+pub(crate) fn resolve_for_create() -> Result<(String, Vec<String>), String> {
     match crate::config::find_apic_dir() {
         Some(apic_dir) => resolve_at(&apic_dir),
-        None => Ok(DEFAULT.to_string()),
+        None => Ok((DEFAULT.to_string(), Vec::new())),
     }
 }
 
@@ -150,10 +150,12 @@ pub(crate) fn resolve_for_create() -> Result<String, String> {
 /// Missing/unreadable template files and seed failures fall back to the
 /// built-in default with a warning (returned as `Ok`); only a template file
 /// that exists but does not merge into a valid contract is a hard error.
-fn resolve_at(apic_dir: &Path) -> Result<String, String> {
+fn resolve_at(apic_dir: &Path) -> Result<(String, Vec<String>), String> {
     if let Err(err) = seed_if_missing(apic_dir) {
-        eprintln!("Warning: {err}; using the built-in template");
-        return Ok(DEFAULT.to_string());
+        return Ok((
+            DEFAULT.to_string(),
+            vec![format!("{err}; using the built-in template")],
+        ));
     }
     resolve_contract_from(&resolve_path(apic_dir))
 }
@@ -164,19 +166,21 @@ fn resolve_at(apic_dir: &Path) -> Result<String, String> {
 /// (see [`merge_onto_default`]). A missing or unreadable file falls back to the
 /// plain default with a warning (returned as `Ok`); a file that exists but does
 /// not merge into a valid contract is an `Err` so `create` can abort.
-pub(crate) fn resolve_contract_from(path: &Path) -> Result<String, String> {
+pub(crate) fn resolve_contract_from(path: &Path) -> Result<(String, Vec<String>), String> {
     let overlay = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(err) => {
-            eprintln!(
-                "Warning: failed to read {}: {err}; using the built-in template",
-                path.display()
-            );
-            return Ok(DEFAULT.to_string());
+            return Ok((
+                DEFAULT.to_string(),
+                vec![format!(
+                    "failed to read {}: {err}; using the built-in template",
+                    path.display()
+                )],
+            ));
         }
     };
     match merge_onto_default(&overlay) {
-        Ok(contract) => Ok(contract),
+        Ok(contract) => Ok((contract, Vec::new())),
         Err(reason) => Err(format!("{} {reason}", path.display())),
     }
 }
@@ -619,7 +623,7 @@ mod tests {
             &dir,
             r#"{ "headers": [ { "name": "X-Custom", "value": "1" } ] }"#,
         );
-        let contract = resolve_at(&dir).unwrap();
+        let (contract, _warnings) = resolve_at(&dir).unwrap();
         assert!(crate::json::validate(&contract).is_ok());
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -644,7 +648,7 @@ mod tests {
     #[test]
     fn resolve_at_seeds_and_returns_ok_when_template_missing() {
         let dir = temp_apic("resolve_seed");
-        let contract = resolve_at(&dir).unwrap();
+        let (contract, _warnings) = resolve_at(&dir).unwrap();
         assert!(crate::json::validate(&contract).is_ok());
         assert!(default_path(&dir).exists());
         fs::remove_dir_all(&dir).unwrap();
@@ -675,7 +679,7 @@ mod tests {
     #[test]
     fn resolve_contract_from_falls_back_when_file_missing() {
         let apic = temp_apic("rcf_missing");
-        let contract = resolve_contract_from(&apic.join("nope.json")).unwrap();
+        let (contract, _warnings) = resolve_contract_from(&apic.join("nope.json")).unwrap();
         assert_eq!(contract, DEFAULT);
         fs::remove_dir_all(&apic).unwrap();
     }
