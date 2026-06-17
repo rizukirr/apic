@@ -49,12 +49,15 @@ apic init
 # 2. Point apic at the folder that holds your contract files (Optional)
 apic config --set-dir api-contract
 
-# 3. create template convention
-apic open --template
+# 3. Edit the default template, or author a new named one
+apic open --template              # edit .apic/template/convention.json
+apic create --template mobile     # author .apic/template/mobile.json
 
-# 4. Scaffold a new contract from a template (opens the interactive editor)
-# will follow template convention, otherwise use builtin template
+# 4. Scaffold a new contract (opens the interactive editor)
+# uses the only template, prompts to pick when several exist, or
+# --use-template chooses one; falls back to the built-in template
 apic create -f auth/login.json
+apic create -f auth/login.json --use-template mobile
 
 # 5. List and read contracts
 apic list
@@ -99,11 +102,29 @@ Updates project configuration.
 - `--set-dir <dir>`, change the working directory that contracts are scanned
   from (must exist).
 
-### `apic create -f <filename> [-e <editor>]`
-Creates a new contract seeded from the project template (`.apic/template.json`,
-falling back to the built-in default) and opens it in the interactive TUI; the
-file is written only when you save. A relative path is resolved against the
-configured working directory. `apic` refuses to overwrite an existing file.
+### `apic create (-f <filename> | --template <name>) [--use-template <name>] [-e <editor>]`
+Creates a new **contract** (`-f`) or authors a new **template** (`--template`).
+
+With `-f <filename>`, a contract is seeded from a project template and opened in
+the interactive TUI; the file is written only when you save. A relative path is
+resolved against the configured working directory, and `apic` refuses to
+overwrite an existing file. When `.apic/template/` holds a single template it is
+used; when it holds several you are prompted to pick one (an inline picker), and
+`--use-template <name>` selects one directly (fuzzy-matched) to skip the prompt.
+With no usable template, the built-in default is used.
+
+With `--template <name>`, a new template is authored at
+`.apic/template/<name>.json` (a flat name), seeded from the built-in default or,
+with `--use-template <name>`, from an existing template. It opens in the TUI and
+refuses to overwrite an existing template. `--template` and `-f` are mutually
+exclusive; `--use-template` composes with either.
+
+```bash
+apic create -f auth/login.json                       # contract from the project template
+apic create -f auth/login.json --use-template mobile # contract from the `mobile` template
+apic create --template mobile                        # author a new template
+apic create --template mobile --use-template convention  # seed it from `convention`
+```
 
 Pass `-e`/`--editor` to scaffold the file to disk and open it in your external
 editor instead of the TUI. Editor resolution order: `--editor` flag → `$VISUAL`
@@ -164,10 +185,11 @@ Resolves `<query>` exactly like `read` (path, extensionless, or fuzzy) and
 opens the matching contract in the interactive TUI. Pass `-e`/`--editor` to open
 it in your external editor instead, the same editor resolution as `apic create`.
 
-Pass `--template` instead of `-f` to edit the project template
-(`.apic/template.json`) that `apic create` scaffolds from; it is seeded from
-the built-in default first if it does not exist yet. `--template` and `-f` are
-mutually exclusive, and exactly one is required.
+Pass `--template` instead of `-f` to edit the project template in
+`.apic/template/` that `apic create` scaffolds from (the sole template, or
+`convention.json` by default); it is seeded from the built-in default first if
+none exists yet. `--template` and `-f` are mutually exclusive, and exactly one
+is required. To author a *new* named template, use `apic create --template <name>`.
 
 ```bash
 apic open -f user/user.json
@@ -180,16 +202,23 @@ Output is colorized when stdout is a terminal and plain when piped, so it stays
 clean in scripts. Contract strings are sanitized before display, so a file from
 an untrusted source cannot inject terminal escape sequences.
 
-### `apic remove -f <query>`
+### `apic remove (-f <query> | --template <name>)`
 Resolves `<query>` exactly like `read`/`open` (path, extensionless, or
 fuzzy, prompting to pick when ambiguous) and deletes the matching contract
 file. On an interactive terminal it asks `Remove <path>? [y/N]` first and only
 deletes on `y`/`yes`; when stdin/stdout is not a terminal (scripts) it removes
 without prompting.
 
+Pass `--template <name>` instead of `-f` to remove a project template from
+`.apic/template/` (fuzzy-matched the same way, with the same confirmation). No
+template is protected — removing `convention.json` or the last template is
+allowed; `apic create` reseeds `convention.json` from the built-in default next
+time. `--template` and `-f` are mutually exclusive.
+
 ```bash
 apic remove -f user/user.json
 apic remove -f login            # fuzzy, with confirmation
+apic remove --template mobile   # remove a project template
 ```
 
 ### `apic validate [-f <query>] [--template]`
@@ -205,7 +234,7 @@ CI step or pre-commit hook.
 apic validate               # check every contract
 apic validate -f login      # check one
 apic validate -f auth/      # check every contract under auth/, recursively
-apic validate --template    # check the project template (.apic/template.json)
+apic validate --template    # check the project template (in .apic/template/)
 ```
 
 ```text
@@ -263,10 +292,13 @@ A contract is a single JSON object describing one endpoint. See
 [`src/templates/contract.json`](src/templates/contract.json) for the full
 template that `apic create` writes.
 
-`apic init` writes a starter template to `.apic/template.json`. Edit it to set
-a project-wide convention, for example a standing `device-id` header, and
-every `apic create` reuses it. The file is never overwritten once it exists; if
-it is missing or malformed, `apic create` falls back to the built-in default.
+`apic init` writes a starter template to `.apic/template/convention.json`. Edit
+it to set a project-wide convention, for example a standing `device-id` header,
+and every `apic create` reuses it. The directory can hold several templates
+(author more with `apic create --template <name>`); when more than one exists,
+`apic create` prompts you to pick (or use `--use-template <name>`). A template
+is never overwritten once it exists; if none is usable, `apic create` falls back
+to the built-in default.
 
 ```json
 {
@@ -280,7 +312,7 @@ it is missing or malformed, `apic create` falls back to the built-in default.
         "query": [
             {
                 "name": "notify",
-                "value": "true",
+                "type": "boolean",
                 "description": "Send a notification email",
                 "required": false
             }
@@ -367,7 +399,7 @@ The `url` object has:
 | `protocol` | yes | URL scheme, e.g. `http` or `https`. |
 | `host` | yes | Host, e.g. `api.example.com`. |
 | `path` | no | Path segments as an array, e.g. `["auth", "login"]`. |
-| `query` | no | Array of query parameters (`name`, `value`, `description`, `required`). |
+| `query` | no | Array of query parameters (`name`, `type`, `description`, `required`). |
 | `variable` | no | Array of path variables (`name`, optional `type`, defaults to `string`, `description`). |
 
 A **field** (in the request `schema` and response `schema`) has:
