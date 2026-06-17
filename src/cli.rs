@@ -171,13 +171,14 @@ enum Commands {
         #[arg(long)]
         template: bool,
     },
-    /// Delete a contract file.
+    /// Delete a contract file, or a project template with `--template`.
     ///
     /// The filename is resolved like `read`: an exact path (`user/user.json`),
     /// without the `.json` extension (`user/user`), or a fuzzy fragment
     /// (`user`), prompting to pick when ambiguous. On an interactive terminal
     /// it asks for confirmation before deleting; in scripts it removes without
-    /// prompting.
+    /// prompting. With `--template <name>` a template in `.apic/template/` is
+    /// removed instead (fuzzy-matched the same way).
     Remove {
         /// Contract to remove — path, extensionless path, or fuzzy fragment.
         /// Required unless `--template` is given.
