@@ -82,13 +82,18 @@ enum Commands {
         #[arg(long, short = 'e')]
         example: bool,
     },
-    /// Scaffold a new contract and edit it in the interactive TUI.
+    /// Scaffold a new contract — or, with `--template`, a new project template.
     ///
     /// Opens a full-screen editor seeded from the project template's structure;
     /// the file is written when you save. Pass `--editor` to scaffold the file
     /// to disk and open it in `$VISUAL`/`$EDITOR` instead. The path is resolved
     /// against the working directory and confined to it; a `..` escape or an
     /// absolute path elsewhere is rejected. Refuses to overwrite an existing file.
+    ///
+    /// With `--template <name>` a new template is authored at
+    /// `.apic/template/<name>.json` instead of a contract. `--use-template <name>`
+    /// picks which existing template seeds the new contract or template, skipping
+    /// the interactive picker shown when several templates exist.
     Create {
         /// Path for the new contract, relative to the working directory
         /// (e.g. `auth/login.json`). Required unless `--template` is given.
