@@ -99,6 +99,9 @@ enum Commands {
         /// of the built-in TUI, overriding `$VISUAL` and `$EDITOR`.
         #[arg(long, short = 'e', value_name = "EDITOR")]
         editor: Option<String>,
+
+        #[arg(long, short = 't')]
+        template: Option<String>,
     },
     /// Check that contracts parse and conform to the schema.
     ///
@@ -575,7 +578,7 @@ fn template_display_path() -> String {
 /// Inside an initialized project the `filename` is resolved against the working
 /// directory and confined to it; a `..` escape or absolute path elsewhere is
 /// rejected. Refuses to overwrite an existing file.
-fn create_cmd(filename: &str, editor: Option<&str>) -> Result<(), String> {
+fn create_cmd(filename: &str, template: Option<&str>, editor: Option<&str>) -> Result<(), String> {
     let path = match read_config_file().and_then(|conf| conf.get_root_dir()) {
         Ok(root) => confine_to_dir(&root, Path::new(filename))?,
         Err(_) => PathBuf::from(filename),
@@ -837,8 +840,12 @@ pub(crate) fn run() {
     let cli = Cli::parse();
     let result: Result<(), String> = match cli.command {
         Commands::Config { set_dir } => update_working_dir(set_dir.as_deref()),
-        Commands::Create { filename, editor } => match filename {
-            Some(filename) => create_cmd(&filename, editor.as_deref()),
+        Commands::Create {
+            filename,
+            editor,
+            template,
+        } => match filename {
+            Some(filename) => create_cmd(&filename, template.as_deref(), editor.as_deref()),
             None => Err("no filename provided, use 'apic create -f <filename>'".to_string()),
         },
         Commands::Init { set_dir } => init_cmd(set_dir.as_deref()),
