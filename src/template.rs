@@ -25,6 +25,57 @@ pub(crate) fn path(apic_dir: &Path) -> PathBuf {
     apic_dir.join(TEMPLATE_FILE)
 }
 
+/// Name of the per-project template directory inside the `.apic` directory.
+const TEMPLATE_DIR: &str = "template";
+
+/// File name of the default template inside the template directory.
+const DEFAULT_TEMPLATE: &str = "convention.json";
+
+/// Legacy single-file template location, migrated into the directory on seed.
+const LEGACY_TEMPLATE_FILE: &str = "template.json";
+
+/// Returns the per-project template directory inside `apic_dir`.
+pub(crate) fn dir(apic_dir: &Path) -> PathBuf {
+    apic_dir.join(TEMPLATE_DIR)
+}
+
+/// Returns the path to the default template inside `apic_dir`.
+pub(crate) fn default_path(apic_dir: &Path) -> PathBuf {
+    dir(apic_dir).join(DEFAULT_TEMPLATE)
+}
+
+/// Returns the template file a reader should use for `apic_dir`.
+///
+/// When the template directory holds exactly one `*.json` file, that file is the
+/// template (its name does not matter). With zero or several files the default
+/// `convention.json` path is returned. The picker that chooses among several
+/// templates is a later change; today every reader resolves to a single file.
+pub(crate) fn resolve_path(apic_dir: &Path) -> PathBuf {
+    let mut jsons = json_files(&dir(apic_dir));
+    if jsons.len() == 1 {
+        jsons.pop().expect("len checked to be 1")
+    } else {
+        default_path(apic_dir)
+    }
+}
+
+/// Collects the `*.json` files directly inside `dir`, sorted for determinism.
+/// A missing or unreadable directory yields an empty list.
+fn json_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = match fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("json")
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    files.sort();
+    files
+}
+
 /// Writes the default template to `<apic_dir>/template.json` when that file
 /// does not already exist. An existing template is left untouched.
 ///
@@ -386,10 +437,46 @@ mod tests {
         dir
     }
 
+    /// Writes `content` as the project's default template, creating the dir.
+    fn write_default_template(apic_dir: &Path, content: &str) {
+        fs::create_dir_all(dir(apic_dir)).unwrap();
+        fs::write(default_path(apic_dir), content).unwrap();
+    }
+
     #[test]
-    fn path_is_template_json_in_apic_dir() {
+    fn default_path_is_convention_in_template_dir() {
         let dir = std::path::Path::new("/tmp/.apic");
-        assert_eq!(path(dir), dir.join("template.json"));
+        assert_eq!(
+            default_path(dir),
+            dir.join("template").join("convention.json")
+        );
+    }
+
+    #[test]
+    fn resolve_path_picks_single_json_regardless_of_name() {
+        let apic = temp_apic("resolve_single");
+        fs::create_dir_all(dir(&apic)).unwrap();
+        let only = dir(&apic).join("custom.json");
+        fs::write(&only, "{}").unwrap();
+        assert_eq!(resolve_path(&apic), only);
+        fs::remove_dir_all(&apic).unwrap();
+    }
+
+    #[test]
+    fn resolve_path_falls_back_to_convention_when_multiple() {
+        let apic = temp_apic("resolve_multiple");
+        fs::create_dir_all(dir(&apic)).unwrap();
+        fs::write(dir(&apic).join("custom.json"), "{}").unwrap();
+        fs::write(default_path(&apic), "{}").unwrap();
+        assert_eq!(resolve_path(&apic), default_path(&apic));
+        fs::remove_dir_all(&apic).unwrap();
+    }
+
+    #[test]
+    fn resolve_path_falls_back_to_convention_when_empty() {
+        let apic = temp_apic("resolve_empty");
+        assert_eq!(resolve_path(&apic), default_path(&apic));
+        fs::remove_dir_all(&apic).unwrap();
     }
 
     #[test]
