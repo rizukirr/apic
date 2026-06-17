@@ -1,16 +1,15 @@
-//! Minimal Postman Collection v2.1.0 model.
+//! Minimal Postman Collection v2.0.0 model.
 //!
 //! Only the fields `apic convert` actually reads are declared; serde ignores
-//! every other key in the export, so this parses any real-world v2.1
-//! collection regardless of the Postman features it uses (auth, scripts,
-//! events, cookies, certificates, …).
+//! every other key in the export, so this parses any real-world v2.0
+//! collection regardless of the Postman features it uses.
 
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct Spec {
     #[serde(default)]
-    pub item: Vec<Items>,
+    pub(crate) item: Vec<Items>,
 }
 
 /// An entry in an `item` array: either a request (leaf) or a folder (group).
@@ -27,25 +26,25 @@ pub(crate) enum Items {
 /// what distinguishes a leaf from a folder during untagged matching.
 #[derive(Debug, Deserialize)]
 pub(crate) struct Item {
-    pub name: Option<String>,
-    pub description: Option<DescriptionUnion>,
-    pub request: RequestClass,
-    pub response: Option<Vec<ResponseClass>>,
+    pub(crate) name: Option<String>,
+    pub(crate) description: Option<DescriptionUnion>,
+    pub(crate) request: RequestClass,
+    pub(crate) response: Option<Vec<ResponseClass>>,
 }
 
 /// A folder grouping nested items.
 #[derive(Debug, Deserialize)]
 pub(crate) struct ItemGroup {
-    pub name: Option<String>,
-    pub item: Vec<Items>,
+    pub(crate) name: Option<String>,
+    pub(crate) item: Vec<Items>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct RequestClass {
-    pub method: Option<String>,
-    pub url: Option<Url>,
-    pub header: Option<Vec<Header>>,
-    pub body: Option<Body>,
+    pub(crate) method: Option<String>,
+    pub(crate) url: Option<Url>,
+    pub(crate) header: Option<Vec<Header>>,
+    pub(crate) body: Option<Body>,
 }
 
 /// A URL is either the literal string or a broken-down object with a `raw` form.
@@ -58,28 +57,28 @@ pub(crate) enum Url {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct UrlClass {
-    pub raw: Option<String>,
+    pub(crate) raw: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct Header {
     #[serde(default)]
-    pub key: String,
+    pub(crate) key: String,
     #[serde(default)]
-    pub value: String,
-    pub disabled: Option<bool>,
+    pub(crate) value: String,
+    pub(crate) disabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct Body {
-    pub raw: Option<String>,
+    pub(crate) raw: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ResponseClass {
-    pub code: Option<i64>,
-    pub status: Option<String>,
-    pub body: Option<String>,
+    pub(crate) code: Option<i64>,
+    pub(crate) status: Option<String>,
+    pub(crate) body: Option<String>,
 }
 
 /// A description is either a raw string or an object holding the text.
@@ -92,5 +91,5 @@ pub(crate) enum DescriptionUnion {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct Description {
-    pub content: Option<String>,
+    pub(crate) content: Option<String>,
 }

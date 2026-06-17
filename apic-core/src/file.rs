@@ -19,7 +19,7 @@ pub(crate) const MAX_CONTRACT_BYTES: u64 = 5 * 1024 * 1024;
 /// normalized form is also valid for filesystem access. Windows filenames
 /// cannot contain `\`, so swapping the platform separator never corrupts a
 /// name; on Unix `MAIN_SEPARATOR` is already `/`, making this a no-op.
-pub(crate) fn to_slash(path: &Path) -> String {
+pub fn to_slash(path: &Path) -> String {
     path.to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/")
 }
@@ -130,7 +130,7 @@ pub(crate) fn find_file_upward(start: PathBuf, names: &[PathBuf]) -> FindFileRes
 ///
 /// Returns an [`io::Error`] if the file cannot be opened or read, exceeds the
 /// size cap, or is not valid UTF-8.
-pub(crate) fn read_file(path: &Path) -> Result<String, io::Error> {
+pub fn read_file(path: &Path) -> Result<String, io::Error> {
     let meta = fs::metadata(path)?;
     if meta.len() > MAX_CONTRACT_BYTES {
         return Err(io::Error::new(
@@ -181,7 +181,7 @@ fn normalize_lexical(path: &Path) -> PathBuf {
 ///
 /// Returns `Err` with a human-readable message if `target` resolves outside
 /// `base`.
-pub(crate) fn confine_to_dir(base: &Path, target: &Path) -> Result<PathBuf, String> {
+pub fn confine_to_dir(base: &Path, target: &Path) -> Result<PathBuf, String> {
     let joined = if target.is_absolute() {
         target.to_path_buf()
     } else {

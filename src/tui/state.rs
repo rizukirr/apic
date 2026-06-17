@@ -9,7 +9,7 @@ use crate::tui::model::{EditBody, EditHeader, EditQuery, EditResponse, EditSchem
 use crate::tui::rows::{BodyLoc, CellKind, Expand, Field, RowKind, Section, TableRow, flatten};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::json::{method_all, method_str};
+use apic_core::json::{method_all, method_str};
 use std::path::Path;
 
 const HINT: &str = "↑↓ select · Enter edit/open · ←→ cell · a add · d delete · Esc back · Ctrl-S save · q quit · ? help";
@@ -281,10 +281,10 @@ fn generate_example_here(state: &mut UiState, model: &mut EditModel) {
     let Some((schema, dtype)) = body else { return };
     let mut value = crate::tui::model::example_from_schema(&schema);
     // An array body (e.g. `object[]`) generates a one-element array of the object.
-    if crate::json::parse_type(&dtype).1 {
+    if apic_core::json::parse_type(&dtype).1 {
         value = serde_json::Value::Array(vec![value]);
     }
-    let Ok(text) = crate::template::render_pretty(&value) else {
+    let Ok(text) = apic_core::template::render_pretty(&value) else {
         return;
     };
     match &loc {
@@ -415,7 +415,7 @@ fn focused_schema_target(state: &UiState) -> Option<(BodyLoc, Vec<usize>, bool)>
         .iter()
         .find_map(|c| matches!(&c.field, Field::SchemaType(_, _)).then(|| c.value.clone()))
         .unwrap_or_default();
-    let is_object = crate::json::parse_type(&dtype).0 == "object";
+    let is_object = apic_core::json::parse_type(&dtype).0 == "object";
     Some((loc, path, is_object))
 }
 
@@ -886,7 +886,7 @@ pub(crate) fn handle_confirm_delete(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json::json_get;
+    use apic_core::json::json_get;
 
     fn model() -> EditModel {
         let c = json_get(

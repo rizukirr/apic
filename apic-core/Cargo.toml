@@ -1,0 +1,13 @@
+[package]
+name = "apic-core"
+version = "0.2.5"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Core contract model and logic for apic (parsing, validation, templates, convert)."
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150", features = ["preserve_order"] }
+toml = "1.1.2"
+walkdir = "2.5.0"

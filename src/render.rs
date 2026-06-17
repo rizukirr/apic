@@ -4,7 +4,9 @@
 //! query, headers, request, responses). Colors are applied only when stdout is
 //! a terminal, so piped or redirected output stays clean.
 
-use crate::json::{JsonContent, Method, Schema, Url, Variable, any_accept, method_str, parse_type};
+use apic_core::json::{
+    JsonContent, Method, Schema, Url, Variable, any_accept, method_str, parse_type,
+};
 use crossterm::style::Stylize;
 use std::io::IsTerminal;
 
@@ -417,7 +419,7 @@ pub(crate) fn home_relative(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json::Schema;
+    use apic_core::json::Schema;
 
     #[test]
     fn sanitize_strips_escape_and_bell_sequences() {

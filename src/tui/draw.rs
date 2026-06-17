@@ -758,8 +758,8 @@ fn centered(area: Rect, pct_x: u16, pct_y: u16) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json::json_get;
     use crate::tui::model::EditModel;
+    use apic_core::json::json_get;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 

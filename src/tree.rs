@@ -24,7 +24,7 @@ pub(crate) struct Node {
 impl Node {
     /// Inserts `rel` (a path relative to the contracts root), attributing each
     /// of `match_indices` — char positions into the separator-joined display
-    /// string, as produced by [`crate::fuzzy::fuzzy_match`] — to the component
+    /// string, as produced by [`apic_core::fuzzy::fuzzy_match`] — to the component
     /// whose char range contains it. Separator positions match no component
     /// and are dropped.
     pub(crate) fn insert(&mut self, rel: &Path, match_indices: &[usize]) {

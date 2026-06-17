@@ -207,11 +207,11 @@ fn build_contract(raw: RawRequest) -> JsonContent {
 
 /// One contract destined for a file at `rel_path` (relative to `--destination`).
 pub(crate) struct MappedContract {
-    pub rel_path: PathBuf,
-    pub contract: JsonContent,
+    pub(crate) rel_path: PathBuf,
+    pub(crate) contract: JsonContent,
     /// A lossy-mapping note surfaced to the user (e.g. an unsupported HTTP
     /// method downgraded to GET). `None` when the mapping was clean.
-    pub warning: Option<String>,
+    pub(crate) warning: Option<String>,
 }
 
 /// Flags a request whose HTTP method apic does not model. Such methods are
@@ -530,33 +530,28 @@ fn write_contracts(dest_base: &Path, mapped: &[MappedContract]) -> Result<usize,
     Ok(written)
 }
 
-/// Run `apic convert`: parse the collection at `collection_path`, map it, and
-/// write contracts under `dest_base`.
-pub(crate) fn run(collection_path: &Path, dest_base: &Path) -> Result<(), String> {
+/// The result of a successful `convert::run`, for the caller to report.
+pub struct ConvertOutcome {
+    pub written: usize,
+    pub destination: std::path::PathBuf,
+    pub warnings: Vec<String>,
+}
+
+/// Parses the collection at `collection_path`, maps it, writes contracts under
+/// `dest_base`, and returns what happened. Does not print — the caller reports.
+pub fn run(collection_path: &Path, dest_base: &Path) -> Result<ConvertOutcome, String> {
     let collection = converter::from_path(collection_path)?;
     let mapped = map(&collection);
     if mapped.is_empty() {
         return Err("collection contained no convertible requests".to_string());
     }
-    let count = write_contracts(dest_base, &mapped)?;
-
-    // Surface lossy-mapping notes (e.g. unsupported methods downgraded to GET)
-    // so the user knows which imported contracts to review.
-    let warnings: Vec<&str> = mapped.iter().filter_map(|m| m.warning.as_deref()).collect();
-    for warning in &warnings {
-        eprintln!("warning: {warning}");
-    }
-
-    let suffix = match warnings.len() {
-        0 => String::new(),
-        1 => " (1 warning)".to_string(),
-        n => format!(" ({n} warnings)"),
-    };
-    println!(
-        "Converted {count} contract(s) into {}{suffix}",
-        dest_base.display()
-    );
-    Ok(())
+    let written = write_contracts(dest_base, &mapped)?;
+    let warnings: Vec<String> = mapped.iter().filter_map(|m| m.warning.clone()).collect();
+    Ok(ConvertOutcome {
+        written,
+        destination: dest_base.to_path_buf(),
+        warnings,
+    })
 }
 
 #[cfg(test)]

@@ -9,36 +9,36 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 pub(crate) struct Spec {
     #[serde(default)]
-    pub requests: Vec<Request>,
+    pub(crate) requests: Vec<Request>,
     #[serde(default)]
-    pub folders: Option<Vec<Folder>>,
+    pub(crate) folders: Option<Vec<Folder>>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct Folder {
     #[serde(default)]
-    pub name: String,
+    pub(crate) name: String,
     /// Request ids belonging to this folder, in order.
     #[serde(default)]
-    pub order: Vec<String>,
+    pub(crate) order: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct Request {
     #[serde(default)]
-    pub id: String,
+    pub(crate) id: String,
     #[serde(default)]
-    pub name: String,
+    pub(crate) name: String,
     #[serde(default)]
-    pub method: String,
+    pub(crate) method: String,
     /// Newline-separated `Key: Value` header blob.
     #[serde(default)]
-    pub headers: String,
+    pub(crate) headers: String,
     #[serde(default)]
-    pub url: String,
-    pub description: Option<String>,
+    pub(crate) url: String,
+    pub(crate) description: Option<String>,
     /// Raw request body. Any JSON shape is accepted; only a string carries a
     /// payload apic maps (other shapes are treated as no body).
     #[serde(rename = "rawModeData")]
-    pub raw_mode_data: Option<serde_json::Value>,
+    pub(crate) raw_mode_data: Option<serde_json::Value>,
 }

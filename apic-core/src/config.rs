@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 /// The persisted `apic` project configuration (serialized to `config.toml`).
 #[derive(Debug, Deserialize, Serialize)]
-pub(crate) struct Config {
+pub struct Config {
     name: String,
     version: String,
     root: Root,
@@ -25,10 +25,11 @@ pub(crate) struct Root {
 
 /// The outcome of a successful [`Config::init`] call.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum InitOutcome {
+pub enum InitOutcome {
     /// A new project was created (the `.apic` directory, its `config.toml`,
-    /// and the seeded `template/convention.json`).
-    Initialized,
+    /// and the seeded `template/convention.json`). `warning` carries a
+    /// best-effort seed-failure note for the caller to print, if any.
+    Initialized { warning: Option<String> },
     /// The project already existed and only its missing template was seeded.
     TemplateSeeded,
 }
@@ -53,7 +54,7 @@ impl Config {
     /// the `.apic` directory), which keeps the config portable across machines
     /// and clones. A legacy absolute `working_dir` is still honored, since
     /// joining an absolute path simply yields that path.
-    pub(crate) fn get_root_dir(&self) -> Result<PathBuf, String> {
+    pub fn get_root_dir(&self) -> Result<PathBuf, String> {
         let project_root = project_root()?;
         let resolved = project_root.join(&self.root.working_dir);
         if !resolved.exists() {
@@ -87,7 +88,7 @@ impl Config {
     /// Returns `Err` if the project is already fully initialized, the given
     /// working directory does not exist, or the `.apic` directory cannot be
     /// created.
-    pub(crate) fn init(working_dir: Option<&str>) -> Result<InitOutcome, String> {
+    pub fn init(working_dir: Option<&str>) -> Result<InitOutcome, String> {
         match find_file_apic_config_file() {
             Ok(FindFileResult::Found(_)) => {
                 // Already initialized: recover a missing template instead of
@@ -125,9 +126,7 @@ impl Config {
         // existing template (e.g. on a re-created project) is left untouched.
         // Best-effort: a seed failure must not abort an otherwise-successful
         // init — `apic create` re-seeds and falls back to the built-in default.
-        if let Err(err) = crate::template::seed_if_missing(&makedir) {
-            eprintln!("Warning: {err}");
-        }
+        let warning = crate::template::seed_if_missing(&makedir).err();
 
         // `working_dir` is stored relative to the project root (= `pwd` here,
         // where `.apic` is created) so the config stays portable. A `None`
@@ -144,7 +143,7 @@ impl Config {
             None => PathBuf::from("."),
         };
         write_config_file(makedir.clone(), &Config::default(&working_dir))?;
-        Ok(InitOutcome::Initialized)
+        Ok(InitOutcome::Initialized { warning })
     }
 
     /// Changes the root working directory to `new_dir` and persists the config.
@@ -156,7 +155,7 @@ impl Config {
     ///
     /// Returns `Err` if the project is not initialized or `new_dir` already
     /// equals the current working directory.
-    pub(crate) fn update_root_dir(&mut self, new_dir: &str) -> Result<(), String> {
+    pub fn update_root_dir(&mut self, new_dir: &str) -> Result<(), String> {
         let apic_dir = match find_file_apic_dir() {
             Ok(FindFileResult::Found(dir)) => dir.first().unwrap().clone(),
             Ok(FindFileResult::NotFound) => {
@@ -258,7 +257,7 @@ fn find_file_apic_dir() -> Result<FindFileResult, String> {
 ///
 /// Unlike [`project_root`] this never errors — callers that also work outside
 /// a project (e.g. `apic create`) treat `None` as "no project".
-pub(crate) fn find_apic_dir() -> Option<PathBuf> {
+pub fn find_apic_dir() -> Option<PathBuf> {
     match find_file_apic_dir().ok()? {
         FindFileResult::Found(dirs) => dirs.first().cloned(),
         FindFileResult::NotFound => None,
@@ -286,7 +285,7 @@ fn find_file_apic_config_file() -> Result<FindFileResult, String> {
 ///
 /// Returns `Err` if the project is not initialized or the config file cannot
 /// be read or parsed.
-pub(crate) fn read_config_file() -> Result<Config, String> {
+pub fn read_config_file() -> Result<Config, String> {
     let config_file = match find_file_apic_config_file()? {
         FindFileResult::Found(path) => path.first().unwrap().clone(),
         FindFileResult::NotFound => {

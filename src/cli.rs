@@ -1,12 +1,12 @@
 //! Command-line interface: argument parsing and subcommand handlers.
 
-use crate::config::{Config, InitOutcome, read_config_file};
-use crate::file::{confine_to_dir, read_file, to_slash};
-use crate::fuzzy::{fuzzy_find, fuzzy_match_path};
-use crate::json::{json_get, scan_json_file, validate as validate_contract};
 use crate::picker;
 use crate::render::{home_relative, render, sanitize};
 use crate::tree;
+use apic_core::config::{Config, InitOutcome, read_config_file};
+use apic_core::file::{confine_to_dir, read_file, to_slash};
+use apic_core::fuzzy::{fuzzy_find, fuzzy_match_path};
+use apic_core::json::{json_get, scan_json_file, validate as validate_contract};
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::io::{IsTerminal, Write};
@@ -239,7 +239,12 @@ fn update_working_dir(working_dir: Option<&str>) -> Result<(), String> {
 /// erroring.
 fn init_cmd(working_dir: Option<&str>) -> Result<(), String> {
     match Config::init(working_dir)? {
-        InitOutcome::Initialized => println!("Successfully initialized"),
+        InitOutcome::Initialized { warning } => {
+            if let Some(warning) = warning {
+                eprintln!("Warning: {warning}");
+            }
+            println!("Successfully initialized");
+        }
         InitOutcome::TemplateSeeded => {
             println!("Already initialized; created the missing template")
         }
@@ -419,7 +424,7 @@ fn select_create_template(
     apic_dir: &Path,
     use_template: Option<&str>,
 ) -> Result<TemplateChoice, String> {
-    let templates = crate::template::list_templates(apic_dir);
+    let templates = apic_core::template::list_templates(apic_dir);
     let root = apic_dir.parent().unwrap_or(apic_dir);
 
     match use_template {
@@ -516,6 +521,14 @@ fn rel_display(path: &Path, root: &Path) -> String {
 fn cancelled() -> Result<(), String> {
     println!("cancelled");
     Ok(())
+}
+
+/// Prints each fallback warning to stderr, matching the previous `template`
+/// output (`Warning: <message>`).
+fn print_warnings(warnings: &[String]) {
+    for warning in warnings {
+        eprintln!("Warning: {warning}");
+    }
 }
 
 /// Resolves `filename` to exactly one contract, asking the user to pick when
@@ -669,7 +682,7 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
     // Exclude anything inside `.apic/` (notably the `template/` dir) from the
     // scan: a template may be a partial that is not a valid stand-alone contract,
     // and it has its own check via `apic validate --template`.
-    let targets: Vec<PathBuf> = match crate::config::find_apic_dir() {
+    let targets: Vec<PathBuf> = match apic_core::config::find_apic_dir() {
         Some(apic_dir) => targets
             .into_iter()
             .filter(|p| !p.starts_with(&apic_dir))
@@ -679,7 +692,7 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
 
     // Template-conformance rules from the project template, loaded once and
     // reused for all targets; they enforce nothing when the template is absent.
-    let rules = crate::template::load_rules()?;
+    let rules = apic_core::template::load_rules()?;
 
     let mut failed = 0usize;
     for path in &targets {
@@ -728,14 +741,14 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
 /// CI. An empty template directory (or no project) is not a failure — `create`
 /// would use the built-in default.
 fn validate_template_cmd() -> Result<(), String> {
-    let apic_dir = match crate::config::find_apic_dir() {
+    let apic_dir = match apic_core::config::find_apic_dir() {
         Some(dir) => dir,
         None => {
             println!("No project template found; create will use the built-in template");
             return Ok(());
         }
     };
-    let templates = crate::template::list_templates(&apic_dir);
+    let templates = apic_core::template::list_templates(&apic_dir);
     if templates.is_empty() {
         println!("No project template found; create will use the built-in template");
         return Ok(());
@@ -745,15 +758,15 @@ fn validate_template_cmd() -> Result<(), String> {
     let mut failed = 0usize;
     for path in &templates {
         let shown = rel_display(path, root);
-        match crate::template::check_path(path) {
-            crate::template::TemplateCheck::Valid => println!("ok   {shown}"),
-            crate::template::TemplateCheck::Invalid(reason) => {
+        match apic_core::template::check_path(path) {
+            apic_core::template::TemplateCheck::Valid => println!("ok   {shown}"),
+            apic_core::template::TemplateCheck::Invalid(reason) => {
                 println!("FAIL {shown}: {}", sanitize(&reason));
                 failed += 1;
             }
             // list_templates yields existing files, so a read failure is
             // unexpected; count it as a failure rather than skip it silently.
-            crate::template::TemplateCheck::Absent => {
+            apic_core::template::TemplateCheck::Absent => {
                 println!("FAIL {shown}: could not read template");
                 failed += 1;
             }
@@ -797,7 +810,7 @@ fn create_template_cmd(
     editor: Option<&str>,
 ) -> Result<(), String> {
     let apic_dir =
-        crate::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
+        apic_core::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
 
     if name.contains('/') || name.contains('\\') || name.contains("..") {
         return Err(format!(
@@ -810,7 +823,7 @@ fn create_template_cmd(
     } else {
         format!("{name}.json")
     };
-    let dir = crate::template::dir(&apic_dir);
+    let dir = apic_core::template::dir(&apic_dir);
     fs::create_dir_all(&dir)
         .map_err(|err| format!("Failed to create {}: {}", dir.display(), err))?;
     let path = dir.join(&file);
@@ -830,8 +843,12 @@ fn create_template_cmd(
 
     if editor.is_some() {
         let contract = match &source {
-            Some(p) => crate::template::resolve_contract_from(p)?,
-            None => crate::template::DEFAULT.to_string(),
+            Some(p) => {
+                let (contract, warnings) = apic_core::template::resolve_contract_from(p)?;
+                print_warnings(&warnings);
+                contract
+            }
+            None => apic_core::template::DEFAULT.to_string(),
         };
         fs::write(&path, contract)
             .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
@@ -868,7 +885,7 @@ fn create_contract_cmd(
         return Err(format!("{} already exists", path.display()));
     }
 
-    let chosen = match crate::config::find_apic_dir() {
+    let chosen = match apic_core::config::find_apic_dir() {
         Some(apic_dir) => match select_create_template(&apic_dir, use_template)? {
             TemplateChoice::Template(p) => Some(p),
             TemplateChoice::Default => None,
@@ -880,8 +897,16 @@ fn create_contract_cmd(
     if editor.is_some() {
         // Legacy path: scaffold to disk, then open the external editor.
         let contract = match &chosen {
-            Some(p) => crate::template::resolve_contract_from(p)?,
-            None => crate::template::resolve_for_create()?,
+            Some(p) => {
+                let (contract, warnings) = apic_core::template::resolve_contract_from(p)?;
+                print_warnings(&warnings);
+                contract
+            }
+            None => {
+                let (contract, warnings) = apic_core::template::resolve_for_create()?;
+                print_warnings(&warnings);
+                contract
+            }
         };
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
@@ -906,9 +931,9 @@ fn create_contract_cmd(
 
 /// Reads the resolved project template if present, for seeding the create TUI.
 fn read_project_template() -> Option<String> {
-    let apic_dir = crate::config::find_apic_dir()?;
-    crate::template::seed_if_missing(&apic_dir).ok()?;
-    fs::read_to_string(crate::template::resolve_path(&apic_dir)).ok()
+    let apic_dir = apic_core::config::find_apic_dir()?;
+    apic_core::template::seed_if_missing(&apic_dir).ok()?;
+    fs::read_to_string(apic_core::template::resolve_path(&apic_dir)).ok()
 }
 
 /// Opens a contract for editing, or the project template when `template` is set.
@@ -922,9 +947,9 @@ fn read_project_template() -> Option<String> {
 fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Result<(), String> {
     if template {
         let apic_dir =
-            crate::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
-        crate::template::seed_if_missing(&apic_dir)?;
-        let path = crate::template::resolve_path(&apic_dir);
+            apic_core::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
+        apic_core::template::seed_if_missing(&apic_dir)?;
+        let path = apic_core::template::resolve_path(&apic_dir);
         if editor.is_some() {
             return open_in_editor(&path, editor)
                 .map_err(|err| format!("Failed to open editor: {err}"));
@@ -1000,8 +1025,8 @@ fn remove_cmd(filename: Option<&str>, template: Option<&str>) -> Result<(), Stri
 /// one is fine, since `create` reseeds `convention.json` from the built-in.
 fn remove_template_cmd(name: &str) -> Result<(), String> {
     let apic_dir =
-        crate::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
-    let templates = crate::template::list_templates(&apic_dir);
+        apic_core::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
+    let templates = apic_core::template::list_templates(&apic_dir);
     let root = apic_dir.parent().unwrap_or(&apic_dir);
 
     let path = match classify_template(name, &templates) {
@@ -1032,7 +1057,21 @@ fn convert_cmd(postman: &Path, destination: Option<&str>) -> Result<(), String> 
         Some(dir) => confine_to_dir(&root, Path::new(dir))?,
         None => root,
     };
-    crate::convert::run(postman, &dest_base)
+    let outcome = apic_core::convert::run(postman, &dest_base)?;
+    for warning in &outcome.warnings {
+        eprintln!("warning: {warning}");
+    }
+    let suffix = match outcome.warnings.len() {
+        0 => String::new(),
+        1 => " (1 warning)".to_string(),
+        n => format!(" ({n} warnings)"),
+    };
+    println!(
+        "Converted {} contract(s) into {}{suffix}",
+        outcome.written,
+        outcome.destination.display()
+    );
+    Ok(())
 }
 
 /// Asks the user `prompt` and returns whether they confirmed (default no).
