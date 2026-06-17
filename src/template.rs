@@ -51,6 +51,13 @@ pub(crate) fn resolve_path(apic_dir: &Path) -> PathBuf {
     }
 }
 
+/// Lists the project's templates: every `*.json` directly inside
+/// `.apic/template/`, sorted. A missing directory yields an empty list.
+#[allow(dead_code)] // wired into `cli.rs` in a later task
+pub(crate) fn list_templates(apic_dir: &Path) -> Vec<PathBuf> {
+    json_files(&dir(apic_dir))
+}
+
 /// Collects the `*.json` files directly inside `dir`, sorted for determinism.
 /// A missing or unreadable directory yields an empty list.
 fn json_files(dir: &Path) -> Vec<PathBuf> {
@@ -145,26 +152,30 @@ pub(crate) fn resolve_for_create() -> Result<String, String> {
 /// built-in default with a warning (returned as `Ok`); only a template file
 /// that exists but does not merge into a valid contract is a hard error.
 fn resolve_at(apic_dir: &Path) -> Result<String, String> {
-    let fallback = |reason: String| {
-        eprintln!("Warning: {reason}; using the built-in template");
-        DEFAULT.to_string()
-    };
-
     if let Err(err) = seed_if_missing(apic_dir) {
-        return Ok(fallback(err));
+        eprintln!("Warning: {err}; using the built-in template");
+        return Ok(DEFAULT.to_string());
     }
+    resolve_contract_from(&resolve_path(apic_dir))
+}
 
-    let path = resolve_path(apic_dir);
-    let overlay = match fs::read_to_string(&path) {
+/// Builds the `create` contract body from the template file at `path`.
+///
+/// The built-in default is the base; the file at `path` is overlaid onto it
+/// (see [`merge_onto_default`]). A missing or unreadable file falls back to the
+/// plain default with a warning (returned as `Ok`); a file that exists but does
+/// not merge into a valid contract is an `Err` so `create` can abort.
+pub(crate) fn resolve_contract_from(path: &Path) -> Result<String, String> {
+    let overlay = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(err) => {
-            return Ok(fallback(format!(
-                "failed to read {}: {err}",
+            eprintln!(
+                "Warning: failed to read {}: {err}; using the built-in template",
                 path.display()
-            )));
+            );
+            return Ok(DEFAULT.to_string());
         }
     };
-
     match merge_onto_default(&overlay) {
         Ok(contract) => Ok(contract),
         Err(reason) => Err(format!("{} {reason}", path.display())),
@@ -646,6 +657,36 @@ mod tests {
         assert!(crate::json::validate(&contract).is_ok());
         assert!(default_path(&dir).exists());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn list_templates_returns_sorted_json_only() {
+        let apic = temp_apic("list_sorted");
+        fs::create_dir_all(dir(&apic)).unwrap();
+        fs::write(dir(&apic).join("b.json"), "{}").unwrap();
+        fs::write(dir(&apic).join("a.json"), "{}").unwrap();
+        fs::write(dir(&apic).join("note.txt"), "x").unwrap();
+        let names: Vec<String> = list_templates(&apic)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["a.json", "b.json"]);
+        fs::remove_dir_all(&apic).unwrap();
+    }
+
+    #[test]
+    fn list_templates_empty_when_dir_missing() {
+        let apic = temp_apic("list_empty");
+        assert!(list_templates(&apic).is_empty());
+        fs::remove_dir_all(&apic).unwrap();
+    }
+
+    #[test]
+    fn resolve_contract_from_falls_back_when_file_missing() {
+        let apic = temp_apic("rcf_missing");
+        let contract = resolve_contract_from(&apic.join("nope.json")).unwrap();
+        assert_eq!(contract, DEFAULT);
+        fs::remove_dir_all(&apic).unwrap();
     }
 
     #[test]
