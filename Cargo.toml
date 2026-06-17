@@ -1,5 +1,8 @@
 [workspace]
 members = ["apic-core"]
+# Bare `cargo build`/`test` operate on both the bin and the core lib, so a plain
+# `cargo test` runs apic-core's unit tests too (CI also passes `--workspace`).
+default-members = [".", "apic-core"]
 
 [package]
 name = "apic-cli"
