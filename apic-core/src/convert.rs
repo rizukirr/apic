@@ -206,12 +206,12 @@ fn build_contract(raw: RawRequest) -> JsonContent {
 }
 
 /// One contract destined for a file at `rel_path` (relative to `--destination`).
-pub struct MappedContract {
-    pub rel_path: PathBuf,
-    pub contract: JsonContent,
+pub(crate) struct MappedContract {
+    pub(crate) rel_path: PathBuf,
+    pub(crate) contract: JsonContent,
     /// A lossy-mapping note surfaced to the user (e.g. an unsupported HTTP
     /// method downgraded to GET). `None` when the mapping was clean.
-    pub warning: Option<String>,
+    pub(crate) warning: Option<String>,
 }
 
 /// Flags a request whose HTTP method apic does not model. Such methods are

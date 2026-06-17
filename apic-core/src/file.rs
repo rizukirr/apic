@@ -9,7 +9,7 @@ use walkdir::WalkDir;
 ///
 /// Contracts are small JSON documents; this cap turns a hostile or accidental
 /// multi-gigabyte file into a clean error instead of exhausting memory.
-pub const MAX_CONTRACT_BYTES: u64 = 5 * 1024 * 1024;
+pub(crate) const MAX_CONTRACT_BYTES: u64 = 5 * 1024 * 1024;
 
 /// Renders a path with `/` separators on every platform.
 ///
@@ -25,7 +25,7 @@ pub fn to_slash(path: &Path) -> String {
 }
 
 /// Outcome of a file search: either the matching paths or nothing found.
-pub enum FindFileResult {
+pub(crate) enum FindFileResult {
     Found(Vec<PathBuf>),
     NotFound,
 }
@@ -35,7 +35,7 @@ pub enum FindFileResult {
 ///
 /// Symlinks are not followed. Returns [`FindFileResult::NotFound`] if no file
 /// matches.
-pub fn find_file_by_ext_downward(start: PathBuf, extensions: &[&str]) -> FindFileResult {
+pub(crate) fn find_file_by_ext_downward(start: PathBuf, extensions: &[&str]) -> FindFileResult {
     let pwd = start.to_path_buf();
     let mut files = Vec::new();
 
@@ -63,7 +63,7 @@ pub fn find_file_by_ext_downward(start: PathBuf, extensions: &[&str]) -> FindFil
 /// For each directory walked (files are skipped), each name is joined and
 /// checked for existence. Symlinks are not followed. Returns
 /// [`FindFileResult::NotFound`] if nothing matches.
-pub fn find_file_downward(start: PathBuf, names: &[PathBuf]) -> FindFileResult {
+pub(crate) fn find_file_downward(start: PathBuf, names: &[PathBuf]) -> FindFileResult {
     let mut files = Vec::new();
 
     for entry in WalkDir::new(&start)
@@ -93,7 +93,7 @@ pub fn find_file_downward(start: PathBuf, names: &[PathBuf]) -> FindFileResult {
 /// not searched again in higher ancestors. The walk stops when every name has
 /// been found or the root is reached. Returns [`FindFileResult::NotFound`] if
 /// nothing matches.
-pub fn find_file_upward(start: PathBuf, names: &[PathBuf]) -> FindFileResult {
+pub(crate) fn find_file_upward(start: PathBuf, names: &[PathBuf]) -> FindFileResult {
     let mut pwd = start;
     let mut files = Vec::new();
     let mut remaining: Vec<&PathBuf> = names.iter().collect();

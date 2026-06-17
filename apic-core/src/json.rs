@@ -168,7 +168,7 @@ pub fn any_accept(fields: &[Schema]) -> bool {
 
 // Scaffolding for the upcoming `method set` command; not yet wired in.
 #[allow(dead_code)]
-pub fn method_from_str(method: &str) -> Method {
+pub(crate) fn method_from_str(method: &str) -> Method {
     match method.to_uppercase().as_str() {
         "GET" => Method::GET,
         "POST" => Method::POST,

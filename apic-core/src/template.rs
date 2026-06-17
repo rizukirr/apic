@@ -32,7 +32,7 @@ pub fn dir(apic_dir: &Path) -> PathBuf {
 }
 
 /// Returns the path to the default template inside `apic_dir`.
-pub fn default_path(apic_dir: &Path) -> PathBuf {
+pub(crate) fn default_path(apic_dir: &Path) -> PathBuf {
     dir(apic_dir).join(DEFAULT_TEMPLATE)
 }
 

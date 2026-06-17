@@ -29,7 +29,7 @@ use std::cmp::Reverse;
 /// highlights clustered on a file name should match per-component via
 /// [`fuzzy_match_path`] (an empty query matches everything with a score of `0`
 /// and no indices); `None` if the query is not a subsequence of `candidate`.
-pub fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usize>)> {
+pub(crate) fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usize>)> {
     if query.is_empty() {
         return Some((0, Vec::new()));
     }

@@ -19,7 +19,7 @@ pub struct Config {
 
 /// The `[root]` section of the config holding the working directory.
 #[derive(Debug, Deserialize, Serialize)]
-pub struct Root {
+pub(crate) struct Root {
     working_dir: PathBuf,
 }
 
