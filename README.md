@@ -46,13 +46,17 @@ for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), and Windows (x86_64).
 # 1. Initialize a project in the current directory (creates .apic/config.toml)
 apic init
 
-# 2. Point apic at the folder that holds your contract files
+# 2. Point apic at the folder that holds your contract files (Optional)
 apic config --set-dir api-contract
 
-# 3. Scaffold a new contract from a template (opens the interactive editor)
+# 3. create template convention
+apic open --template
+
+# 4. Scaffold a new contract from a template (opens the interactive editor)
+# will follow template convention, otherwise use builtin template
 apic create -f auth/login.json
 
-# 4. List and read contracts
+# 5. List and read contracts
 apic list
 apic read -f login
 ```
