@@ -1032,7 +1032,21 @@ fn convert_cmd(postman: &Path, destination: Option<&str>) -> Result<(), String> 
         Some(dir) => confine_to_dir(&root, Path::new(dir))?,
         None => root,
     };
-    crate::convert::run(postman, &dest_base)
+    let outcome = crate::convert::run(postman, &dest_base)?;
+    for warning in &outcome.warnings {
+        eprintln!("warning: {warning}");
+    }
+    let suffix = match outcome.warnings.len() {
+        0 => String::new(),
+        1 => " (1 warning)".to_string(),
+        n => format!(" ({n} warnings)"),
+    };
+    println!(
+        "Converted {} contract(s) into {}{suffix}",
+        outcome.written,
+        outcome.destination.display()
+    );
+    Ok(())
 }
 
 /// Asks the user `prompt` and returns whether they confirmed (default no).
