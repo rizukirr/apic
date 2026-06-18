@@ -739,19 +739,25 @@ impl App {
         egui::TopBottomPanel::top("nav").show(ctx, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
-                ui.add_space(16.0);
-                ui.menu_button(RichText::new("[ Import ]").color(GREEN), |ui| {
-                    if ui.button("apic file").clicked() {
-                        action = Some(SidebarAction::ImportApic);
-                        ui.close();
-                    }
-                    if ui.button("Postman collection").clicked() {
-                        action = Some(SidebarAction::ImportPostman);
-                        ui.close();
-                    }
+                let row_h = 26.0;
+                ui.set_min_height(row_h);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.set_min_height(row_h);
+                    ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
+                    ui.add_space(8.0);
+                    ui.menu_button(RichText::new("[ Import ]").color(GREEN), |ui| {
+                        if ui.button("apic file").clicked() {
+                            action = Some(SidebarAction::ImportApic);
+                            ui.close();
+                        }
+                        if ui.button("Postman collection").clicked() {
+                            action = Some(SidebarAction::ImportPostman);
+                            ui.close();
+                        }
+                    });
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.set_min_height(row_h);
                     ui.add_space(8.0);
                     bordered_input(ui, &mut self.search, 200.0, "SEARCH...");
                     ui.add_space(6.0);
@@ -770,7 +776,7 @@ impl App {
                 ui.label(RichText::new(&self.status).color(DIM));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
-                        RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
+                        RichText::new(concat!("apic v", env!("CARGO_PKG_VERSION")))
                             .color(DIM)
                             .size(11.0),
                     );
