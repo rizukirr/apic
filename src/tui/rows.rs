@@ -9,52 +9,9 @@
 //! `properties`).
 
 use crate::tui::model::{EditModel, EditSchema, EditUrl};
-
-/// Where a request/response schema lives.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum BodyLoc {
-    Request,
-    Response(usize),
-}
-
-/// The editable target a cell points at. `SectionHeader` is a non-editable
-/// placeholder used by `Label` cells.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Field {
-    Name,
-    Description,
-    Method,
-    Protocol,
-    Host,
-    PathSeg(usize),
-    PathAdd,
-    QueryName(usize),
-    QueryType(usize),
-    QueryDesc(usize),
-    QueryRequired(usize),
-    QueryAdd,
-    VarName(usize),
-    VarType(usize),
-    VarDesc(usize),
-    VarRequired(usize),
-    VarAdd,
-    HeaderName(usize),
-    HeaderValue(usize),
-    HeaderAdd,
-    RequestToggle,
-    BodyDtype(BodyLoc),
-    ResponseCode(usize),
-    ResponseDesc(usize),
-    BodyExample(BodyLoc),
-    SchemaName(BodyLoc, Vec<usize>),
-    SchemaType(BodyLoc, Vec<usize>),
-    SchemaDesc(BodyLoc, Vec<usize>),
-    SchemaRequired(BodyLoc, Vec<usize>),
-    SchemaAccept(BodyLoc, Vec<usize>),
-    SchemaAdd(BodyLoc, Vec<usize>),
-    ResponseAdd,
-    SectionHeader,
-}
+// The cell-address enums are UI-agnostic and live in core so a GUI can reuse
+// them; re-exported here under the path the TUI already uses.
+pub(crate) use apic_core::edit::{BodyLoc, Field};
 
 /// How a cell is edited.
 #[derive(Debug, Clone, PartialEq)]

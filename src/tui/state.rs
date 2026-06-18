@@ -4,12 +4,11 @@
 //! they are unit-testable without a terminal. The cursor is two-level:
 //! `cell: None` selects a whole table row; `cell: Some(c)` edits a cell.
 
-use crate::tui::model::EditModel;
-use crate::tui::model::{EditBody, EditHeader, EditQuery, EditResponse, EditSchema, EditVariable};
+use crate::tui::model::{EditModel, EditSchema};
 use crate::tui::rows::{BodyLoc, CellKind, Expand, Field, RowKind, Section, TableRow, flatten};
+use apic_core::edit::{EditAction, apply};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use apic_core::json::{method_all, method_str};
 use std::path::Path;
 
 const HINT: &str = "↑↓ select · Enter edit/open · ←→ cell · a add · d delete · Esc back · Ctrl-S save · q quit · ? help";
@@ -263,44 +262,17 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
 /// Generates an example JSON for the request/response body the cursor is in,
 /// from that body's schema fields, filling its example buffer.
 fn generate_example_here(state: &mut UiState, model: &mut EditModel) {
+    // Which body the cursor is in is view state; the generation itself is a
+    // shared core edit.
     let loc = match state.sections.get(state.sec).and_then(|s| s.expand) {
         Some(Expand::Request) => BodyLoc::Request,
         Some(Expand::Response(i)) => BodyLoc::Response(i),
         _ => return,
     };
-    let body = match &loc {
-        BodyLoc::Request => model
-            .request
-            .as_ref()
-            .map(|b| (b.schema.clone(), b.dtype.clone())),
-        BodyLoc::Response(i) => model
-            .responses
-            .get(*i)
-            .map(|r| (r.schema.clone(), r.dtype.clone())),
-    };
-    let Some((schema, dtype)) = body else { return };
-    let mut value = crate::tui::model::example_from_schema(&schema);
-    // An array body (e.g. `object[]`) generates a one-element array of the object.
-    if apic_core::json::parse_type(&dtype).1 {
-        value = serde_json::Value::Array(vec![value]);
+    if apply(model, &EditAction::GenerateExample { loc }) {
+        state.dirty = true;
+        state.refresh(model);
     }
-    let Ok(text) = apic_core::template::render_pretty(&value) else {
-        return;
-    };
-    match &loc {
-        BodyLoc::Request => {
-            if let Some(b) = model.request.as_mut() {
-                b.example = text;
-            }
-        }
-        BodyLoc::Response(i) => {
-            if let Some(r) = model.responses.get_mut(*i) {
-                r.example = text;
-            }
-        }
-    }
-    state.dirty = true;
-    state.refresh(model);
 }
 
 /// Appends a row near the focused schema field — a child under an object field,
@@ -451,7 +423,7 @@ fn handle_cell(state: &mut UiState, model: &mut EditModel, key: KeyEvent) -> Act
                     .map(|cell| cell.kind == CellKind::Bool)
                     .unwrap_or(false);
                 if is_bool {
-                    toggle_bool(model, &field);
+                    apply(model, &EditAction::ToggleBool { field });
                     state.dirty = true;
                     state.refresh(model);
                 }
@@ -531,7 +503,12 @@ fn begin_cell_edit(state: &mut UiState, model: &mut EditModel) -> Action {
             Action::None
         }
         CellKind::Bool => {
-            toggle_bool(model, &cell.field);
+            apply(
+                model,
+                &EditAction::ToggleBool {
+                    field: cell.field.clone(),
+                },
+            );
             state.dirty = true;
             state.refresh(model);
             Action::None
@@ -542,120 +519,41 @@ fn begin_cell_edit(state: &mut UiState, model: &mut EditModel) -> Action {
 
 /// Cycles the method enum forward/back (the only enum field today).
 fn cycle_method(state: &mut UiState, model: &mut EditModel, forward: bool) {
-    let all = method_all();
-    let cur = method_str(&model.method);
-    let idx = all.iter().position(|m| method_str(m) == cur).unwrap_or(0);
-    let next = if forward {
-        (idx + 1) % all.len()
-    } else {
-        (idx + all.len() - 1) % all.len()
-    };
-    model.method = all[next].clone();
+    apply(model, &EditAction::CycleMethod { forward });
     state.dirty = true;
     state.refresh(model);
 }
 
-/// Toggles a request/response body type between `object` and `object[]` — the
-/// only two shapes a body can take. Anything else normalizes to `object[]`.
+/// Toggles a request/response body type between `object` and `object[]`.
 fn toggle_body_type(state: &mut UiState, model: &mut EditModel, loc: &BodyLoc) {
-    let cur = match loc {
-        BodyLoc::Request => model.request.as_ref().map(|b| b.dtype.clone()),
-        BodyLoc::Response(i) => model.responses.get(*i).map(|r| r.dtype.clone()),
-    };
-    let next = if cur.as_deref() == Some("object[]") {
-        "object"
-    } else {
-        "object[]"
-    };
-    set_field(model, &Field::BodyDtype(loc.clone()), next.to_string());
+    apply(model, &EditAction::ToggleBodyType { loc: loc.clone() });
     state.dirty = true;
     state.refresh(model);
 }
 
 fn add_row(state: &mut UiState, model: &mut EditModel, field: &Field) {
-    match field {
-        Field::PathAdd => model.url.path.push(String::new()),
-        Field::QueryAdd => model.url.query.push(EditQuery {
-            name: String::new(),
-            dtype: String::new(),
-            description: String::new(),
-            required: false,
-        }),
-        Field::VarAdd => model.url.variable.push(EditVariable {
-            name: String::new(),
-            dtype: "string".to_string(),
-            description: String::new(),
-            required: false,
-        }),
-        Field::HeaderAdd => model.headers.push(EditHeader {
-            name: String::new(),
-            value: String::new(),
-        }),
-        Field::ResponseAdd => model.responses.push(EditResponse::blank()),
-        Field::RequestToggle => {
-            model.request = if model.request.is_some() {
-                None
-            } else {
-                Some(EditBody::empty())
-            };
-        }
-        Field::SchemaAdd(BodyLoc::Request, path) => {
-            if let Some(children) = model.schema_children_mut_request(path) {
-                children.push(EditSchema::blank());
-            }
-        }
-        Field::SchemaAdd(BodyLoc::Response(r), path) => {
-            if let Some(children) = model.schema_children_mut_response(*r, path) {
-                children.push(EditSchema::blank());
-            }
-        }
-        _ => return,
-    }
-    state.dirty = true;
-    state.cell = None;
-    state.refresh(model);
-}
-
-fn delete_row(state: &mut UiState, model: &mut EditModel, field: &Field) {
-    let mut changed = true;
-    match field {
-        Field::PathSeg(i) => drop_at(&mut model.url.path, *i),
-        Field::QueryName(i)
-        | Field::QueryType(i)
-        | Field::QueryDesc(i)
-        | Field::QueryRequired(i) => drop_at(&mut model.url.query, *i),
-        Field::VarName(i) | Field::VarType(i) | Field::VarDesc(i) | Field::VarRequired(i) => {
-            drop_at(&mut model.url.variable, *i)
-        }
-        Field::HeaderName(i) | Field::HeaderValue(i) => drop_at(&mut model.headers, *i),
-        Field::ResponseCode(i) | Field::ResponseDesc(i) => drop_at(&mut model.responses, *i),
-        Field::SchemaName(loc, path)
-        | Field::SchemaType(loc, path)
-        | Field::SchemaDesc(loc, path)
-        | Field::SchemaRequired(loc, path)
-        | Field::SchemaAccept(loc, path) => {
-            if let Some((last, parent)) = path.split_last() {
-                let children = match loc {
-                    BodyLoc::Request => model.schema_children_mut_request(parent),
-                    BodyLoc::Response(r) => model.schema_children_mut_response(*r, parent),
-                };
-                if let Some(c) = children {
-                    drop_at(c, *last);
-                }
-            }
-        }
-        _ => changed = false,
-    }
-    if changed {
+    if apply(
+        model,
+        &EditAction::Add {
+            field: field.clone(),
+        },
+    ) {
         state.dirty = true;
         state.cell = None;
         state.refresh(model);
     }
 }
 
-fn drop_at<T>(v: &mut Vec<T>, i: usize) {
-    if i < v.len() {
-        v.remove(i);
+fn delete_row(state: &mut UiState, model: &mut EditModel, field: &Field) {
+    if apply(
+        model,
+        &EditAction::Delete {
+            field: field.clone(),
+        },
+    ) {
+        state.dirty = true;
+        state.cell = None;
+        state.refresh(model);
     }
 }
 
@@ -677,7 +575,13 @@ pub(crate) fn handle_insert(state: &mut UiState, model: &mut EditModel, key: Key
             let value = buf.clone();
             let field = state.focused_field_pub();
             if let Some(f) = &field {
-                set_field(model, f, value);
+                apply(
+                    model,
+                    &EditAction::SetText {
+                        field: f.clone(),
+                        value,
+                    },
+                );
                 state.dirty = true;
             }
             state.mode = Mode::Normal;
@@ -696,7 +600,7 @@ pub(crate) fn handle_insert(state: &mut UiState, model: &mut EditModel, key: Key
             let value = buf.clone();
             let dir = if key.code == KeyCode::BackTab { -1 } else { 1 };
             if let Some(field) = state.focused_field_pub() {
-                set_field(model, &field, value);
+                apply(model, &EditAction::SetText { field, value });
                 state.dirty = true;
             }
             state.mode = Mode::Normal;
@@ -723,113 +627,6 @@ pub(crate) fn handle_insert(state: &mut UiState, model: &mut EditModel, key: Key
             Action::None
         }
         _ => Action::None,
-    }
-}
-
-fn toggle_bool(model: &mut EditModel, field: &Field) {
-    match field {
-        Field::QueryRequired(i) => {
-            if let Some(q) = model.url.query.get_mut(*i) {
-                q.required = !q.required;
-            }
-        }
-        Field::VarRequired(i) => {
-            if let Some(v) = model.url.variable.get_mut(*i) {
-                v.required = !v.required;
-            }
-        }
-        Field::SchemaRequired(BodyLoc::Request, path) => {
-            if let Some(n) = model.schema_at_mut_request(path) {
-                n.required = !n.required;
-            }
-        }
-        Field::SchemaRequired(BodyLoc::Response(r), path) => {
-            if let Some(n) = model.schema_at_mut_response(*r, path) {
-                n.required = !n.required;
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Writes a string `value` into the model at `field`. No-op for non-text fields.
-fn set_field(model: &mut EditModel, field: &Field, value: String) {
-    match field {
-        Field::Name => model.name = value,
-        Field::Description => model.description = value,
-        Field::Protocol => model.url.protocol = value,
-        Field::Host => model.url.host = value,
-        Field::PathSeg(i) => {
-            if let Some(s) = model.url.path.get_mut(*i) {
-                *s = value;
-            }
-        }
-        Field::QueryName(i) => set_query(model, *i, |q| q.name = value.clone()),
-        Field::QueryType(i) => set_query(model, *i, |q| q.dtype = value.clone()),
-        Field::QueryDesc(i) => set_query(model, *i, |q| q.description = value.clone()),
-        Field::VarName(i) => set_var(model, *i, |v| v.name = value.clone()),
-        Field::VarType(i) => set_var(model, *i, |v| v.dtype = value.clone()),
-        Field::VarDesc(i) => set_var(model, *i, |v| v.description = value.clone()),
-        Field::HeaderName(i) => {
-            if let Some(h) = model.headers.get_mut(*i) {
-                h.name = value;
-            }
-        }
-        Field::HeaderValue(i) => {
-            if let Some(h) = model.headers.get_mut(*i) {
-                h.value = value;
-            }
-        }
-        Field::BodyDtype(BodyLoc::Request) => {
-            if let Some(b) = model.request.as_mut() {
-                b.dtype = value;
-            }
-        }
-        Field::BodyDtype(BodyLoc::Response(r)) => {
-            if let Some(b) = model.responses.get_mut(*r) {
-                b.dtype = value;
-            }
-        }
-        Field::ResponseCode(i) => {
-            if let Some(r) = model.responses.get_mut(*i) {
-                r.code = value;
-            }
-        }
-        Field::ResponseDesc(i) => {
-            if let Some(r) = model.responses.get_mut(*i) {
-                r.description = value;
-            }
-        }
-        Field::SchemaName(loc, p) => set_schema(model, loc, p, |s| s.name = value.clone()),
-        Field::SchemaType(loc, p) => set_schema(model, loc, p, |s| s.dtype = value.clone()),
-        Field::SchemaDesc(loc, p) => set_schema(model, loc, p, |s| s.description = value.clone()),
-        Field::SchemaAccept(loc, p) => set_schema(model, loc, p, |s| s.accept = value.clone()),
-        _ => {}
-    }
-}
-
-fn set_query(model: &mut EditModel, i: usize, f: impl FnOnce(&mut crate::tui::model::EditQuery)) {
-    if let Some(q) = model.url.query.get_mut(i) {
-        f(q);
-    }
-}
-fn set_var(model: &mut EditModel, i: usize, f: impl FnOnce(&mut crate::tui::model::EditVariable)) {
-    if let Some(v) = model.url.variable.get_mut(i) {
-        f(v);
-    }
-}
-fn set_schema(
-    model: &mut EditModel,
-    loc: &BodyLoc,
-    path: &[usize],
-    f: impl FnOnce(&mut crate::tui::model::EditSchema),
-) {
-    let node = match loc {
-        BodyLoc::Request => model.schema_at_mut_request(path),
-        BodyLoc::Response(r) => model.schema_at_mut_response(*r, path),
-    };
-    if let Some(n) = node {
-        f(n);
     }
 }
 
@@ -886,7 +683,7 @@ pub(crate) fn handle_confirm_delete(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apic_core::json::json_get;
+    use apic_core::json::{json_get, method_str};
 
     fn model() -> EditModel {
         let c = json_get(
