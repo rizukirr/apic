@@ -739,7 +739,7 @@ impl App {
         egui::TopBottomPanel::top("nav").show(ctx, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("apic").color(GREEN).strong().size(18.0));
+                ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
                 ui.add_space(16.0);
                 ui.menu_button(RichText::new("[ Import ]").color(GREEN), |ui| {
                     if ui.button("apic file").clicked() {
@@ -766,7 +766,12 @@ impl App {
     /// Bottom bar: the loaded contract's location (home-relative), nothing else.
     fn bottom_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.label(RichText::new(&self.status).color(DIM));
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&self.status).color(DIM));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new("v2.4.0-stable").color(DIM).size(11.0));
+                });
+            });
         });
     }
 
@@ -803,13 +808,7 @@ impl App {
                     });
 
                 ui.add_space(6.0);
-                ui.label(
-                    RichText::new("API_EXPLORER")
-                        .color(GREEN)
-                        .strong()
-                        .size(16.0),
-                );
-                ui.label(RichText::new("v2.4.0-stable").color(DIM).size(11.0));
+                ui.label(RichText::new("EXPLORER").color(GREEN).strong().size(16.0));
 
                 // TEMPLATES section (on top), with a `+` to add a new template.
                 ui.add_space(8.0);
@@ -895,7 +894,7 @@ impl App {
             let Some(model) = model.as_mut() else {
                 ui.add_space(40.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("API_EXPLORER").color(GREEN).size(28.0));
+                    ui.label(RichText::new("WELCOME TO APIC").color(GREEN).size(28.0));
                     ui.label(RichText::new("Select a contract on the left.").color(DIM));
                 });
                 return;
