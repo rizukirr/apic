@@ -20,6 +20,15 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # apic-gui (eframe/winit) needs X11, Wayland, and GL dev libraries to
+      # build on Linux; the workspace clippy below compiles it.
+      - name: Install GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb1-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxrandr-dev libxi-dev libgl1-mesa-dev libegl1-mesa-dev
+
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
 
@@ -41,6 +50,16 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      # apic-gui (eframe/winit) needs X11, Wayland, and GL dev libraries to
+      # build on Linux; macOS and Windows build it without extra packages.
+      - name: Install GUI build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb1-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxrandr-dev libxi-dev libgl1-mesa-dev libegl1-mesa-dev
 
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2

@@ -1,10 +1,10 @@
 //! Command-line interface: argument parsing and subcommand handlers.
 
 use crate::picker;
-use crate::render::{home_relative, render, sanitize};
+use crate::render::{render, sanitize};
 use crate::tree;
 use apic_core::config::{Config, InitOutcome, read_config_file};
-use apic_core::file::{confine_to_dir, read_file, to_slash};
+use apic_core::file::{confine_to_dir, home_relative, read_file, to_slash};
 use apic_core::fuzzy::{fuzzy_find, fuzzy_match_path};
 use apic_core::json::{json_get, scan_json_file, validate as validate_contract};
 use clap::{Parser, Subcommand};
@@ -513,8 +513,7 @@ enum Resolved {
 
 /// Renders `path` relative to `root` for display, control characters stripped.
 fn rel_display(path: &Path, root: &Path) -> String {
-    let shown = path.strip_prefix(root).unwrap_or(path);
-    sanitize(&to_slash(shown))
+    sanitize(&apic_core::file::relative_slash(path, root))
 }
 
 /// Reports a cancelled interactive pick; cancelling is not an error.

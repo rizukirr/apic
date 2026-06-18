@@ -362,26 +362,10 @@ fn req_mark(required: bool) -> String {
     }
 }
 
-/// Assembles the displayable URL from its parts: `protocol://host` followed by
-/// the `/`-joined path segments. Each part is optional — an empty `host` yields
-/// a leading-slash path, an empty `protocol` drops the scheme, and an empty
-/// `path` yields the authority alone.
+/// Assembles the displayable URL for a [`Url`], delegating to the shared
+/// [`apic_core::json::build_url`] so the CLI, TUI, and GUI render it identically.
 pub(crate) fn build_url(url: &Url) -> String {
-    let path = url.path.as_deref().unwrap_or(&[]).join("/");
-
-    let authority = if url.host.is_empty() {
-        String::new()
-    } else if url.protocol.is_empty() {
-        url.host.clone()
-    } else {
-        format!("{}://{}", url.protocol, url.host)
-    };
-
-    match (authority.is_empty(), path.is_empty()) {
-        (true, _) => format!("/{path}"),
-        (false, true) => authority,
-        (false, false) => format!("{}/{path}", authority.trim_end_matches('/')),
-    }
+    apic_core::json::build_url(&url.protocol, &url.host, url.path.as_deref().unwrap_or(&[]))
 }
 
 /// Strips control characters from a file-derived string before it is printed.
@@ -392,28 +376,6 @@ pub(crate) fn build_url(url: &Url) -> String {
 /// styling is applied *after* sanitization, so legitimate colors are kept.
 pub(crate) fn sanitize(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
-}
-
-/// Collapses the user's home directory prefix to `~` anywhere it appears in `s`.
-///
-/// Output (especially error messages) can embed absolute paths that disclose the
-/// username and full filesystem layout. Replacing the home prefix with `~` keeps
-/// messages readable without leaking that detail. Both the native and
-/// forward-slashed forms of the home path are collapsed, since paths are
-/// displayed with `/` on every platform. Absolute paths outside home (e.g.
-/// `/tmp`) are left intact — they carry no user-identifying information. When the
-/// home directory cannot be determined, `s` is returned unchanged.
-pub(crate) fn home_relative(s: &str) -> String {
-    let Some(home) = std::env::home_dir() else {
-        return s.to_string();
-    };
-    let native = home.to_string_lossy();
-    let native = native.trim_end_matches(['/', '\\']);
-    if native.is_empty() {
-        return s.to_string();
-    }
-    let slashed = native.replace('\\', "/");
-    s.replace(native, "~").replace(&slashed, "~")
 }
 
 #[cfg(test)]
@@ -435,54 +397,6 @@ mod tests {
     #[test]
     fn sanitize_keeps_normal_and_multibyte_text() {
         assert_eq!(sanitize("café /auth/login"), "café /auth/login");
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn home_relative_collapses_home_prefix() {
-        // Drive the function against a known home so the test is deterministic.
-        // SAFETY: single-threaded test; no other thread reads the env here.
-        unsafe { std::env::set_var("HOME", "/home/alice") };
-        assert_eq!(
-            home_relative("Created /home/alice/project/contracts/x.json"),
-            "Created ~/project/contracts/x.json"
-        );
-        // Non-home absolute paths are left untouched.
-        assert_eq!(home_relative("wrote /tmp/out.json"), "wrote /tmp/out.json");
-    }
-
-    fn url(protocol: &str, host: &str, path: Option<&[&str]>) -> Url {
-        Url {
-            protocol: protocol.to_string(),
-            host: host.to_string(),
-            path: path.map(|segs| segs.iter().map(|s| s.to_string()).collect()),
-            query: None,
-            variable: None,
-        }
-    }
-
-    #[test]
-    fn build_url_joins_protocol_host_and_path() {
-        let u = url("https", "api.example.com", Some(&["auth", "login"]));
-        assert_eq!(build_url(&u), "https://api.example.com/auth/login");
-    }
-
-    #[test]
-    fn build_url_drops_scheme_when_protocol_empty() {
-        let u = url("", "api.example.com", Some(&["user"]));
-        assert_eq!(build_url(&u), "api.example.com/user");
-    }
-
-    #[test]
-    fn build_url_falls_back_to_leading_slash_path_without_host() {
-        let u = url("https", "", Some(&["auth", "login"]));
-        assert_eq!(build_url(&u), "/auth/login");
-    }
-
-    #[test]
-    fn build_url_renders_authority_alone_without_path() {
-        let u = url("https", "api.example.com", None);
-        assert_eq!(build_url(&u), "https://api.example.com");
     }
 
     #[test]

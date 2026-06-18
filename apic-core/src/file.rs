@@ -24,6 +24,35 @@ pub fn to_slash(path: &Path) -> String {
         .replace(std::path::MAIN_SEPARATOR, "/")
 }
 
+/// Collapses the user's home directory prefix to `~` anywhere it appears in `s`.
+///
+/// Output (error messages, contract locations) can embed absolute paths that
+/// disclose the username and full filesystem layout. Replacing the home prefix
+/// with `~` keeps messages readable without leaking that detail. Both the native
+/// and forward-slashed forms of the home path are collapsed, since paths are
+/// displayed with `/` on every platform. Absolute paths outside home (e.g.
+/// `/tmp`) are left intact. When the home directory cannot be determined, `s` is
+/// returned unchanged.
+pub fn home_relative(s: &str) -> String {
+    let Some(home) = std::env::home_dir() else {
+        return s.to_string();
+    };
+    let native = home.to_string_lossy();
+    let native = native.trim_end_matches(['/', '\\']);
+    if native.is_empty() {
+        return s.to_string();
+    }
+    let slashed = native.replace('\\', "/");
+    s.replace(native, "~").replace(&slashed, "~")
+}
+
+/// Renders `path` relative to `root` with forward slashes, falling back to the
+/// full (forward-slashed) path when `path` is not under `root`. Shared by the
+/// CLI listing and the GUI sidebar so relative paths render consistently.
+pub fn relative_slash(path: &Path, root: &Path) -> String {
+    to_slash(path.strip_prefix(root).unwrap_or(path))
+}
+
 /// Outcome of a file search: either the matching paths or nothing found.
 pub(crate) enum FindFileResult {
     Found(Vec<PathBuf>),
@@ -229,6 +258,20 @@ mod tests {
         // Windows). A single relative join is enough to exercise it.
         let p: PathBuf = ["user", "profile", "user.json"].iter().collect();
         assert_eq!(to_slash(&p), "user/profile/user.json");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn home_relative_collapses_home_prefix() {
+        // Drive the function against a known home so the test is deterministic.
+        // SAFETY: single-threaded test; no other thread reads the env here.
+        unsafe { std::env::set_var("HOME", "/home/alice") };
+        assert_eq!(
+            home_relative("Created /home/alice/project/contracts/x.json"),
+            "Created ~/project/contracts/x.json"
+        );
+        // Non-home absolute paths are left untouched.
+        assert_eq!(home_relative("wrote /tmp/out.json"), "wrote /tmp/out.json");
     }
 
     #[test]

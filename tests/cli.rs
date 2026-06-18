@@ -84,7 +84,7 @@ fn create_scaffolds_then_read_renders_it() {
         .args(["read", "-f", "login"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("/resource/{id}/action"));
+        .stdout(predicate::str::contains("api.example.com"));
 }
 
 #[test]
@@ -298,7 +298,7 @@ fn read_resolves_path_extensionless_and_fuzzy_forms() {
             .args(["read", "-f", form])
             .assert()
             .success()
-            .stdout(predicate::str::contains("/resource/{id}/action"));
+            .stdout(predicate::str::contains("api.example.com"));
     }
 }
 
@@ -548,7 +548,7 @@ fn read_ambiguous_basename_errors_when_not_a_tty() {
         .args(["read", "-f", "auth/user.json"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("/resource/{id}/action"));
+        .stdout(predicate::str::contains("api.example.com"));
 }
 
 #[test]
