@@ -769,7 +769,11 @@ impl App {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(&self.status).color(DIM));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new("v2.4.0-stable").color(DIM).size(11.0));
+                    ui.label(
+                        RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
+                            .color(DIM)
+                            .size(11.0),
+                    );
                 });
             });
         });
