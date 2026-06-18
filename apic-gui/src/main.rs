@@ -28,7 +28,12 @@ const AMBER: Color32 = Color32::from_rgb(255, 196, 0);
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_icon(load_icon()),
+        viewport: egui::ViewportBuilder::default()
+            // Stable app id => X11 WM_CLASS / Wayland app_id, which the Linux
+            // .desktop entry matches via StartupWMClass so the launcher shows
+            // the right name and icon for the running window.
+            .with_app_id("apic-gui")
+            .with_icon(load_icon()),
         ..Default::default()
     };
     eframe::run_native(

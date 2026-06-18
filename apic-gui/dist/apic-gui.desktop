@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=apic
+GenericName=API Contract Explorer
+Comment=Browse and edit Git-friendly API contracts
+Exec=apic-gui
+Icon=apic-gui
+Terminal=false
+Categories=Development;
+Keywords=api;contract;rest;json;
+StartupWMClass=apic-gui
