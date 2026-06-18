@@ -1,10 +1,13 @@
 [package]
 name = "apic-core"
-version = "0.2.5"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
+authors = ["Rizki Rakasiwi"]
 license = "MIT"
 description = "Core contract model and logic for apic (parsing, validation, templates, convert)."
+repository = "https://github.com/rizukirr/apic"
+homepage = "https://github.com/rizukirr/apic"
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }

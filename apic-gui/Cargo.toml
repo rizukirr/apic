@@ -1,19 +1,18 @@
 [package]
 name = "apic-gui"
-version = "0.2.5"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Rizki Rakasiwi"]
 description = "Desktop GUI front-end for apic, built on the shared apic-core"
 license = "MIT"
 repository = "https://github.com/rizukirr/apic"
-publish = false
 
 [[bin]]
 name = "apic-gui"
 path = "src/main.rs"
 
 [dependencies]
-apic-core = { path = "../apic-core" }
+apic-core = { path = "../apic-core", version = "0.3.0" }
 eframe = "0.33.3"
 rfd = "0.17.2"

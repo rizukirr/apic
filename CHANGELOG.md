@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-18
+
+### Added
+- `apic-gui`, a styled desktop GUI front-end for browsing and editing contracts,
+  built on the shared core. Published to crates.io (`cargo install apic-gui`)
+  and shipped as prebuilt binaries on tagged releases.
+
+### Changed
+- Refactored the project into a workspace: the contract model and logic now live
+  in the `apic-core` crate, shared by both the CLI/TUI (`apic`) and the GUI so
+  the two cannot drift. `apic-core` is published to crates.io.
+
 ## [0.2.4] - 2026-06-16
 
 ### Added
