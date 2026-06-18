@@ -1,6 +1,8 @@
 # apic
 
-**API contracts, the Git way.** `apic` is a high-performance CLI/TUI designed for total freedom in contract collaboration. By storing your API contracts as plain JSON files in your repository, your architecture becomes natively diffable, reviewable, and versioned. No more silos, just your code and your contracts in perfect sync.
+**API contracts, the Git way.** `apic` is a high-performance CLI, TUI, and desktop GUI designed for total freedom in contract collaboration. By storing your API contracts as plain JSON files in your repository, your architecture becomes natively diffable, reviewable, and versioned. No more silos, just your code and your contracts in perfect sync.
+
+Every interface is a thin layer over one shared core (`apic-core`), so the terminal and the desktop app operate on the exact same files and can never drift.
 
 https://github.com/user-attachments/assets/89b5fb4b-7942-49a1-9bee-41308d234236
 
@@ -19,7 +21,12 @@ This approach brings immediate advantages:
 
 ## Install
 
-**crates.io** (recommended), installs the `apic` command:
+`apic` ships as two binaries that share one core: `apic` (the CLI/TUI) and
+`apic-gui` (the desktop app). Install either or both.
+
+### CLI / TUI (`apic`)
+
+**crates.io** (recommended):
 
 ```bash
 cargo install apic-cli
@@ -35,10 +42,26 @@ cargo install --path .
 
 To run without installing, use `cargo run -- <args>` from the project directory.
 
-**Prebuilt binaries**, grab the archive for your platform from the
+### Desktop GUI (`apic-gui`)
+
+**crates.io**:
+
+```bash
+cargo install apic-gui
+```
+
+On Linux, building the GUI needs the system X11/Wayland/GL development libraries
+(on Debian/Ubuntu: `libxkbcommon-dev`, `libwayland-dev`, `libxcb1-dev`,
+`libgl1-mesa-dev`, and friends). macOS and Windows build with no extra packages.
+
+### Prebuilt binaries
+
+Grab the archive for your platform from the
 [latest release](https://github.com/rizukirr/apic/releases), verify the
-`.sha256` checksum, extract, and put `apic` on your `PATH`. Builds are provided
-for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), and Windows (x86_64).
+`.sha256` checksum, extract, and put the binary on your `PATH`. Each release
+provides `apic-<target>` (CLI) and `apic-gui-<target>` (GUI) archives. CLI
+builds cover Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), and Windows
+(x86_64); GUI builds cover the same platforms (arm64 Linux is best-effort).
 
 ## Quick start
 
@@ -88,6 +111,30 @@ place:
 
 Prefer your own editor? Pass `--editor` to open the file in `$VISUAL`/`$EDITOR`
 (or a specific one, e.g. `apic open login --editor "code --wait"`).
+
+## Desktop GUI
+
+`apic-gui` is a styled desktop front-end for the same projects the CLI manages.
+It reads the same `.apic` project (run `apic init` first), so the GUI and the
+CLI/TUI operate on the exact same JSON files, both are thin layers over the
+shared `apic-core` crate. Run it:
+
+```bash
+apic-gui
+```
+
+What it does:
+
+- **Browse**, a sidebar lists every contract under the working directory (with
+  its HTTP method badge) and every project template; a search box filters them.
+- **Read**, selecting a contract renders it in the same panelled layout as
+  `apic read`, headers, sections, schema tables, and inline JSON examples.
+- **Edit**, change fields in place through the same edit model the TUI uses, and
+  save back to the file.
+- **Import**, pull in an existing apic contract or a Postman collection from the
+  `[ Import ]` menu.
+- **Manage**, scaffold new contracts and templates, or delete them with a
+  confirmation.
 
 ## Commands
 
@@ -289,8 +336,8 @@ against contracts from any source:
 ## Contract format
 
 A contract is a single JSON object describing one endpoint. See
-[`src/templates/contract.json`](src/templates/contract.json) for the full
-template that `apic create` writes.
+[`apic-core/src/templates/contract.json`](apic-core/src/templates/contract.json)
+for the full template that `apic create` writes.
 
 `apic init` writes a starter template to `.apic/template/convention.json`. Edit
 it to set a project-wide convention, for example a standing `device-id` header,
