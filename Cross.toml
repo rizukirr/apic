@@ -1,0 +1,12 @@
+# Cross-compilation config for `cross`, used by the release workflow on the
+# aarch64 Linux targets.
+#
+# The GUI (eframe) links against X11/Wayland/GL, so the arm64 variants of those
+# dev libraries must be present inside the cross container. The install is
+# best-effort (trailing `|| true`): the CLI build does not need these libraries,
+# and the arm64 GUI target is marked experimental in release.yml, so a failure
+# here only drops the arm64 GUI archive and never breaks the CLI's arm64 build.
+[target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture arm64 && apt-get update && apt-get install -y libxkbcommon-dev:arm64 libwayland-dev:arm64 libxcb1-dev:arm64 libxcb-render0-dev:arm64 libxcb-shape0-dev:arm64 libxcb-xfixes0-dev:arm64 libxrandr-dev:arm64 libxi-dev:arm64 libgl1-mesa-dev:arm64 libegl1-mesa-dev:arm64 || true",
+]

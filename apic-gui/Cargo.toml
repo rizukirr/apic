@@ -7,13 +7,12 @@ authors = ["Rizki Rakasiwi"]
 description = "Desktop GUI front-end for apic, built on the shared apic-core"
 license = "MIT"
 repository = "https://github.com/rizukirr/apic"
-publish = false
 
 [[bin]]
 name = "apic-gui"
 path = "src/main.rs"
 
 [dependencies]
-apic-core = { path = "../apic-core" }
+apic-core = { path = "../apic-core", version = "0.2.5" }
 eframe = "0.33.3"
 rfd = "0.17.2"
