@@ -906,24 +906,22 @@ impl App {
 
             // Toolbar: Edit toggle + Save.
             ui.horizontal(|ui| {
-                let edit_label = if *editing {
-                    "[ VIEWING: EDIT ]"
-                } else {
-                    "[ EDIT ]"
-                };
-                if ui.button(RichText::new(edit_label).color(GREEN)).clicked() {
-                    *editing = !*editing;
-                    *row_height = 0.0; // recompute equal-height row for the new mode
-                }
-                if ui.button(RichText::new("[ SAVE ]").color(GREEN)).clicked() {
-                    match path.as_deref() {
-                        Some(p) => match model.save(p) {
-                            Ok(()) => *status = format!("saved {}", p.display()),
-                            Err(e) => *status = format!("save error: {e}"),
-                        },
-                        None => *status = "no path to save to".into(),
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
+                    if ui.button(RichText::new("[ SAVE ]").color(GREEN)).clicked() {
+                        match path.as_deref() {
+                            Some(p) => match model.save(p) {
+                                Ok(()) => *status = format!("saved {}", p.display()),
+                                Err(e) => *status = format!("save error: {e}"),
+                            },
+                            None => *status = "no path to save to".into(),
+                        }
                     }
-                }
+                    let edit_label = if *editing { "[ CANCEL ]" } else { "[ EDIT ]" };
+                    if ui.button(RichText::new(edit_label).color(GREEN)).clicked() {
+                        *editing = !*editing;
+                        *row_height = 0.0; // recompute equal-height row for the new mode
+                    }
+                });
             });
             ui.add_space(6.0);
 
