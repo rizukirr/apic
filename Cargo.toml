@@ -1,7 +1,9 @@
 [workspace]
-members = ["apic-core"]
-# Bare `cargo build`/`test` operate on both the bin and the core lib, so a plain
-# `cargo test` runs apic-core's unit tests too (CI also passes `--workspace`).
+members = ["apic-core", "apic-gui"]
+# Bare `cargo build`/`test` operate on the bin and the core lib (and run
+# apic-core's unit tests). apic-gui is a workspace member but is left out of
+# default-members so a plain `cargo build` does not pull in the GUI toolkit and
+# its native deps; CI builds it explicitly via `--workspace`.
 default-members = [".", "apic-core"]
 
 [package]
