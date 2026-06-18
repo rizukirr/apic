@@ -5,6 +5,7 @@
 pub mod config;
 pub mod convert;
 pub mod converter;
+pub mod edit;
 pub mod file;
 pub mod fuzzy;
 pub mod json;
