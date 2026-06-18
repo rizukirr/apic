@@ -87,7 +87,8 @@ mod tests {
         assert!(m.url.variable.is_empty());
         assert!(m.headers.is_empty());
         assert!(m.responses.is_empty());
-        assert!(m.request.as_ref().unwrap().schema.is_empty());
+        // The trimmed builtin default has no request section.
+        assert!(m.request.is_none());
     }
 
     #[test]

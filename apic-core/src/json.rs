@@ -158,6 +158,100 @@ pub fn parse_type(dtype: &str) -> (&str, bool) {
     }
 }
 
+/// Assembles the displayable URL from its parts: `protocol://host` followed by
+/// the `/`-joined path segments. Each part is optional: an empty `host` yields a
+/// leading-slash path, an empty `protocol` drops the scheme, and an empty `path`
+/// yields the authority alone. Shared by every front-end so the URL renders the
+/// same in `apic read`, the TUI, and the GUI.
+pub fn build_url(protocol: &str, host: &str, path: &[String]) -> String {
+    let path = path.join("/");
+    let authority = if host.is_empty() {
+        String::new()
+    } else if protocol.is_empty() {
+        host.to_string()
+    } else {
+        format!("{protocol}://{host}")
+    };
+    match (authority.is_empty(), path.is_empty()) {
+        (true, _) => format!("/{path}"),
+        (false, true) => authority,
+        (false, false) => format!("{}/{path}", authority.trim_end_matches('/')),
+    }
+}
+
+/// Pretty-prints a JSON string with four-space indentation, reformatting only
+/// whitespace so numbers, key order, and string contents are preserved exactly
+/// (unlike a serde round-trip). Input is assumed to be valid JSON; it is not
+/// validated, invalid input simply yields rearranged whitespace.
+///
+/// This is a trimmed, dependency-free adaptation of the pretty-printer from
+/// jsonxf (gamache/jsonxf, MIT/Apache-2.0), keeping only what apic uses.
+pub fn pretty_json(input: &str) -> String {
+    fn newline_indent(out: &mut Vec<u8>, depth: usize) {
+        out.push(b'\n');
+        for _ in 0..depth {
+            out.extend_from_slice(b"    ");
+        }
+    }
+
+    let mut out: Vec<u8> = Vec::with_capacity(input.len() + input.len() / 4);
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut in_backslash = false;
+    let mut empty = false; // inside a container that has no members yet
+
+    for &b in input.as_bytes() {
+        if in_string {
+            out.push(b);
+            if in_backslash {
+                in_backslash = false;
+            } else if b == b'\\' {
+                in_backslash = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b' ' | b'\n' | b'\r' | b'\t' => {} // collapse insignificant whitespace
+            b'[' | b'{' => {
+                if empty {
+                    newline_indent(&mut out, depth);
+                }
+                out.push(b);
+                depth += 1;
+                empty = true;
+            }
+            b']' | b'}' => {
+                depth = depth.saturating_sub(1);
+                if empty {
+                    empty = false;
+                } else {
+                    newline_indent(&mut out, depth);
+                }
+                out.push(b);
+            }
+            b',' => {
+                out.push(b',');
+                newline_indent(&mut out, depth);
+            }
+            b':' => out.extend_from_slice(b": "),
+            _ => {
+                if empty {
+                    newline_indent(&mut out, depth);
+                    empty = false;
+                }
+                if b == b'"' {
+                    in_string = true;
+                }
+                out.push(b);
+            }
+        }
+    }
+    // `out` is the input bytes plus ASCII whitespace, so it stays valid UTF-8.
+    String::from_utf8(out).unwrap_or_else(|_| input.to_string())
+}
+
 /// True if any field — at any depth via `properties` — declares `accept`.
 /// Shared by the plain-text and TUI field-table renderers.
 pub fn any_accept(fields: &[Schema]) -> bool {
@@ -232,6 +326,64 @@ pub fn json_get(json: &str, status: Option<u16>) -> Result<JsonContent, serde_js
 mod tests {
     use super::*;
     use std::fs;
+
+    fn segs(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn build_url_joins_protocol_host_and_path() {
+        assert_eq!(
+            build_url("https", "api.example.com", &segs(&["auth", "login"])),
+            "https://api.example.com/auth/login"
+        );
+    }
+
+    #[test]
+    fn build_url_drops_scheme_when_protocol_empty() {
+        assert_eq!(
+            build_url("", "api.example.com", &segs(&["user"])),
+            "api.example.com/user"
+        );
+    }
+
+    #[test]
+    fn build_url_falls_back_to_leading_slash_path_without_host() {
+        assert_eq!(
+            build_url("https", "", &segs(&["auth", "login"])),
+            "/auth/login"
+        );
+    }
+
+    #[test]
+    fn build_url_renders_authority_alone_without_path() {
+        assert_eq!(
+            build_url("https", "api.example.com", &[]),
+            "https://api.example.com"
+        );
+    }
+
+    #[test]
+    fn pretty_json_indents_with_four_spaces() {
+        assert_eq!(pretty_json(r#"{"a":1}"#), "{\n    \"a\": 1\n}");
+    }
+
+    #[test]
+    fn pretty_json_handles_nesting_and_empties() {
+        assert_eq!(
+            pretty_json(r#"{"empty":{},"one":[1]}"#),
+            "{\n    \"empty\": {},\n    \"one\": [\n        1\n    ]\n}"
+        );
+    }
+
+    #[test]
+    fn pretty_json_preserves_string_punctuation_and_numbers() {
+        // Braces/commas inside strings and exact number tokens are untouched.
+        assert_eq!(
+            pretty_json(r#"{"msg":"a, b: {c}","n":1.50}"#),
+            "{\n    \"msg\": \"a, b: {c}\",\n    \"n\": 1.50\n}"
+        );
+    }
 
     const CONTRACT: &str = r#"{
         "name": "t",
