@@ -234,7 +234,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "apic-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "apic-core",
  "assert_cmd",
@@ -250,7 +250,7 @@ dependencies = [
 
 [[package]]
 name = "apic-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -260,7 +260,7 @@ dependencies = [
 
 [[package]]
 name = "apic-gui"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "apic-core",
  "dirs",
