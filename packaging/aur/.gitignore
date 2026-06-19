@@ -5,3 +5,4 @@ pkg/
 *.tar.zst
 *.pkg.tar.*
 *.log
+LICENSE-*
