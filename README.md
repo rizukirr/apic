@@ -1,18 +1,14 @@
 # apic
 
-**API contracts, the Git way.** `apic` is a high-performance CLI, TUI, and desktop GUI designed for total freedom in contract collaboration. By storing your API contracts as plain JSON files in your repository, your architecture becomes natively diffable, reviewable, and versioned. No more silos, just your code and your contracts in perfect sync.
+**API contracts, the Git way.** `apic` stores your API contracts as plain JSON in your repo, so they're diffable, reviewable, and versioned like any other code. No paywalled seats or separate workspaces, if a teammate can clone the repo, they can collaborate on the contract.
 
-Every interface is a thin layer over one shared core (`apic-core`), so the terminal and the desktop app operate on the exact same files and can never drift.
+CLI, TUI, and desktop GUI, all over one shared core (`apic-core`), so every interface edits the same files and never drifts.
 
 <img width="1260" height="796" alt="2026-06-19-132307_hyprshot" src="https://github.com/user-attachments/assets/9b0d474c-7ac5-4f90-ae16-6ca0d55c5337" />
 
 ## Why?
 
-Mainstream API tooling gates collaboration behind paywalls, forcing you to pay per team member just to share a workspace. Costs scale aggressively as teams grow. 
-
-`apic` flips the script: because contracts live as plain JSON files in your repository, **your existing Git workflow *is* the collaboration layer**. No seats, no separate accounts, if a developer can clone the repo, they can collaborate on the contract.
-
-This approach brings immediate advantages:
+Mainstream API tooling gates collaboration behind paywalls, charging per team member just to share a workspace. Because `apic` contracts are plain JSON in your repo, **your existing Git workflow *is* the collaboration layer**:
 
 *   **Zero-Cost Collaboration**, Sharing is a simple `git push`. Everyone with repository access already has full collaboration capabilities.
 *   **Atomic Versioning**, Contracts change in the exact same commit as the implementation, preserving full history and `git blame`.
