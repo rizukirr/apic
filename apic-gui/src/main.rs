@@ -15,8 +15,8 @@ use egui::{Color32, RichText, Stroke};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-mod settings;
 mod desktop;
+mod settings;
 use settings::Settings;
 
 // Terminal/cyberpunk palette.
