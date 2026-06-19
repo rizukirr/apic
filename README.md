@@ -1,6 +1,6 @@
 # apic
 
-**API contracts, the Git way.** `apic` stores your API contracts as plain JSON in your repo, so they're diffable, reviewable, and versioned like any other code. No paywalled seats or separate workspaces, if a teammate can clone the repo, they can collaborate on the contract.
+**A Free, Full Open Source** Git-able api contract tools. `Apic` stores your API contracts as plain JSON in your repo, so they're diffable, reviewable, and versioned like any other code. No paywalled seats or separate workspaces, if a teammate can clone the repo, they can collaborate on the contract.
 
 CLI, TUI, and desktop GUI, all over one shared core (`apic-core`), so every interface edits the same files and never drifts.
 
