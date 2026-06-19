@@ -182,6 +182,7 @@ impl App {
     fn reload_project(&mut self) {
         let Some(root) = self.project_root.clone() else {
             self.apic_dir = None;
+            self.root = None;
             self.templates.clear();
             self.entries.clear();
             self.status = "No project open. Use [ OPEN ] or [ New ].".into();
@@ -208,6 +209,9 @@ impl App {
 
         match apic_core::config::read_config_in(&root).and_then(|c| c.root_dir_in(&root)) {
             Ok(contracts_root) => {
+                // `self.root` is the contracts working dir consumed by import /
+                // new-request / delete; keep it in sync with the active project.
+                self.root = Some(contracts_root.clone());
                 let failures = apic_core::validate_dir(&contracts_root);
                 let mut paths = apic_core::json::scan_json_file(&contracts_root, true)
                     .unwrap_or_default();
@@ -232,6 +236,7 @@ impl App {
                 self.status = display_location(&contracts_root);
             }
             Err(err) => {
+                self.root = None;
                 self.entries.clear();
                 self.status = apic_core::file::home_relative(&format!("Project error: {err}"));
             }
