@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod settings;
+mod desktop;
 use settings::Settings;
 
 // Terminal/cyberpunk palette.
