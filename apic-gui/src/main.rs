@@ -1010,6 +1010,7 @@ impl App {
     /// The central viewer/editor for the loaded contract.
     fn central(&mut self, ctx: &egui::Context) {
         let no_project = self.project_root.is_none();
+        let mut promote: Option<(PathBuf, String)> = None;
         let App {
             model,
             path,
@@ -1017,6 +1018,8 @@ impl App {
             editing,
             resp_tab,
             row_height,
+            repair,
+            entries,
             ..
         } = self;
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -1030,6 +1033,34 @@ impl App {
                             .color(DIM),
                     );
                 });
+                return;
+            }
+            if let Some(rep) = repair.as_mut() {
+                ui.add_space(6.0);
+                if rep.error.is_empty() {
+                    ui.label(RichText::new("Valid — opening editor…").color(GREEN).strong());
+                } else {
+                    ui.label(RichText::new("INVALID CONTRACT").color(RED).strong());
+                    ui.label(RichText::new(&rep.error).color(AMBER).size(12.0));
+                }
+                ui.add_space(6.0);
+                let resp = ui.add_sized(
+                    [ui.available_width(), (ui.available_height() - 8.0).max(40.0)],
+                    egui::TextEdit::multiline(&mut rep.buffer)
+                        .code_editor()
+                        .desired_width(f32::INFINITY),
+                );
+                if resp.changed() {
+                    rep.error = match apic_core::json::validate(&rep.buffer) {
+                        Ok(()) => String::new(),
+                        Err(e) => e.to_string(),
+                    };
+                    if rep.error.is_empty()
+                        && let Some(entry) = entries.get(rep.index)
+                    {
+                        promote = Some((entry.path.clone(), rep.buffer.clone()));
+                    }
+                }
                 return;
             }
             let Some(model) = model.as_mut() else {
@@ -1089,6 +1120,15 @@ impl App {
                     responses(ui, model, resp_tab, *editing);
                 });
         });
+        if let Some((path, buffer)) = promote
+            && std::fs::write(&path, &buffer).is_ok()
+        {
+            self.repair = None;
+            self.reload_project();
+            if let Some(i) = self.entries.iter().position(|e| e.path == path) {
+                self.load(i);
+            }
+        }
     }
 }
 
