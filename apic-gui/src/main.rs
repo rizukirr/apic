@@ -90,7 +90,6 @@ struct Entry {
 enum SidebarAction {
     LoadContract(usize),
     LoadTemplate(usize),
-    ImportApic,
     ImportPostman,
     NewTemplate,
     /// Open the new-request dialog, pre-filled with this path prefix (e.g.
@@ -293,63 +292,6 @@ impl App {
                 self.status = format!("template '{name}' (preview, read-only)");
             }
             Err(err) => self.status = format!("template error: {err}"),
-        }
-    }
-
-    /// Imports an external apic contract into the project: pick a `.json`,
-    /// validate it is a real contract, then copy it into the working dir.
-    ///
-    /// Safety: the destination is resolved with the symlink-aware
-    /// [`apic_core::file::confine_to_dir`] so it cannot escape the working dir,
-    /// the file is validated before anything is written, and an existing file is
-    /// never overwritten.
-    fn import_apic(&mut self) {
-        let Some(root) = self.root.clone() else {
-            self.status = "no project to import into".into();
-            return;
-        };
-        let Some(src) = rfd::FileDialog::new()
-            .add_filter("apic contract", &["json"])
-            .set_title("Import apic contract")
-            .pick_file()
-        else {
-            return; // user cancelled
-        };
-
-        let content = match apic_core::file::read_file(&src) {
-            Ok(c) => c,
-            Err(e) => {
-                self.status = format!("read error: {e}");
-                return;
-            }
-        };
-        if let Err(e) = apic_core::json::validate(&content) {
-            self.status = format!("not a valid contract: {e}");
-            return;
-        }
-
-        let Some(name) = src.file_name() else {
-            self.status = "source has no file name".into();
-            return;
-        };
-        // Confine the destination to the working dir (rejects symlink escapes).
-        let dest = match apic_core::file::confine_to_dir(&root, Path::new(name)) {
-            Ok(p) => p,
-            Err(e) => {
-                self.status = e;
-                return;
-            }
-        };
-        if dest.exists() {
-            self.status = format!("{} already exists; not overwriting", name.to_string_lossy());
-            return;
-        }
-        match std::fs::write(&dest, content) {
-            Ok(()) => {
-                self.reload_project();
-                self.status = format!("imported {}", name.to_string_lossy());
-            }
-            Err(e) => self.status = format!("write error: {e}"),
         }
     }
 
@@ -761,7 +703,6 @@ impl eframe::App for App {
         match top.or(side) {
             Some(SidebarAction::LoadContract(i)) => self.load(i),
             Some(SidebarAction::LoadTemplate(i)) => self.load_template(i),
-            Some(SidebarAction::ImportApic) => self.import_apic(),
             Some(SidebarAction::ImportPostman) => self.import_postman(),
             Some(SidebarAction::NewTemplate) => self.new_template = Some(String::new()),
             Some(SidebarAction::NewRequest(prefix)) => {
@@ -795,10 +736,6 @@ impl App {
                     ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
                     ui.add_space(8.0);
                     ui.menu_button(RichText::new("[ Import ]").color(GREEN), |ui| {
-                        if ui.button("apic file").clicked() {
-                            action = Some(SidebarAction::ImportApic);
-                            ui.close();
-                        }
                         if ui.button("Postman collection").clicked() {
                             action = Some(SidebarAction::ImportPostman);
                             ui.close();
