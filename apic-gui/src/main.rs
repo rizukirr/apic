@@ -263,6 +263,17 @@ impl App {
     }
 
     /// Loads entry `i` into the editable model.
+    /// Loads an invalid contract's raw text into the repair editor.
+    fn enter_repair(&mut self, i: usize) {
+        let Some(entry) = self.entries.get(i) else { return };
+        let buffer = apic_core::file::read_file(&entry.path).unwrap_or_default();
+        let error = entry.error.clone().unwrap_or_default();
+        self.model = None;
+        self.selected = Some(i);
+        self.selected_template = None;
+        self.repair = Some(Repair { index: i, buffer, error });
+    }
+
     fn load(&mut self, i: usize) {
         let Some(entry) = self.entries.get(i) else {
             return;
@@ -803,7 +814,15 @@ impl eframe::App for App {
         self.bottom_bar(ctx);
         let side = self.sidebar(ctx);
         match top.or(side) {
-            Some(SidebarAction::LoadContract(i)) => self.load(i),
+            Some(SidebarAction::LoadContract(i)) => {
+                let invalid = self.entries.get(i).map(|e| e.error.is_some()).unwrap_or(false);
+                if invalid {
+                    self.enter_repair(i);
+                } else {
+                    self.repair = None;
+                    self.load(i);
+                }
+            }
             Some(SidebarAction::LoadTemplate(i)) => self.load_template(i),
             Some(SidebarAction::OpenProject) => self.open_project(),
             Some(SidebarAction::NewProject) => self.new_project(),
@@ -891,7 +910,7 @@ impl App {
         let mut tree = TreeNode::default();
         for (i, e) in self.entries.iter().enumerate() {
             if q.is_empty() || e.rel.to_lowercase().contains(&q) {
-                tree.insert(&e.rel, i, &e.method);
+                tree.insert(&e.rel, i, &e.method, e.error.is_some());
             }
         }
         let selected = self.selected;
@@ -990,6 +1009,7 @@ impl App {
 
     /// The central viewer/editor for the loaded contract.
     fn central(&mut self, ctx: &egui::Context) {
+        let no_project = self.project_root.is_none();
         let App {
             model,
             path,
@@ -1000,6 +1020,18 @@ impl App {
             ..
         } = self;
         egui::CentralPanel::default().show(ctx, |ui| {
+            if no_project {
+                ui.add_space(40.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new("No project open").color(DIM).size(16.0));
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Use [ OPEN ] to open a project folder, or [ New ] to create one.")
+                            .color(DIM),
+                    );
+                });
+                return;
+            }
             let Some(model) = model.as_mut() else {
                 ui.add_space(40.0);
                 ui.vertical_centered(|ui| {
@@ -1602,18 +1634,18 @@ fn responses(ui: &mut egui::Ui, model: &mut EditModel, resp_tab: &mut usize, edi
 #[derive(Default)]
 struct TreeNode {
     dirs: BTreeMap<String, TreeNode>,
-    files: Vec<(String, usize, String)>, // (leaf label, entry index, method)
+    files: Vec<(String, usize, String, bool)>, // (leaf label, entry index, method, invalid)
 }
 
 impl TreeNode {
-    fn insert(&mut self, rel: &str, idx: usize, method: &str) {
+    fn insert(&mut self, rel: &str, idx: usize, method: &str, invalid: bool) {
         match rel.split_once('/') {
             Some((dir, rest)) => self
                 .dirs
                 .entry(dir.to_string())
                 .or_default()
-                .insert(rest, idx, method),
-            None => self.files.push((rel.to_string(), idx, method.to_string())),
+                .insert(rest, idx, method, invalid),
+            None => self.files.push((rel.to_string(), idx, method.to_string(), invalid)),
         }
     }
 
@@ -1661,13 +1693,17 @@ impl TreeNode {
                 })
                 .body(|ui| child.show(ui, &folder_path, selected, to_load, new_in, delete));
         }
-        for (label, idx, method) in &self.files {
+        for (label, idx, method, invalid) in &self.files {
             let rel = if prefix.is_empty() {
                 label.clone()
             } else {
                 format!("{prefix}/{label}")
             };
             ui.horizontal(|ui| {
+                if *invalid {
+                    ui.label(RichText::new("●").color(RED))
+                        .on_hover_text("Invalid contract — click to repair");
+                }
                 ui.label(RichText::new(method).color(method_color(method)).size(11.0));
                 if ui
                     .selectable_label(selected == Some(*idx), RichText::new(label).color(TEXT))
