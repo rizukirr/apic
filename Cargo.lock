@@ -265,6 +265,7 @@ dependencies = [
  "apic-core",
  "dirs",
  "eframe",
+ "pollster",
  "rfd",
  "winresource",
 ]

@@ -159,6 +159,17 @@ struct App {
     new_request_seed: usize,
     /// When `Some`, the delete-confirmation dialog is open for this target.
     pending_delete: Option<DeleteTarget>,
+    /// In-flight native file dialog, run on a background thread so the portal
+    /// call never blocks the UI, plus the action to perform on its result.
+    pending_dialog: Option<(DialogKind, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
+}
+
+/// Which action consumes the path chosen by an in-flight file dialog.
+#[derive(Clone, Copy)]
+enum DialogKind {
+    OpenProject,
+    NewProject,
+    ImportPostman,
 }
 
 impl App {
@@ -184,6 +195,7 @@ impl App {
             new_request: None,
             new_request_seed: 0,
             pending_delete: None,
+            pending_dialog: None,
         };
         let settings = Settings::load();
         if let Some(root) = settings.last_project
@@ -337,15 +349,18 @@ impl App {
         }
     }
 
-    /// `[ OPEN ]`: pick a project folder, verify, then open / auto-init / block.
-    fn open_project(&mut self) {
-        let Some(folder) = rfd::FileDialog::new()
-            .set_title("Open apic project")
-            .pick_folder()
-        else {
-            return; // cancelled
-        };
+    /// `[ Open ]`: launch the folder picker; `finish_open` runs on the result.
+    fn open_project(&mut self, ctx: &egui::Context) {
+        self.spawn_folder_dialog(DialogKind::OpenProject, "Open apic project", ctx);
+    }
 
+    /// `[ New ]`: launch the folder picker; `finish_new` runs on the result.
+    fn new_project(&mut self, ctx: &egui::Context) {
+        self.spawn_folder_dialog(DialogKind::NewProject, "New apic project", ctx);
+    }
+
+    /// Verify a chosen folder, then open / auto-init / block.
+    fn finish_open(&mut self, folder: PathBuf) {
         let has_apic = folder.join(".apic").join("config.toml").is_file();
         if has_apic {
             self.activate_project(folder);
@@ -364,17 +379,52 @@ impl App {
         }
     }
 
-    /// `[ New ]`: pick a folder and initialize a fresh project there (opening it
-    /// if it is already a project).
-    fn new_project(&mut self) {
-        let Some(folder) = rfd::FileDialog::new()
-            .set_title("New apic project")
-            .pick_folder()
-        else {
-            return; // cancelled
-        };
+    /// Initialize a fresh project in `folder` (opening it if it already is one).
+    fn finish_new(&mut self, folder: PathBuf) {
         match apic_core::config::Config::init_in(&folder, None) {
             Ok(_) | Err(_) => self.activate_project(folder), // Err = already a project
+        }
+    }
+
+    /// Spawns a native dialog on a background thread (so the portal call never
+    /// freezes the UI) and records what to do with the result; polled by
+    /// [`App::poll_dialog`]. A second dialog cannot start while one is pending.
+    fn spawn_folder_dialog(&mut self, kind: DialogKind, title: &'static str, ctx: &egui::Context) {
+        if self.pending_dialog.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let picked =
+                pollster::block_on(rfd::AsyncFileDialog::new().set_title(title).pick_folder())
+                    .map(|h| h.path().to_path_buf());
+            let _ = tx.send(picked);
+            ctx.request_repaint();
+        });
+        self.pending_dialog = Some((kind, rx));
+        self.status = "Waiting for the file dialog…".into();
+    }
+
+    /// Polls the in-flight dialog and runs its action once a path is chosen (or
+    /// clears it on cancel). Called every frame from `update`.
+    fn poll_dialog(&mut self, ctx: &egui::Context) {
+        let Some((kind, rx)) = &self.pending_dialog else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(result) => {
+                let kind = *kind;
+                self.pending_dialog = None;
+                match (kind, result) {
+                    (DialogKind::OpenProject, Some(p)) => self.finish_open(p),
+                    (DialogKind::NewProject, Some(p)) => self.finish_new(p),
+                    (DialogKind::ImportPostman, Some(p)) => self.finish_import_postman(p),
+                    (_, None) => {} // cancelled
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.pending_dialog = None,
         }
     }
 
@@ -392,19 +442,38 @@ impl App {
         .save();
     }
 
+    /// `[ Import ]` → Postman: launch the file picker (background thread).
+    fn import_postman(&mut self, ctx: &egui::Context) {
+        if self.root.is_none() {
+            self.status = "no project to import into".into();
+            return;
+        }
+        if self.pending_dialog.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let picked = pollster::block_on(
+                rfd::AsyncFileDialog::new()
+                    .add_filter("Postman collection", &["json"])
+                    .set_title("Import Postman collection")
+                    .pick_file(),
+            )
+            .map(|h| h.path().to_path_buf());
+            let _ = tx.send(picked);
+            ctx.request_repaint();
+        });
+        self.pending_dialog = Some((DialogKind::ImportPostman, rx));
+        self.status = "Waiting for the file dialog…".into();
+    }
+
     /// Imports a Postman collection into the project via apic-core's converter,
     /// which writes contracts confined to the working dir and never overwrites.
-    fn import_postman(&mut self) {
+    fn finish_import_postman(&mut self, src: PathBuf) {
         let Some(root) = self.root.clone() else {
             self.status = "no project to import into".into();
             return;
-        };
-        let Some(src) = rfd::FileDialog::new()
-            .add_filter("Postman collection", &["json"])
-            .set_title("Import Postman collection")
-            .pick_file()
-        else {
-            return; // user cancelled
         };
         match apic_core::convert::run(&src, &root) {
             Ok(out) => {
@@ -826,6 +895,7 @@ fn method_color(method: &str) -> Color32 {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_dialog(ctx);
         let top = self.top_bar(ctx);
         self.bottom_bar(ctx);
         let side = self.sidebar(ctx);
@@ -844,9 +914,9 @@ impl eframe::App for App {
                 }
             }
             Some(SidebarAction::LoadTemplate(i)) => self.load_template(i),
-            Some(SidebarAction::OpenProject) => self.open_project(),
-            Some(SidebarAction::NewProject) => self.new_project(),
-            Some(SidebarAction::ImportPostman) => self.import_postman(),
+            Some(SidebarAction::OpenProject) => self.open_project(ctx),
+            Some(SidebarAction::NewProject) => self.new_project(ctx),
+            Some(SidebarAction::ImportPostman) => self.import_postman(ctx),
             Some(SidebarAction::NewTemplate) => self.new_template = Some(String::new()),
             Some(SidebarAction::NewRequest(prefix)) => {
                 self.new_request = Some(prefix);
