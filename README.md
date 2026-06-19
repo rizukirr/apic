@@ -50,6 +50,9 @@ To run without installing, use `cargo run -- <args>` from the project directory.
 cargo install apic-gui
 ```
 
+`cargo install` only puts the binary on your `PATH`. On Linux, run
+`apic-gui --desktop-entry` once to add it to your application launcher.
+
 On Linux, building the GUI needs the system X11/Wayland/GL development libraries
 (on Debian/Ubuntu: `libxkbcommon-dev`, `libwayland-dev`, `libxcb1-dev`,
 `libgl1-mesa-dev`, and friends). macOS and Windows build with no extra packages.
