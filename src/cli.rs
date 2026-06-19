@@ -6,7 +6,7 @@ use crate::tree;
 use apic_core::config::{Config, InitOutcome, read_config_file};
 use apic_core::file::{confine_to_dir, home_relative, read_file, to_slash};
 use apic_core::fuzzy::{fuzzy_find, fuzzy_match_path};
-use apic_core::json::{json_get, scan_json_file, validate as validate_contract};
+use apic_core::json::{json_get, scan_json_file};
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::io::{IsTerminal, Write};
@@ -706,7 +706,8 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
         let result = read_file(path)
             .map_err(|err| err.to_string())
             .and_then(|content| {
-                validate_contract(&content).map_err(|err| err.to_string())?;
+                // Schema validity uses the same primitive as apic_core::validate_dir.
+                apic_core::json::validate(&content).map_err(|err| err.to_string())?;
                 let issues = rules.check(&content)?;
                 if issues.is_empty() {
                     Ok(())
