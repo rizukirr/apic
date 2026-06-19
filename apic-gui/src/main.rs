@@ -31,6 +31,18 @@ const RED: Color32 = Color32::from_rgb(255, 86, 86);
 const AMBER: Color32 = Color32::from_rgb(255, 196, 0);
 
 fn main() -> eframe::Result {
+    if std::env::args().skip(1).any(|a| a == "--desktop-entry") {
+        match desktop::install_desktop_entry() {
+            Ok(msg) => {
+                println!("{msg}");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             // Stable app id => X11 WM_CLASS / Wayland app_id, which the Linux
