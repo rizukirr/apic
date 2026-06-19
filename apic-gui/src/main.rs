@@ -630,6 +630,36 @@ impl App {
         }
     }
 
+    /// Modal shown when a picked non-project folder has invalid contracts: the
+    /// user must fix them before it can be opened/initialized.
+    fn open_blocked_dialog(&mut self, ctx: &egui::Context) {
+        let Some(failures) = self.open_blocked.clone() else { return };
+        let mut close = false;
+        egui::Window::new("Fix these contracts first")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new("This folder is not an apic project and has invalid contracts. Fix them, then open it again.")
+                        .color(TEXT),
+                );
+                ui.add_space(6.0);
+                for (path, err) in &failures {
+                    ui.label(RichText::new(path.to_string_lossy()).color(RED).strong());
+                    ui.label(RichText::new(err).color(DIM).size(11.0));
+                    ui.add_space(4.0);
+                }
+                ui.add_space(4.0);
+                if ui.button(RichText::new("[ Close ]").color(GREEN)).clicked() {
+                    close = true;
+                }
+            });
+        if close {
+            self.open_blocked = None;
+        }
+    }
+
     /// Renders the delete-confirmation dialog when a delete is pending, and
     /// performs the deletion on confirm.
     fn delete_dialog(&mut self, ctx: &egui::Context) {
@@ -792,6 +822,7 @@ impl eframe::App for App {
         self.new_template_dialog(ctx);
         self.new_request_dialog(ctx);
         self.delete_dialog(ctx);
+        self.open_blocked_dialog(ctx);
     }
 }
 
@@ -809,6 +840,14 @@ impl App {
                     ui.set_min_height(row_h);
                     ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
                     ui.add_space(8.0);
+                    if ui.button(RichText::new("[ OPEN ]").color(GREEN)).clicked() {
+                        action = Some(SidebarAction::OpenProject);
+                    }
+                    ui.add_space(4.0);
+                    if ui.button(RichText::new("[ New ]").color(GREEN)).clicked() {
+                        action = Some(SidebarAction::NewProject);
+                    }
+                    ui.add_space(4.0);
                     ui.menu_button(RichText::new("[ Import ]").color(GREEN), |ui| {
                         if ui.button("Postman collection").clicked() {
                             action = Some(SidebarAction::ImportPostman);
