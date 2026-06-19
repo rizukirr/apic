@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod settings;
+use settings::Settings;
 
 // Terminal/cyberpunk palette.
 const BG: Color32 = Color32::from_rgb(8, 12, 10);
@@ -81,6 +82,8 @@ struct Entry {
     path: PathBuf,
     rel: String,
     method: String,
+    /// Validation error when this contract is invalid; `None` when it is valid.
+    error: Option<String>,
 }
 
 /// A one-shot action requested by the header or sidebar this frame.
@@ -123,6 +126,9 @@ struct App {
     row_height: f32,
     /// The `.apic` directory, for locating templates.
     apic_dir: Option<PathBuf>,
+    /// Absolute root of the active project (the dir containing `.apic/`). `None`
+    /// when no project is open. All discovery resolves against this, never cwd.
+    project_root: Option<PathBuf>,
     /// Project templates: (display name, path) from `.apic/template/`.
     templates: Vec<(String, PathBuf)>,
     /// Index into `templates` when a template is being previewed.
@@ -152,6 +158,7 @@ impl App {
             resp_tab: 0,
             row_height: 0.0,
             apic_dir: None,
+            project_root: None,
             templates: Vec::new(),
             selected_template: None,
             new_template: None,
@@ -159,14 +166,29 @@ impl App {
             new_request_seed: 0,
             pending_delete: None,
         };
+        let settings = Settings::load();
+        if let Some(root) = settings.last_project
+            && root.is_dir()
+        {
+            app.project_root = Some(root);
+        }
         app.reload_project();
         app
     }
 
-    /// Discovers contracts and reads each one's method for the sidebar badge.
+    /// Discovers contracts for the active project and reads each one's method for
+    /// the sidebar badge. Resolves everything against `self.project_root`; never
+    /// reads the process current directory.
     fn reload_project(&mut self) {
-        // Templates live in `.apic/template/`, independent of the contracts root.
-        self.apic_dir = apic_core::config::find_apic_dir();
+        let Some(root) = self.project_root.clone() else {
+            self.apic_dir = None;
+            self.templates.clear();
+            self.entries.clear();
+            self.status = "No project open. Use [ OPEN ] or [ New ].".into();
+            return;
+        };
+
+        self.apic_dir = Some(root.join(".apic"));
         self.templates = self
             .apic_dir
             .as_deref()
@@ -183,29 +205,35 @@ impl App {
                     .collect()
             })
             .unwrap_or_default();
-        match apic_core::config::read_config_file().and_then(|c| c.get_root_dir()) {
-            Ok(root) => {
-                let mut paths = apic_core::json::scan_json_file(&root, true).unwrap_or_default();
+
+        match apic_core::config::read_config_in(&root).and_then(|c| c.root_dir_in(&root)) {
+            Ok(contracts_root) => {
+                let failures = apic_core::validate_dir(&contracts_root);
+                let mut paths = apic_core::json::scan_json_file(&contracts_root, true)
+                    .unwrap_or_default();
                 paths.sort();
                 self.entries = paths
                     .into_iter()
+                    .filter(|p| !p.components().any(|c| c.as_os_str() == ".apic"))
                     .map(|path| {
-                        let rel = apic_core::file::relative_slash(&path, &root);
+                        let rel = apic_core::file::relative_slash(&path, &contracts_root);
                         let method = apic_core::file::read_file(&path)
                             .ok()
                             .and_then(|t| apic_core::json::json_get(&t, None).ok())
                             .map(|c| method_str(&c.method))
                             .unwrap_or_else(|| "?".to_string());
-                        Entry { path, rel, method }
+                        let error = failures
+                            .iter()
+                            .find(|(p, _)| *p == path)
+                            .map(|(_, e)| e.clone());
+                        Entry { path, rel, method, error }
                     })
                     .collect();
-                // Footer baseline: the project root, home-relative (never the
-                // absolute path). Replaced by a contract's location once opened.
-                self.status = display_location(&root);
-                self.root = Some(root);
+                self.status = display_location(&contracts_root);
             }
             Err(err) => {
-                self.status = apic_core::file::home_relative(&format!("No apic project: {err}"))
+                self.entries.clear();
+                self.status = apic_core::file::home_relative(&format!("Project error: {err}"));
             }
         }
     }
