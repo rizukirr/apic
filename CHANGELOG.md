@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-19
+
+### Added
+- `apic-gui --desktop-entry` registers the GUI in the Linux application launcher
+  (writes a `.desktop` file and icon into the per-user XDG data dir, pointing at
+  the running binary). Useful after `cargo install apic-gui`, which otherwise
+  only puts the binary on `PATH`.
+
 ## [0.3.0] - 2026-06-18
 
 ### Added
