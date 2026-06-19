@@ -54,6 +54,10 @@ On Linux, building the GUI needs the system X11/Wayland/GL development libraries
 (on Debian/Ubuntu: `libxkbcommon-dev`, `libwayland-dev`, `libxcb1-dev`,
 `libgl1-mesa-dev`, and friends). macOS and Windows build with no extra packages.
 
+At runtime, the Linux GUI opens folders/files through your desktop's portal. If
+the **Open**/**New** dialogs never appear, install a portal and a backend, e.g.
+`xdg-desktop-portal` plus `xdg-desktop-portal-kde` (KDE) or `-gtk` (GNOME/other).
+
 ### Prebuilt binaries
 
 Grab the archive for your platform from the
@@ -114,10 +118,10 @@ Prefer your own editor? Pass `--editor` to open the file in `$VISUAL`/`$EDITOR`
 
 ## Desktop GUI
 
-`apic-gui` is a styled desktop front-end for the same projects the CLI manages.
-It reads the same `.apic` project (run `apic init` first), so the GUI and the
-CLI/TUI operate on the exact same JSON files, both are thin layers over the
-shared `apic-core` crate. Run it:
+`apic-gui` works on the same `.apic` projects as the CLI, on the exact same JSON
+files, both are thin layers over the shared `apic-core` crate. Run it, then
+**Open** a project folder (or **New** to create one); it reopens the last
+project on the next launch.
 
 ```bash
 apic-gui
@@ -125,14 +129,15 @@ apic-gui
 
 What it does:
 
-- **Browse**, a sidebar lists every contract under the working directory (with
-  its HTTP method badge) and every project template; a search box filters them.
-- **Read**, selecting a contract renders it in the same panelled layout as
-  `apic read`, headers, sections, schema tables, and inline JSON examples.
-- **Edit**, change fields in place through the same edit model the TUI uses, and
-  save back to the file.
-- **Import**, pull in an existing apic contract or a Postman collection from the
-  `[ Import ]` menu.
+- **Open / New**, `[ Open ]` picks a project folder (`[ New ]` creates one); the
+  last project is remembered between launches.
+- **Browse**, a sidebar lists every contract (with its HTTP method badge) and
+  every template; a search box filters them.
+- **Read / Edit**, selecting a contract renders it like `apic read`, and you
+  edit fields in place through the same model as the TUI, saving to the file.
+- **Repair**, invalid contracts are flagged; fix the raw JSON and the GUI
+  switches back to the structured view automatically.
+- **Import**, bring in a Postman collection from the `[ Import ]` menu.
 - **Manage**, scaffold new contracts and templates, or delete them with a
   confirmation.
 
