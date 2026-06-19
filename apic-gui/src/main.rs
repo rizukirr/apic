@@ -86,10 +86,22 @@ struct Entry {
     error: Option<String>,
 }
 
+/// In-progress raw-JSON repair of an invalid contract.
+struct Repair {
+    /// Index into `entries` of the file being repaired.
+    index: usize,
+    /// Editable raw file text.
+    buffer: String,
+    /// Current validation error for `buffer` (empty once valid).
+    error: String,
+}
+
 /// A one-shot action requested by the header or sidebar this frame.
 enum SidebarAction {
     LoadContract(usize),
     LoadTemplate(usize),
+    OpenProject,
+    NewProject,
     ImportPostman,
     NewTemplate,
     /// Open the new-request dialog, pre-filled with this path prefix (e.g.
@@ -128,6 +140,12 @@ struct App {
     /// Absolute root of the active project (the dir containing `.apic/`). `None`
     /// when no project is open. All discovery resolves against this, never cwd.
     project_root: Option<PathBuf>,
+    /// When `Some`, a modal listing contracts that must be fixed before the
+    /// picked non-project folder can be opened/initialized.
+    open_blocked: Option<Vec<(PathBuf, String)>>,
+    /// Raw-JSON repair editor state for an invalid contract; `None` when not
+    /// repairing. Behavior is wired in Task 10/11.
+    repair: Option<Repair>,
     /// Project templates: (display name, path) from `.apic/template/`.
     templates: Vec<(String, PathBuf)>,
     /// Index into `templates` when a template is being previewed.
@@ -158,6 +176,8 @@ impl App {
             row_height: 0.0,
             apic_dir: None,
             project_root: None,
+            open_blocked: None,
+            repair: None,
             templates: Vec::new(),
             selected_template: None,
             new_template: None,
@@ -293,6 +313,58 @@ impl App {
             }
             Err(err) => self.status = format!("template error: {err}"),
         }
+    }
+
+    /// `[ OPEN ]`: pick a project folder, verify, then open / auto-init / block.
+    fn open_project(&mut self) {
+        let Some(folder) = rfd::FileDialog::new()
+            .set_title("Open apic project")
+            .pick_folder()
+        else {
+            return; // cancelled
+        };
+
+        let has_apic = folder.join(".apic").join("config.toml").is_file();
+        if has_apic {
+            self.activate_project(folder);
+            return;
+        }
+
+        // No project: validate the folder's contracts before auto-initializing.
+        let failures = apic_core::validate_dir(&folder);
+        if failures.is_empty() {
+            match apic_core::config::Config::init_in(&folder, None) {
+                Ok(_) => self.activate_project(folder),
+                Err(e) => self.status = format!("init error: {e}"),
+            }
+        } else {
+            self.open_blocked = Some(failures);
+        }
+    }
+
+    /// `[ New ]`: pick a folder and initialize a fresh project there (opening it
+    /// if it is already a project).
+    fn new_project(&mut self) {
+        let Some(folder) = rfd::FileDialog::new()
+            .set_title("New apic project")
+            .pick_folder()
+        else {
+            return; // cancelled
+        };
+        match apic_core::config::Config::init_in(&folder, None) {
+            Ok(_) | Err(_) => self.activate_project(folder), // Err = already a project
+        }
+    }
+
+    /// Makes `folder` the active project: reload, then persist as last project.
+    fn activate_project(&mut self, folder: PathBuf) {
+        self.project_root = Some(folder.clone());
+        self.model = None;
+        self.selected = None;
+        self.selected_template = None;
+        self.repair = None;
+        self.reload_project();
+        Settings { last_project: Some(folder) }.save();
     }
 
     /// Imports a Postman collection into the project via apic-core's converter,
@@ -703,6 +775,8 @@ impl eframe::App for App {
         match top.or(side) {
             Some(SidebarAction::LoadContract(i)) => self.load(i),
             Some(SidebarAction::LoadTemplate(i)) => self.load_template(i),
+            Some(SidebarAction::OpenProject) => self.open_project(),
+            Some(SidebarAction::NewProject) => self.new_project(),
             Some(SidebarAction::ImportPostman) => self.import_postman(),
             Some(SidebarAction::NewTemplate) => self.new_template = Some(String::new()),
             Some(SidebarAction::NewRequest(prefix)) => {
