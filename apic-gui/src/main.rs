@@ -232,8 +232,8 @@ impl App {
                 // new-request / delete; keep it in sync with the active project.
                 self.root = Some(contracts_root.clone());
                 let failures = apic_core::validate_dir(&contracts_root);
-                let mut paths = apic_core::json::scan_json_file(&contracts_root, true)
-                    .unwrap_or_default();
+                let mut paths =
+                    apic_core::json::scan_json_file(&contracts_root, true).unwrap_or_default();
                 paths.sort();
                 self.entries = paths
                     .into_iter()
@@ -249,7 +249,12 @@ impl App {
                             .iter()
                             .find(|(p, _)| *p == path)
                             .map(|(_, e)| e.clone());
-                        Entry { path, rel, method, error }
+                        Entry {
+                            path,
+                            rel,
+                            method,
+                            error,
+                        }
                     })
                     .collect();
                 self.status = display_location(&contracts_root);
@@ -265,13 +270,19 @@ impl App {
     /// Loads entry `i` into the editable model.
     /// Loads an invalid contract's raw text into the repair editor.
     fn enter_repair(&mut self, i: usize) {
-        let Some(entry) = self.entries.get(i) else { return };
+        let Some(entry) = self.entries.get(i) else {
+            return;
+        };
         let buffer = apic_core::file::read_file(&entry.path).unwrap_or_default();
         let error = entry.error.clone().unwrap_or_default();
         self.model = None;
         self.selected = Some(i);
         self.selected_template = None;
-        self.repair = Some(Repair { index: i, buffer, error });
+        self.repair = Some(Repair {
+            index: i,
+            buffer,
+            error,
+        });
     }
 
     fn load(&mut self, i: usize) {
@@ -375,7 +386,10 @@ impl App {
         self.selected_template = None;
         self.repair = None;
         self.reload_project();
-        Settings { last_project: Some(folder) }.save();
+        Settings {
+            last_project: Some(folder),
+        }
+        .save();
     }
 
     /// Imports a Postman collection into the project via apic-core's converter,
@@ -644,7 +658,9 @@ impl App {
     /// Modal shown when a picked non-project folder has invalid contracts: the
     /// user must fix them before it can be opened/initialized.
     fn open_blocked_dialog(&mut self, ctx: &egui::Context) {
-        let Some(failures) = self.open_blocked.clone() else { return };
+        let Some(failures) = self.open_blocked.clone() else {
+            return;
+        };
         let mut close = false;
         egui::Window::new("Fix these contracts first")
             .collapsible(false)
@@ -815,7 +831,11 @@ impl eframe::App for App {
         let side = self.sidebar(ctx);
         match top.or(side) {
             Some(SidebarAction::LoadContract(i)) => {
-                let invalid = self.entries.get(i).map(|e| e.error.is_some()).unwrap_or(false);
+                let invalid = self
+                    .entries
+                    .get(i)
+                    .map(|e| e.error.is_some())
+                    .unwrap_or(false);
                 if invalid {
                     self.enter_repair(i);
                 } else {
@@ -1029,8 +1049,10 @@ impl App {
                     ui.label(RichText::new("No project open").color(DIM).size(16.0));
                     ui.add_space(6.0);
                     ui.label(
-                        RichText::new("Use [ OPEN ] to open a project folder, or [ New ] to create one.")
-                            .color(DIM),
+                        RichText::new(
+                            "Use [ OPEN ] to open a project folder, or [ New ] to create one.",
+                        )
+                        .color(DIM),
                     );
                 });
                 return;
@@ -1038,14 +1060,21 @@ impl App {
             if let Some(rep) = repair.as_mut() {
                 ui.add_space(6.0);
                 if rep.error.is_empty() {
-                    ui.label(RichText::new("Valid — opening editor…").color(GREEN).strong());
+                    ui.label(
+                        RichText::new("Valid — opening editor…")
+                            .color(GREEN)
+                            .strong(),
+                    );
                 } else {
                     ui.label(RichText::new("INVALID CONTRACT").color(RED).strong());
                     ui.label(RichText::new(&rep.error).color(AMBER).size(12.0));
                 }
                 ui.add_space(6.0);
                 let resp = ui.add_sized(
-                    [ui.available_width(), (ui.available_height() - 8.0).max(40.0)],
+                    [
+                        ui.available_width(),
+                        (ui.available_height() - 8.0).max(40.0),
+                    ],
                     egui::TextEdit::multiline(&mut rep.buffer)
                         .code_editor()
                         .desired_width(f32::INFINITY),
@@ -1685,7 +1714,9 @@ impl TreeNode {
                 .entry(dir.to_string())
                 .or_default()
                 .insert(rest, idx, method, invalid),
-            None => self.files.push((rel.to_string(), idx, method.to_string(), invalid)),
+            None => self
+                .files
+                .push((rel.to_string(), idx, method.to_string(), invalid)),
         }
     }
 

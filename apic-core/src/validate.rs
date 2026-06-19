@@ -70,7 +70,11 @@ mod tests {
     fn apic_dir_contents_are_skipped() {
         let tmp = tempdir();
         write(&tmp, "good.json", VALID);
-        write(&tmp, ".apic/template/convention.json", "{ partial not a contract");
+        write(
+            &tmp,
+            ".apic/template/convention.json",
+            "{ partial not a contract",
+        );
         assert!(validate_dir(&tmp).is_empty());
     }
 
@@ -80,11 +84,7 @@ mod tests {
         use std::sync::atomic::{AtomicU32, Ordering};
         static N: AtomicU32 = AtomicU32::new(0);
         let id = N.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "apic-validate-{}-{}",
-            std::process::id(),
-            id
-        ));
+        let dir = std::env::temp_dir().join(format!("apic-validate-{}-{}", std::process::id(), id));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

@@ -95,7 +95,11 @@ impl Config {
         let working_dir = match working_dir {
             Some(w) => {
                 let w = PathBuf::from(w);
-                let candidate = if w.is_absolute() { w.clone() } else { dir.join(&w) };
+                let candidate = if w.is_absolute() {
+                    w.clone()
+                } else {
+                    dir.join(&w)
+                };
                 if !candidate.exists() {
                     return Err(format!("Directory {} does not exist", candidate.display()));
                 }
