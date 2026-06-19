@@ -16,6 +16,7 @@ path = "src/main.rs"
 apic-core = { path = "../apic-core", version = "0.3.0" }
 eframe = "0.33.3"
 rfd = "0.17.2"
+dirs = "6"
 
 # Only pulled in when building on Windows, where it embeds assets/icon.ico into
 # the .exe via build.rs. Other hosts skip it entirely.
