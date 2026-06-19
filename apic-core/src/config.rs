@@ -4,7 +4,7 @@
 //! current directory. The config records project metadata and the working
 //! directory that contract files are scanned from.
 
-use crate::file::{FindFileResult, find_file_downward, find_file_upward, to_slash};
+use crate::file::{FindFileResult, find_file_upward, to_slash};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -48,102 +48,74 @@ impl Config {
         }
     }
 
-    /// Returns the configured working directory as a normalized absolute path.
-    ///
-    /// The stored `working_dir` is relative to the project root (the parent of
-    /// the `.apic` directory), which keeps the config portable across machines
-    /// and clones. A legacy absolute `working_dir` is still honored, since
-    /// joining an absolute path simply yields that path.
-    pub fn get_root_dir(&self) -> Result<PathBuf, String> {
-        let project_root = project_root()?;
+    /// Resolves the working directory against an explicit `project_root`,
+    /// returning a normalized absolute path. `working_dir` stays relative and
+    /// portable; joining an absolute legacy value yields that value.
+    pub fn root_dir_in(&self, project_root: &Path) -> Result<PathBuf, String> {
         let resolved = project_root.join(&self.root.working_dir);
         if !resolved.exists() {
-            let err = format!(
+            return Err(format!(
                 "working directory {} does not exist, try to run `apic config --set-dir <dir>`",
                 resolved.display()
-            );
-            return Err(err);
+            ));
         }
-        // Normalize away `.`/`..` components (and symlinks) so downstream path
-        // stripping in scans operates on a clean absolute root.
         fs::canonicalize(&resolved)
             .map_err(|err| format!("Failed to resolve {}: {}", resolved.display(), err))
     }
 
-    /// Initializes a new project: creates the `.apic` directory and writes a
-    /// default `config.toml` and `template/convention.json`.
-    ///
-    /// If `working_dir` is given it becomes the root (resolved relative to the
-    /// current directory when not absolute); otherwise the current directory is
-    /// used.
-    ///
-    /// When the project already exists, this does not error outright: a missing
-    /// template is seeded (returning [`InitOutcome::TemplateSeeded`]) so a
-    /// project whose template was deleted or whose seed predates template
-    /// support can be repaired by re-running `init`. Only when the template is
-    /// also already present is it reported as already initialized.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if the project is already fully initialized, the given
-    /// working directory does not exist, or the `.apic` directory cannot be
-    /// created.
-    pub fn init(working_dir: Option<&str>) -> Result<InitOutcome, String> {
-        match find_file_apic_config_file() {
-            Ok(FindFileResult::Found(_)) => {
-                // Already initialized: recover a missing template instead of
-                // failing, but still report a fully-initialized project as an
-                // error so re-running `init` over a complete project is a no-op.
-                let apic_dir = find_apic_dir().ok_or("Already initialized!")?;
-                return if crate::template::seed_if_missing(&apic_dir)? {
-                    Ok(InitOutcome::TemplateSeeded)
-                } else {
-                    Err("Already initialized!".to_string())
-                };
-            }
-            Ok(FindFileResult::NotFound) => true,
-            Err(err) => {
-                return Err(err);
-            }
-        };
+    /// Resolves the working directory against the cwd-discovered project root.
+    pub fn get_root_dir(&self) -> Result<PathBuf, String> {
+        self.root_dir_in(&project_root()?)
+    }
 
-        let dir = PathBuf::from(".apic");
-        let pwd = std::env::current_dir()
-            .map_err(|err| format!("Failed to get current directory: {err}"))?;
-        let makedir = pwd.join(&dir);
-
-        if !makedir.exists() {
-            match fs::create_dir(&makedir) {
-                Ok(_) => true,
-                Err(err) => {
-                    let err = format!("Failed to create {}: {}", &dir.display(), err);
-                    return Err(err);
-                }
+    /// Initializes a project in `dir`: creates `dir/.apic`, seeds the template,
+    /// and writes `config.toml`. `working_dir` (when given) is stored relative to
+    /// `dir`; `None` means the project root itself.
+    ///
+    /// If `dir/.apic` already exists, a missing template is seeded
+    /// ([`InitOutcome::TemplateSeeded`]); a complete project is reported as
+    /// already initialized.
+    pub fn init_in(dir: &Path, working_dir: Option<&str>) -> Result<InitOutcome, String> {
+        let apic_dir = dir.join(".apic");
+        if apic_dir.join("config.toml").exists() {
+            return if crate::template::seed_if_missing(&apic_dir)? {
+                Ok(InitOutcome::TemplateSeeded)
+            } else {
+                Err("Already initialized!".to_string())
             };
         }
 
-        // Surface the contract template so the user can customize it. An
-        // existing template (e.g. on a re-created project) is left untouched.
-        // Best-effort: a seed failure must not abort an otherwise-successful
-        // init — `apic create` re-seeds and falls back to the built-in default.
-        let warning = crate::template::seed_if_missing(&makedir).err();
+        if !apic_dir.exists() {
+            fs::create_dir_all(&apic_dir)
+                .map_err(|err| format!("Failed to create {}: {}", apic_dir.display(), err))?;
+        }
 
-        // `working_dir` is stored relative to the project root (= `pwd` here,
-        // where `.apic` is created) so the config stays portable. A `None`
-        // working dir means the project root itself.
+        let warning = crate::template::seed_if_missing(&apic_dir).err();
+
         let working_dir = match working_dir {
-            Some(dir) => {
-                let dir = PathBuf::from(dir);
-                if !dir.exists() {
-                    let err = format!("Directory {} does not exist", dir.display());
-                    return Err(err);
+            Some(w) => {
+                let w = PathBuf::from(w);
+                let candidate = if w.is_absolute() {
+                    w.clone()
+                } else {
+                    dir.join(&w)
+                };
+                if !candidate.exists() {
+                    return Err(format!("Directory {} does not exist", candidate.display()));
                 }
-                relative_to_root(&pwd, &dir)
+                relative_to_root(dir, &w)
             }
             None => PathBuf::from("."),
         };
-        write_config_file(makedir.clone(), &Config::default(&working_dir))?;
+        write_config_file(apic_dir, &Config::default(&working_dir))?;
         Ok(InitOutcome::Initialized { warning })
+    }
+
+    /// Initializes a project in the current directory.
+    pub fn init(working_dir: Option<&str>) -> Result<InitOutcome, String> {
+        let pwd = std::env::current_dir()
+            .map_err(|err| format!("Failed to get current directory: {err}"))?;
+        Config::init_in(&pwd, working_dir)
     }
 
     /// Changes the root working directory to `new_dir` and persists the config.
@@ -252,52 +224,35 @@ fn find_file_apic_dir() -> Result<FindFileResult, String> {
     Ok(find_file_upward(pwd, &name))
 }
 
-/// Returns the project's `.apic` directory if one is found by walking upward
-/// from the current directory; `None` when not inside a project.
-///
-/// Unlike [`project_root`] this never errors — callers that also work outside
-/// a project (e.g. `apic create`) treat `None` as "no project".
-pub fn find_apic_dir() -> Option<PathBuf> {
-    match find_file_apic_dir().ok()? {
+/// Searches upward from `start` for the project's `.apic` directory.
+pub fn find_apic_dir_in(start: &Path) -> Option<PathBuf> {
+    match find_file_upward(start.to_path_buf(), &[PathBuf::from(".apic")]) {
         FindFileResult::Found(dirs) => dirs.first().cloned(),
         FindFileResult::NotFound => None,
     }
 }
 
-/// Locates `config.toml` inside the discovered `.apic` directory.
-///
-/// A missing `.apic` directory is reported as [`FindFileResult::NotFound`]
-/// (the project simply is not initialized), not as an error.
-fn find_file_apic_config_file() -> Result<FindFileResult, String> {
-    let pwd = match find_file_apic_dir()? {
-        FindFileResult::Found(pwd) => pwd.first().unwrap().clone(),
-        FindFileResult::NotFound => return Ok(FindFileResult::NotFound),
-    };
-
-    let name = vec![PathBuf::from("config.toml")];
-
-    Ok(find_file_downward(pwd, &name))
+/// Returns the project's `.apic` directory by walking up from the current
+/// directory; `None` when not inside a project.
+pub fn find_apic_dir() -> Option<PathBuf> {
+    find_apic_dir_in(&std::env::current_dir().ok()?)
 }
 
-/// Reads and deserializes the project's `config.toml`.
-///
-/// # Errors
-///
-/// Returns `Err` if the project is not initialized or the config file cannot
-/// be read or parsed.
-pub fn read_config_file() -> Result<Config, String> {
-    let config_file = match find_file_apic_config_file()? {
-        FindFileResult::Found(path) => path.first().unwrap().clone(),
-        FindFileResult::NotFound => {
-            return Err("Not initialized yet, run `apic init` first".to_string());
-        }
-    };
-
+/// Reads and deserializes the `config.toml` of the project rooted at
+/// `project_root` (the directory that directly contains `.apic/`).
+pub fn read_config_in(project_root: &Path) -> Result<Config, String> {
+    let config_file = project_root.join(".apic").join("config.toml");
     let content = fs::read_to_string(&config_file)
         .map_err(|err| format!("Failed to read {}: {}", config_file.display(), err))?;
-    let config: Config = toml::from_str(&content)
-        .map_err(|err| format!("Failed to parse {}: {}", config_file.display(), err))?;
-    Ok(config)
+    toml::from_str(&content)
+        .map_err(|err| format!("Failed to parse {}: {}", config_file.display(), err))
+}
+
+/// Reads the project config discovered by walking up from the current directory.
+pub fn read_config_file() -> Result<Config, String> {
+    let apic_dir = find_apic_dir().ok_or("Not initialized yet, run `apic init` first")?;
+    let root = apic_dir.parent().unwrap_or(&apic_dir);
+    read_config_in(root)
 }
 
 #[cfg(test)]
@@ -348,5 +303,36 @@ mod tests {
         let root = abs(&["home", "u", "project"]);
         let outside = abs(&["etc", "contracts"]);
         assert_eq!(relative_to_root(&root, &outside), outside);
+    }
+
+    fn tempdir() -> PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static N: AtomicU32 = AtomicU32::new(0);
+        let id = N.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("apic-cfg-{}-{}", std::process::id(), id));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn init_in_creates_project_and_config_reads_back() {
+        let dir = tempdir();
+        let outcome = Config::init_in(&dir, None).unwrap();
+        assert!(matches!(outcome, InitOutcome::Initialized { .. }));
+        assert!(dir.join(".apic/config.toml").exists());
+
+        let cfg = read_config_in(&dir).unwrap();
+        // working_dir is "." so it resolves back to the project root.
+        let resolved = cfg.root_dir_in(&dir).unwrap();
+        assert_eq!(resolved, fs::canonicalize(&dir).unwrap());
+    }
+
+    #[test]
+    fn init_in_twice_reports_already_initialized() {
+        let dir = tempdir();
+        Config::init_in(&dir, None).unwrap();
+        let err = Config::init_in(&dir, None).unwrap_err();
+        assert_eq!(err, "Already initialized!");
     }
 }

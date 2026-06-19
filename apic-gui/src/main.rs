@@ -15,6 +15,9 @@ use egui::{Color32, RichText, Stroke};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod settings;
+use settings::Settings;
+
 // Terminal/cyberpunk palette.
 const BG: Color32 = Color32::from_rgb(8, 12, 10);
 const PANEL_BG: Color32 = Color32::from_rgb(12, 17, 14);
@@ -79,13 +82,26 @@ struct Entry {
     path: PathBuf,
     rel: String,
     method: String,
+    /// Validation error when this contract is invalid; `None` when it is valid.
+    error: Option<String>,
+}
+
+/// In-progress raw-JSON repair of an invalid contract.
+struct Repair {
+    /// Index into `entries` of the file being repaired.
+    index: usize,
+    /// Editable raw file text.
+    buffer: String,
+    /// Current validation error for `buffer` (empty once valid).
+    error: String,
 }
 
 /// A one-shot action requested by the header or sidebar this frame.
 enum SidebarAction {
     LoadContract(usize),
     LoadTemplate(usize),
-    ImportApic,
+    OpenProject,
+    NewProject,
     ImportPostman,
     NewTemplate,
     /// Open the new-request dialog, pre-filled with this path prefix (e.g.
@@ -121,6 +137,15 @@ struct App {
     row_height: f32,
     /// The `.apic` directory, for locating templates.
     apic_dir: Option<PathBuf>,
+    /// Absolute root of the active project (the dir containing `.apic/`). `None`
+    /// when no project is open. All discovery resolves against this, never cwd.
+    project_root: Option<PathBuf>,
+    /// When `Some`, a modal listing contracts that must be fixed before the
+    /// picked non-project folder can be opened/initialized.
+    open_blocked: Option<Vec<(PathBuf, String)>>,
+    /// Raw-JSON repair editor state for an invalid contract; `None` when not
+    /// repairing. Behavior is wired in Task 10/11.
+    repair: Option<Repair>,
     /// Project templates: (display name, path) from `.apic/template/`.
     templates: Vec<(String, PathBuf)>,
     /// Index into `templates` when a template is being previewed.
@@ -134,6 +159,17 @@ struct App {
     new_request_seed: usize,
     /// When `Some`, the delete-confirmation dialog is open for this target.
     pending_delete: Option<DeleteTarget>,
+    /// In-flight native file dialog, run on a background thread so the portal
+    /// call never blocks the UI, plus the action to perform on its result.
+    pending_dialog: Option<(DialogKind, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
+}
+
+/// Which action consumes the path chosen by an in-flight file dialog.
+#[derive(Clone, Copy)]
+enum DialogKind {
+    OpenProject,
+    NewProject,
+    ImportPostman,
 }
 
 impl App {
@@ -150,21 +186,41 @@ impl App {
             resp_tab: 0,
             row_height: 0.0,
             apic_dir: None,
+            project_root: None,
+            open_blocked: None,
+            repair: None,
             templates: Vec::new(),
             selected_template: None,
             new_template: None,
             new_request: None,
             new_request_seed: 0,
             pending_delete: None,
+            pending_dialog: None,
         };
+        let settings = Settings::load();
+        if let Some(root) = settings.last_project
+            && root.is_dir()
+        {
+            app.project_root = Some(root);
+        }
         app.reload_project();
         app
     }
 
-    /// Discovers contracts and reads each one's method for the sidebar badge.
+    /// Discovers contracts for the active project and reads each one's method for
+    /// the sidebar badge. Resolves everything against `self.project_root`; never
+    /// reads the process current directory.
     fn reload_project(&mut self) {
-        // Templates live in `.apic/template/`, independent of the contracts root.
-        self.apic_dir = apic_core::config::find_apic_dir();
+        let Some(root) = self.project_root.clone() else {
+            self.apic_dir = None;
+            self.root = None;
+            self.templates.clear();
+            self.entries.clear();
+            self.status = "No project open. Use [ Open ] or [ New ].".into();
+            return;
+        };
+
+        self.apic_dir = Some(root.join(".apic"));
         self.templates = self
             .apic_dir
             .as_deref()
@@ -181,34 +237,66 @@ impl App {
                     .collect()
             })
             .unwrap_or_default();
-        match apic_core::config::read_config_file().and_then(|c| c.get_root_dir()) {
-            Ok(root) => {
-                let mut paths = apic_core::json::scan_json_file(&root, true).unwrap_or_default();
+
+        match apic_core::config::read_config_in(&root).and_then(|c| c.root_dir_in(&root)) {
+            Ok(contracts_root) => {
+                // `self.root` is the contracts working dir consumed by import /
+                // new-request / delete; keep it in sync with the active project.
+                self.root = Some(contracts_root.clone());
+                let failures = apic_core::validate_dir(&contracts_root);
+                let mut paths =
+                    apic_core::json::scan_json_file(&contracts_root, true).unwrap_or_default();
                 paths.sort();
                 self.entries = paths
                     .into_iter()
+                    .filter(|p| !p.components().any(|c| c.as_os_str() == ".apic"))
                     .map(|path| {
-                        let rel = apic_core::file::relative_slash(&path, &root);
+                        let rel = apic_core::file::relative_slash(&path, &contracts_root);
                         let method = apic_core::file::read_file(&path)
                             .ok()
                             .and_then(|t| apic_core::json::json_get(&t, None).ok())
                             .map(|c| method_str(&c.method))
                             .unwrap_or_else(|| "?".to_string());
-                        Entry { path, rel, method }
+                        let error = failures
+                            .iter()
+                            .find(|(p, _)| *p == path)
+                            .map(|(_, e)| e.clone());
+                        Entry {
+                            path,
+                            rel,
+                            method,
+                            error,
+                        }
                     })
                     .collect();
-                // Footer baseline: the project root, home-relative (never the
-                // absolute path). Replaced by a contract's location once opened.
-                self.status = display_location(&root);
-                self.root = Some(root);
+                self.status = display_location(&contracts_root);
             }
             Err(err) => {
-                self.status = apic_core::file::home_relative(&format!("No apic project: {err}"))
+                self.root = None;
+                self.entries.clear();
+                self.status = apic_core::file::home_relative(&format!("Project error: {err}"));
             }
         }
     }
 
     /// Loads entry `i` into the editable model.
+    /// Loads an invalid contract's raw text into the repair editor.
+    fn enter_repair(&mut self, i: usize) {
+        let Some(entry) = self.entries.get(i) else {
+            return;
+        };
+        let buffer = apic_core::file::read_file(&entry.path).unwrap_or_default();
+        let error = entry.error.clone().unwrap_or_default();
+        self.model = None;
+        self.selected = Some(i);
+        self.selected_template = None;
+        self.repair = Some(Repair {
+            index: i,
+            buffer,
+            error,
+        });
+    }
+
     fn load(&mut self, i: usize) {
         let Some(entry) = self.entries.get(i) else {
             return;
@@ -261,76 +349,131 @@ impl App {
         }
     }
 
-    /// Imports an external apic contract into the project: pick a `.json`,
-    /// validate it is a real contract, then copy it into the working dir.
-    ///
-    /// Safety: the destination is resolved with the symlink-aware
-    /// [`apic_core::file::confine_to_dir`] so it cannot escape the working dir,
-    /// the file is validated before anything is written, and an existing file is
-    /// never overwritten.
-    fn import_apic(&mut self) {
-        let Some(root) = self.root.clone() else {
+    /// `[ Open ]`: launch the folder picker; `finish_open` runs on the result.
+    fn open_project(&mut self, ctx: &egui::Context) {
+        self.spawn_folder_dialog(DialogKind::OpenProject, "Open apic project", ctx);
+    }
+
+    /// `[ New ]`: launch the folder picker; `finish_new` runs on the result.
+    fn new_project(&mut self, ctx: &egui::Context) {
+        self.spawn_folder_dialog(DialogKind::NewProject, "New apic project", ctx);
+    }
+
+    /// Verify a chosen folder, then open / auto-init / block.
+    fn finish_open(&mut self, folder: PathBuf) {
+        let has_apic = folder.join(".apic").join("config.toml").is_file();
+        if has_apic {
+            self.activate_project(folder);
+            return;
+        }
+
+        // No project: validate the folder's contracts before auto-initializing.
+        let failures = apic_core::validate_dir(&folder);
+        if failures.is_empty() {
+            match apic_core::config::Config::init_in(&folder, None) {
+                Ok(_) => self.activate_project(folder),
+                Err(e) => self.status = format!("init error: {e}"),
+            }
+        } else {
+            self.open_blocked = Some(failures);
+        }
+    }
+
+    /// Initialize a fresh project in `folder` (opening it if it already is one).
+    fn finish_new(&mut self, folder: PathBuf) {
+        match apic_core::config::Config::init_in(&folder, None) {
+            Ok(_) | Err(_) => self.activate_project(folder), // Err = already a project
+        }
+    }
+
+    /// Spawns a native dialog on a background thread (so the portal call never
+    /// freezes the UI) and records what to do with the result; polled by
+    /// [`App::poll_dialog`]. A second dialog cannot start while one is pending.
+    fn spawn_folder_dialog(&mut self, kind: DialogKind, title: &'static str, ctx: &egui::Context) {
+        if self.pending_dialog.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let picked =
+                pollster::block_on(rfd::AsyncFileDialog::new().set_title(title).pick_folder())
+                    .map(|h| h.path().to_path_buf());
+            let _ = tx.send(picked);
+            ctx.request_repaint();
+        });
+        self.pending_dialog = Some((kind, rx));
+        self.status = "Waiting for the file dialog…".into();
+    }
+
+    /// Polls the in-flight dialog and runs its action once a path is chosen (or
+    /// clears it on cancel). Called every frame from `update`.
+    fn poll_dialog(&mut self, ctx: &egui::Context) {
+        let Some((kind, rx)) = &self.pending_dialog else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(result) => {
+                let kind = *kind;
+                self.pending_dialog = None;
+                match (kind, result) {
+                    (DialogKind::OpenProject, Some(p)) => self.finish_open(p),
+                    (DialogKind::NewProject, Some(p)) => self.finish_new(p),
+                    (DialogKind::ImportPostman, Some(p)) => self.finish_import_postman(p),
+                    (_, None) => {} // cancelled
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.pending_dialog = None,
+        }
+    }
+
+    /// Makes `folder` the active project: reload, then persist as last project.
+    fn activate_project(&mut self, folder: PathBuf) {
+        self.project_root = Some(folder.clone());
+        self.model = None;
+        self.selected = None;
+        self.selected_template = None;
+        self.repair = None;
+        self.reload_project();
+        Settings {
+            last_project: Some(folder),
+        }
+        .save();
+    }
+
+    /// `[ Import ]` → Postman: launch the file picker (background thread).
+    fn import_postman(&mut self, ctx: &egui::Context) {
+        if self.root.is_none() {
             self.status = "no project to import into".into();
             return;
-        };
-        let Some(src) = rfd::FileDialog::new()
-            .add_filter("apic contract", &["json"])
-            .set_title("Import apic contract")
-            .pick_file()
-        else {
-            return; // user cancelled
-        };
-
-        let content = match apic_core::file::read_file(&src) {
-            Ok(c) => c,
-            Err(e) => {
-                self.status = format!("read error: {e}");
-                return;
-            }
-        };
-        if let Err(e) = apic_core::json::validate(&content) {
-            self.status = format!("not a valid contract: {e}");
+        }
+        if self.pending_dialog.is_some() {
             return;
         }
-
-        let Some(name) = src.file_name() else {
-            self.status = "source has no file name".into();
-            return;
-        };
-        // Confine the destination to the working dir (rejects symlink escapes).
-        let dest = match apic_core::file::confine_to_dir(&root, Path::new(name)) {
-            Ok(p) => p,
-            Err(e) => {
-                self.status = e;
-                return;
-            }
-        };
-        if dest.exists() {
-            self.status = format!("{} already exists; not overwriting", name.to_string_lossy());
-            return;
-        }
-        match std::fs::write(&dest, content) {
-            Ok(()) => {
-                self.reload_project();
-                self.status = format!("imported {}", name.to_string_lossy());
-            }
-            Err(e) => self.status = format!("write error: {e}"),
-        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let picked = pollster::block_on(
+                rfd::AsyncFileDialog::new()
+                    .add_filter("Postman collection", &["json"])
+                    .set_title("Import Postman collection")
+                    .pick_file(),
+            )
+            .map(|h| h.path().to_path_buf());
+            let _ = tx.send(picked);
+            ctx.request_repaint();
+        });
+        self.pending_dialog = Some((DialogKind::ImportPostman, rx));
+        self.status = "Waiting for the file dialog…".into();
     }
 
     /// Imports a Postman collection into the project via apic-core's converter,
     /// which writes contracts confined to the working dir and never overwrites.
-    fn import_postman(&mut self) {
+    fn finish_import_postman(&mut self, src: PathBuf) {
         let Some(root) = self.root.clone() else {
             self.status = "no project to import into".into();
             return;
-        };
-        let Some(src) = rfd::FileDialog::new()
-            .add_filter("Postman collection", &["json"])
-            .set_title("Import Postman collection")
-            .pick_file()
-        else {
-            return; // user cancelled
         };
         match apic_core::convert::run(&src, &root) {
             Ok(out) => {
@@ -581,6 +724,38 @@ impl App {
         }
     }
 
+    /// Modal shown when a picked non-project folder has invalid contracts: the
+    /// user must fix them before it can be opened/initialized.
+    fn open_blocked_dialog(&mut self, ctx: &egui::Context) {
+        let Some(failures) = self.open_blocked.clone() else {
+            return;
+        };
+        let mut close = false;
+        egui::Window::new("Fix these contracts first")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new("This folder is not an apic project and has invalid contracts. Fix them, then open it again.")
+                        .color(TEXT),
+                );
+                ui.add_space(6.0);
+                for (path, err) in &failures {
+                    ui.label(RichText::new(path.to_string_lossy()).color(RED).strong());
+                    ui.label(RichText::new(err).color(DIM).size(11.0));
+                    ui.add_space(4.0);
+                }
+                ui.add_space(4.0);
+                if ui.button(RichText::new("[ Close ]").color(GREEN)).clicked() {
+                    close = true;
+                }
+            });
+        if close {
+            self.open_blocked = None;
+        }
+    }
+
     /// Renders the delete-confirmation dialog when a delete is pending, and
     /// performs the deletion on confirm.
     fn delete_dialog(&mut self, ctx: &egui::Context) {
@@ -720,14 +895,28 @@ fn method_color(method: &str) -> Color32 {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_dialog(ctx);
         let top = self.top_bar(ctx);
         self.bottom_bar(ctx);
         let side = self.sidebar(ctx);
         match top.or(side) {
-            Some(SidebarAction::LoadContract(i)) => self.load(i),
+            Some(SidebarAction::LoadContract(i)) => {
+                let invalid = self
+                    .entries
+                    .get(i)
+                    .map(|e| e.error.is_some())
+                    .unwrap_or(false);
+                if invalid {
+                    self.enter_repair(i);
+                } else {
+                    self.repair = None;
+                    self.load(i);
+                }
+            }
             Some(SidebarAction::LoadTemplate(i)) => self.load_template(i),
-            Some(SidebarAction::ImportApic) => self.import_apic(),
-            Some(SidebarAction::ImportPostman) => self.import_postman(),
+            Some(SidebarAction::OpenProject) => self.open_project(ctx),
+            Some(SidebarAction::NewProject) => self.new_project(ctx),
+            Some(SidebarAction::ImportPostman) => self.import_postman(ctx),
             Some(SidebarAction::NewTemplate) => self.new_template = Some(String::new()),
             Some(SidebarAction::NewRequest(prefix)) => {
                 self.new_request = Some(prefix);
@@ -742,6 +931,7 @@ impl eframe::App for App {
         self.new_template_dialog(ctx);
         self.new_request_dialog(ctx);
         self.delete_dialog(ctx);
+        self.open_blocked_dialog(ctx);
     }
 }
 
@@ -759,11 +949,15 @@ impl App {
                     ui.set_min_height(row_h);
                     ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
                     ui.add_space(8.0);
+                    if ui.button(RichText::new("[ Open ]").color(GREEN)).clicked() {
+                        action = Some(SidebarAction::OpenProject);
+                    }
+                    ui.add_space(4.0);
+                    if ui.button(RichText::new("[ New ]").color(GREEN)).clicked() {
+                        action = Some(SidebarAction::NewProject);
+                    }
+                    ui.add_space(4.0);
                     ui.menu_button(RichText::new("[ Import ]").color(GREEN), |ui| {
-                        if ui.button("apic file").clicked() {
-                            action = Some(SidebarAction::ImportApic);
-                            ui.close();
-                        }
                         if ui.button("Postman collection").clicked() {
                             action = Some(SidebarAction::ImportPostman);
                             ui.close();
@@ -806,7 +1000,7 @@ impl App {
         let mut tree = TreeNode::default();
         for (i, e) in self.entries.iter().enumerate() {
             if q.is_empty() || e.rel.to_lowercase().contains(&q) {
-                tree.insert(&e.rel, i, &e.method);
+                tree.insert(&e.rel, i, &e.method, e.error.is_some());
             }
         }
         let selected = self.selected;
@@ -905,6 +1099,8 @@ impl App {
 
     /// The central viewer/editor for the loaded contract.
     fn central(&mut self, ctx: &egui::Context) {
+        let no_project = self.project_root.is_none();
+        let mut promote: Option<(PathBuf, String)> = None;
         let App {
             model,
             path,
@@ -912,9 +1108,60 @@ impl App {
             editing,
             resp_tab,
             row_height,
+            repair,
+            entries,
             ..
         } = self;
         egui::CentralPanel::default().show(ctx, |ui| {
+            if no_project {
+                ui.add_space(40.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new("No project open").color(DIM).size(16.0));
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(
+                            "Use [ Open ] to open a project folder, or [ New ] to create one.",
+                        )
+                        .color(DIM),
+                    );
+                });
+                return;
+            }
+            if let Some(rep) = repair.as_mut() {
+                ui.add_space(6.0);
+                if rep.error.is_empty() {
+                    ui.label(
+                        RichText::new("Valid — opening editor…")
+                            .color(GREEN)
+                            .strong(),
+                    );
+                } else {
+                    ui.label(RichText::new("INVALID CONTRACT").color(RED).strong());
+                    ui.label(RichText::new(&rep.error).color(AMBER).size(12.0));
+                }
+                ui.add_space(6.0);
+                let resp = ui.add_sized(
+                    [
+                        ui.available_width(),
+                        (ui.available_height() - 8.0).max(40.0),
+                    ],
+                    egui::TextEdit::multiline(&mut rep.buffer)
+                        .code_editor()
+                        .desired_width(f32::INFINITY),
+                );
+                if resp.changed() {
+                    rep.error = match apic_core::json::validate(&rep.buffer) {
+                        Ok(()) => String::new(),
+                        Err(e) => e.to_string(),
+                    };
+                    if rep.error.is_empty()
+                        && let Some(entry) = entries.get(rep.index)
+                    {
+                        promote = Some((entry.path.clone(), rep.buffer.clone()));
+                    }
+                }
+                return;
+            }
             let Some(model) = model.as_mut() else {
                 ui.add_space(40.0);
                 ui.vertical_centered(|ui| {
@@ -972,6 +1219,15 @@ impl App {
                     responses(ui, model, resp_tab, *editing);
                 });
         });
+        if let Some((path, buffer)) = promote
+            && std::fs::write(&path, &buffer).is_ok()
+        {
+            self.repair = None;
+            self.reload_project();
+            if let Some(i) = self.entries.iter().position(|e| e.path == path) {
+                self.load(i);
+            }
+        }
     }
 }
 
@@ -1517,18 +1773,20 @@ fn responses(ui: &mut egui::Ui, model: &mut EditModel, resp_tab: &mut usize, edi
 #[derive(Default)]
 struct TreeNode {
     dirs: BTreeMap<String, TreeNode>,
-    files: Vec<(String, usize, String)>, // (leaf label, entry index, method)
+    files: Vec<(String, usize, String, bool)>, // (leaf label, entry index, method, invalid)
 }
 
 impl TreeNode {
-    fn insert(&mut self, rel: &str, idx: usize, method: &str) {
+    fn insert(&mut self, rel: &str, idx: usize, method: &str, invalid: bool) {
         match rel.split_once('/') {
             Some((dir, rest)) => self
                 .dirs
                 .entry(dir.to_string())
                 .or_default()
-                .insert(rest, idx, method),
-            None => self.files.push((rel.to_string(), idx, method.to_string())),
+                .insert(rest, idx, method, invalid),
+            None => self
+                .files
+                .push((rel.to_string(), idx, method.to_string(), invalid)),
         }
     }
 
@@ -1576,13 +1834,17 @@ impl TreeNode {
                 })
                 .body(|ui| child.show(ui, &folder_path, selected, to_load, new_in, delete));
         }
-        for (label, idx, method) in &self.files {
+        for (label, idx, method, invalid) in &self.files {
             let rel = if prefix.is_empty() {
                 label.clone()
             } else {
                 format!("{prefix}/{label}")
             };
             ui.horizontal(|ui| {
+                if *invalid {
+                    ui.label(RichText::new("●").color(RED))
+                        .on_hover_text("Invalid contract — click to repair");
+                }
                 ui.label(RichText::new(method).color(method_color(method)).size(11.0));
                 if ui
                     .selectable_label(selected == Some(*idx), RichText::new(label).color(TEXT))

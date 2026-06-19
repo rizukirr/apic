@@ -87,35 +87,6 @@ pub(crate) fn find_file_by_ext_downward(start: PathBuf, extensions: &[&str]) -> 
     FindFileResult::NotFound
 }
 
-/// Recursively searches under `start` for entries matching any of `names`.
-///
-/// For each directory walked (files are skipped), each name is joined and
-/// checked for existence. Symlinks are not followed. Returns
-/// [`FindFileResult::NotFound`] if nothing matches.
-pub(crate) fn find_file_downward(start: PathBuf, names: &[PathBuf]) -> FindFileResult {
-    let mut files = Vec::new();
-
-    for entry in WalkDir::new(&start)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_dir())
-    {
-        for name in names {
-            let candidate = entry.path().join(name);
-            if candidate.exists() {
-                files.push(candidate);
-            }
-        }
-    }
-
-    if !files.is_empty() {
-        return FindFileResult::Found(files);
-    }
-
-    FindFileResult::NotFound
-}
-
 /// Walks upward from `start` toward the filesystem root looking for `names`.
 ///
 /// Each name resolves to its nearest occurrence: once a name is found it is
