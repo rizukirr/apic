@@ -106,4 +106,48 @@ jobs:
           target: ${{ matrix.target }}
           archive: apic-gui-$tag-${{ matrix.target }}
           checksum: sha256
+          # On Linux, bundle the launcher installer + icon into the archive so
+          # users can register the app menu entry (`./install-linux.sh`). These
+          # land at the archive root next to the binary, where the script looks.
+          include: ${{ runner.os == 'Linux' && 'apic-gui/dist/install-linux.sh apic-gui/dist/apic-gui.desktop apic-gui/assets/icon.png' || '' }}
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Wraps the macOS GUI binary into a double-clickable apic.app (with the icns
+  # icon) and uploads it as apic-gui-$tag-<target>.app.zip, alongside the plain
+  # binary archives from the job above. Unsigned: first launch needs right-click
+  # -> Open (or `xattr -dr com.apple.quarantine apic.app`).
+  bundle-macos-gui:
+    name: macos app ${{ matrix.target }}
+    needs: create-release
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build apic-gui
+        run: cargo build --release --bin apic-gui --manifest-path apic-gui/Cargo.toml --target ${{ matrix.target }}
+
+      - name: Assemble apic.app
+        run: bash apic-gui/dist/bundle-macos.sh "${{ matrix.target }}" "${GITHUB_REF_NAME#v}"
+
+      - name: Zip and upload to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          zip="apic-gui-${GITHUB_REF_NAME}-${{ matrix.target }}.app.zip"
+          ditto -c -k --sequesterRsrc --keepParent apic.app "$zip"
+          shasum -a 256 "$zip" > "$zip.sha256"
+          gh release upload "${GITHUB_REF_NAME}" "$zip" "$zip.sha256" --clobber

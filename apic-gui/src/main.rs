@@ -27,7 +27,15 @@ const RED: Color32 = Color32::from_rgb(255, 86, 86);
 const AMBER: Color32 = Color32::from_rgb(255, 196, 0);
 
 fn main() -> eframe::Result {
-    let options = eframe::NativeOptions::default();
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            // Stable app id => X11 WM_CLASS / Wayland app_id, which the Linux
+            // .desktop entry matches via StartupWMClass so the launcher shows
+            // the right name and icon for the running window.
+            .with_app_id("apic-gui")
+            .with_icon(load_icon()),
+        ..Default::default()
+    };
     eframe::run_native(
         "apic",
         options,
@@ -36,6 +44,12 @@ fn main() -> eframe::Result {
             Ok(Box::new(App::new()))
         }),
     )
+}
+
+/// The window / taskbar icon, decoded from the PNG bundled with the crate.
+fn load_icon() -> egui::IconData {
+    eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
+        .expect("bundled icon.png is a valid PNG")
 }
 
 /// Installs the dark, monospace, neon theme.
