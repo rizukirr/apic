@@ -204,7 +204,7 @@ impl App {
             self.root = None;
             self.templates.clear();
             self.entries.clear();
-            self.status = "No project open. Use [ OPEN ] or [ New ].".into();
+            self.status = "No project open. Use [ Open ] or [ New ].".into();
             return;
         };
 
@@ -879,7 +879,7 @@ impl App {
                     ui.set_min_height(row_h);
                     ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
                     ui.add_space(8.0);
-                    if ui.button(RichText::new("[ OPEN ]").color(GREEN)).clicked() {
+                    if ui.button(RichText::new("[ Open ]").color(GREEN)).clicked() {
                         action = Some(SidebarAction::OpenProject);
                     }
                     ui.add_space(4.0);
@@ -1050,7 +1050,7 @@ impl App {
                     ui.add_space(6.0);
                     ui.label(
                         RichText::new(
-                            "Use [ OPEN ] to open a project folder, or [ New ] to create one.",
+                            "Use [ Open ] to open a project folder, or [ New ] to create one.",
                         )
                         .color(DIM),
                     );
