@@ -15,6 +15,8 @@ use egui::{Color32, RichText, Stroke};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod settings;
+
 // Terminal/cyberpunk palette.
 const BG: Color32 = Color32::from_rgb(8, 12, 10);
 const PANEL_BG: Color32 = Color32::from_rgb(12, 17, 14);
