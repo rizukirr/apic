@@ -8,7 +8,7 @@ CLI, TUI, and desktop GUI, all over one shared core (`apic-core`), so every inte
 
 > ## ROADMAP
 > - Distribution
->   - Aur
+>   - ~Aur~
 >   - Copr
 >   - Launchpad
 >   - Flatpak
