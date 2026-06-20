@@ -1182,7 +1182,12 @@ mod tests {
             s.focused_field_pub(),
             Some(Field::ResponseCode(1))
         ));
-        // typing sets the new code
+        // the new response is prefilled with the default code 200
+        assert_eq!(m.responses[1].code, "200");
+        // the prefill is editable: clear it, then type a new code
+        handle_insert(&mut s, &mut m, key(KeyCode::Backspace));
+        handle_insert(&mut s, &mut m, key(KeyCode::Backspace));
+        handle_insert(&mut s, &mut m, key(KeyCode::Backspace));
         handle_insert(&mut s, &mut m, key(KeyCode::Char('4')));
         handle_insert(&mut s, &mut m, key(KeyCode::Char('2')));
         handle_insert(&mut s, &mut m, key(KeyCode::Char('9')));
