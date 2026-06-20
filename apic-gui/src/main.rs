@@ -1004,10 +1004,7 @@ impl App {
                 ui.set_min_height(row_h);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.set_min_height(row_h);
-                    ui.add_space(SPACE_MEDIUM); // left padding so the title isn't flush to the edge
-                    ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
-                    ui.add_space(SPACE_MEDIUM);
-                    let toggle_glyph = if self.sidebar_open { "[ ‹ ]" } else { "[ › ]" };
+                    let toggle_glyph = if self.sidebar_open { "☰" } else { "◧" };
                     if ui
                         .button(RichText::new(toggle_glyph).color(GREEN))
                         .on_hover_text("Toggle sidebar")
@@ -1015,7 +1012,9 @@ impl App {
                     {
                         action = Some(SidebarAction::ToggleSidebar);
                     }
-                    ui.add_space(SPACE_EXTRA_SMALL);
+                    ui.add_space(SPACE_MEDIUM); // left padding so the title isn't flush to the edge
+                    ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
+                    ui.add_space(SPACE_MEDIUM);
                     if ui.button(RichText::new("[ Open ]").color(GREEN)).clicked() {
                         action = Some(SidebarAction::OpenProject);
                     }
@@ -1031,13 +1030,16 @@ impl App {
                         }
                     });
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.set_min_height(row_h);
-                    ui.add_space(SPACE_MEDIUM);
-                    bordered_input(ui, &mut self.search, 200.0, "SEARCH...");
-                    ui.add_space(SPACE_EXTRA_SMALL);
-                    ui.label(RichText::new("🔍").color(DIM));
-                });
+
+                if self.sidebar_open {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.set_min_height(row_h);
+                        ui.add_space(SPACE_MEDIUM);
+                        bordered_input(ui, &mut self.search, 200.0, "SEARCH...");
+                        ui.add_space(SPACE_EXTRA_SMALL);
+                        ui.label(RichText::new("🔍").color(DIM));
+                    });
+                }
             });
             ui.add_space(SPACE_EXTRA_SMALL);
         });
