@@ -361,14 +361,13 @@ impl EditModel {
         // responses (always present, possibly empty)
         let mut responses = Vec::new();
         for (i, r) in self.responses.iter().enumerate() {
-            let code: u16 =
-                r.code.trim().parse().map_err(|_| {
-                    format!(
-                        "response #{}: status code '{}' is not a number (e.g. 200)",
-                        i + 1,
-                        r.code
-                    )
-                })?;
+            let code: u16 = r.code.trim().parse().map_err(|_| {
+                format!(
+                    "response #{}: status code '{}' is not a number (e.g. 200)",
+                    i + 1,
+                    r.code
+                )
+            })?;
             let mut m = serde_json::Map::new();
             m.insert("code".into(), Value::Number(code.into()));
             m.insert("description".into(), Value::String(r.description.clone()));
