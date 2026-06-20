@@ -131,6 +131,8 @@ enum SidebarAction {
     NewRequest(String),
     /// Ask to delete something; shows a confirmation before anything is removed.
     RequestDelete(DeleteTarget),
+    /// Toggle the left contracts sidebar between fully hidden and shown.
+    ToggleSidebar,
 }
 
 /// A thing the user asked to delete (pending confirmation).
@@ -183,6 +185,9 @@ struct App {
     /// In-flight native file dialog, run on a background thread so the portal
     /// call never blocks the UI, plus the action to perform on its result.
     pending_dialog: Option<(DialogKind, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
+    /// Whether the left contracts sidebar is shown. Toggled from the top bar;
+    /// not persisted, so it always starts `true` on launch.
+    sidebar_open: bool,
 }
 
 /// Which action consumes the path chosen by an in-flight file dialog.
@@ -217,6 +222,7 @@ impl App {
             new_request_seed: 0,
             pending_delete: None,
             pending_dialog: None,
+            sidebar_open: true,
         };
         let settings = Settings::load();
         if let Some(root) = settings.last_project
@@ -947,6 +953,9 @@ impl eframe::App for App {
             }
             Some(SidebarAction::RequestDelete(target)) => {
                 self.pending_delete = Some(target);
+            }
+            Some(SidebarAction::ToggleSidebar) => {
+                self.sidebar_open = !self.sidebar_open;
             }
             None => {}
         }
