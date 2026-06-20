@@ -1598,6 +1598,9 @@ fn schema_fields(ui: &mut egui::Ui, fields: &[apic_core::edit::EditSchema], dept
             } else {
                 ui.label(RichText::new("[OPTIONAL]").color(DIM).size(10.0));
             }
+            if !f.description.is_empty() {
+                ui.label(RichText::new(&f.description).color(DIM).size(11.0));
+            }
         });
         if !f.properties.is_empty() {
             schema_fields(ui, &f.properties, depth + 1);
@@ -1654,6 +1657,7 @@ fn edit_schema_fields(
                     }
                 });
             ui.checkbox(&mut f.required, RichText::new("req").color(DIM));
+            bordered_input(ui, &mut f.description, 160.0, "description");
             if ui.button(RichText::new("x").color(RED)).clicked() {
                 actions.push(EditAction::Delete {
                     field: Field::SchemaName(loc.clone(), path.clone()),
