@@ -1030,16 +1030,6 @@ impl App {
                         }
                     });
                 });
-
-                if self.sidebar_open {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.set_min_height(row_h);
-                        ui.add_space(SPACE_MEDIUM);
-                        bordered_input(ui, &mut self.search, 200.0, "SEARCH...");
-                        ui.add_space(SPACE_EXTRA_SMALL);
-                        ui.label(RichText::new("🔍").color(DIM));
-                    });
-                }
             });
             ui.add_space(SPACE_EXTRA_SMALL);
         });
@@ -1148,6 +1138,11 @@ impl App {
                 ui.add_space(10.0);
                 ui.label(RichText::new("CONTRACTS").color(DIM).size(11.0));
                 ui.separator();
+                if self.sidebar_open {
+                    bordered_input(ui, &mut self.search, f32::INFINITY, "SEARCH...");
+                    ui.add_space(SPACE_EXTRA_SMALL);
+                }
+
                 let mut new_in = None;
                 let mut delete = None;
                 egui::ScrollArea::vertical()
