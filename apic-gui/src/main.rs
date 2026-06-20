@@ -47,8 +47,10 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             // Stable app id => X11 WM_CLASS / Wayland app_id, which the Linux
             // .desktop entry matches via StartupWMClass so the launcher shows
-            // the right name and icon for the running window.
-            .with_app_id("apic-gui")
+            // the right name and icon for the running window. Inside a flatpak
+            // the runtime sets FLATPAK_ID (io.github.rizukirr.apic); matching it
+            // lets the compositor associate the window with the installed entry.
+            .with_app_id(std::env::var("FLATPAK_ID").unwrap_or_else(|_| "apic-gui".to_string()))
             .with_icon(load_icon()),
         ..Default::default()
     };
