@@ -3,23 +3,37 @@
 Source-build Flatpak of the `apic-gui` desktop app for
 [Flathub](https://flathub.org/).
 
-> The manifest targets the **`v0.3.2`** git tag — the first release that contains
-> the `FLATPAK_ID` window-app-id fix. Cut that release before submitting to
-> Flathub. To test before it exists, build the working tree (below).
+- **App id:** `io.github.rizukirr.apic`
+- **Manifest:** `io.github.rizukirr.apic.yml` (builds the `v0.3.2` tag; `apic-gui`
+  picks up `FLATPAK_ID` as its window id, added in `0.3.2`)
+- **Status:** submitted to Flathub — https://github.com/flathub/flathub/pull/9041
+  (Flathub builds + reviews; merge = published)
 
-## Regenerate the vendored crate sources (after a dependency bump)
+> Flathub is **not** self-service like AUR/COPR. Publishing = opening a PR to
+> `flathub/flathub` against the **`new-pr`** branch; their bot builds it and a
+> reviewer approves. Updates after that are pushed to the app's own
+> `flathub/io.github.rizukirr.apic` repo.
+
+## 1. Prerequisites (Arch / CachyOS)
 
 ```bash
-python -m venv /tmp/fcg && /tmp/fcg/bin/pip install aiohttp toml
-curl -sSL -o /tmp/fcg-gen.py \
-  https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
-/tmp/fcg/bin/python /tmp/fcg-gen.py Cargo.lock -o packaging/flatpak/cargo-sources.json
+sudo pacman -S --needed flatpak flatpak-builder
+# the user-level installation needs the flathub remote (the build uses --user):
+flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
 ```
 
-## Build & run locally (working tree, before v0.3.2 exists)
+## 2. Build & test locally
 
-Copy the manifest to `io.github.rizukirr.apic.local.yml` (gitignored) and replace
-its `sources:` block so it builds the local checkout instead of the git tag:
+Flathub builds the `v0.3.2` git tag. To test the *current working tree* instead,
+make a throwaway local manifest (gitignored via `*.local.yml`) whose `sources:`
+block builds the local checkout:
+
+```bash
+cd packaging/flatpak
+cp io.github.rizukirr.apic.yml io.github.rizukirr.apic.local.yml
+```
+
+Then edit `io.github.rizukirr.apic.local.yml` so the `sources:` block reads:
 
 ```yaml
     sources:
@@ -31,17 +45,60 @@ its `sources:` block so it builds the local checkout instead of the git tag:
       - cargo-sources.json
 ```
 
-Then:
+Build, install, and run it (first run downloads the ~1.5 GB SDK and compiles
+eframe in the sandbox — slow):
 
 ```bash
-cd packaging/flatpak
 flatpak-builder --user --install --force-clean --install-deps-from=flathub \
-  build-dir io.github.rizukirr.apic.local.yml
+  --state-dir=/tmp/apic-fp/state /tmp/apic-fp/build \
+  io.github.rizukirr.apic.local.yml
 flatpak run io.github.rizukirr.apic
 ```
 
-## Submit to Flathub
+## 3. Regenerate the vendored crate sources (after a dependency bump)
 
-After `v0.3.2` exists, fork `flathub/flathub`, add a branch named
-`io.github.rizukirr.apic` containing the manifest + `cargo-sources.json` +
-metainfo + desktop, and open a PR. Flathub CI builds and a reviewer approves.
+`cargo-sources.json` vendors every crate so the sandboxed build can run offline.
+Regenerate it whenever `Cargo.lock` changes:
+
+```bash
+python -m venv /tmp/fcg && /tmp/fcg/bin/pip install tomlkit aiohttp
+curl -sSL -o /tmp/fcg-gen.py \
+  https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+/tmp/fcg/bin/python /tmp/fcg-gen.py Cargo.lock -o packaging/flatpak/cargo-sources.json
+```
+
+## 4. Submit to Flathub (first time)
+
+```bash
+# fork + clone flathub/flathub
+gh repo fork flathub/flathub --clone=true --default-branch-only
+cd flathub
+
+# branch named exactly the app id, based on the empty new-pr branch
+git checkout -b io.github.rizukirr.apic upstream/new-pr
+
+# add ONLY the manifest + vendored sources at the repo root
+cp ~/Projects/apic/packaging/flatpak/io.github.rizukirr.apic.yml .
+cp ~/Projects/apic/packaging/flatpak/cargo-sources.json .
+# (recommended) pin the git source to a commit, not just the tag:
+#   under sources: -> type: git, add   commit: <sha of the vX.Y.Z tag>
+
+git add io.github.rizukirr.apic.yml cargo-sources.json
+git commit -m "Add io.github.rizukirr.apic"
+git push -u origin io.github.rizukirr.apic
+
+# PR against the new-pr branch (NOT master)
+gh pr create --repo flathub/flathub --base new-pr \
+  --head <you>:io.github.rizukirr.apic --title "Add io.github.rizukirr.apic"
+```
+
+Then watch the PR: the Flathub bot builds it and comments; respond to any
+reviewer requests by pushing to the same branch on your fork.
+
+## 5. Update after a new release (once published)
+
+Once merged, the app lives at `flathub/io.github.rizukirr.apic`. To ship a new
+version: clone that repo, bump the `tag:`/`commit:` in the manifest, regenerate
+`cargo-sources.json` (step 3) if dependencies changed, commit, and push — Flathub
+rebuilds automatically. (Or set up `flatpak-external-data-checker` to open those
+update PRs for you.)
