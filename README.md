@@ -6,6 +6,16 @@ CLI, TUI, and desktop GUI, all over one shared core (`apic-core`), so every inte
 
 <img width="1260" height="796" alt="2026-06-19-132307_hyprshot" src="https://github.com/user-attachments/assets/9b0d474c-7ac5-4f90-ae16-6ca0d55c5337" />
 
+> ## ROADMAP
+> - Distribution
+>   - Aur
+>   - Copr
+>   - Launchpad
+>   - Flatpak
+>   - Winget
+>   - Homebrew
+> - Git GUI
+
 ## Why?
 
 Mainstream API tooling gates collaboration behind paywalls, charging per team member just to share a workspace. Because `apic` contracts are plain JSON in your repo, **your existing Git workflow *is* the collaboration layer**:
