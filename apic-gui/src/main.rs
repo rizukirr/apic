@@ -1324,7 +1324,7 @@ impl App {
 /// Pass `f32::INFINITY` for `width` to fill the available space, or a fixed
 /// width. Returns the inner `Response` so callers can react to edits.
 fn bordered_input(ui: &mut egui::Ui, buf: &mut String, width: f32, hint: &str) -> egui::Response {
-    bordered_input_colored(ui, buf, width, hint, TEXT)
+    bordered_input_colored(ui, buf, width, hint, false)
 }
 
 /// `bordered_input` with an explicit text color (e.g. red to flag an invalid
@@ -1334,10 +1334,10 @@ fn bordered_input_colored(
     buf: &mut String,
     width: f32,
     hint: &str,
-    color: Color32,
+    error: bool,
 ) -> egui::Response {
     egui::Frame::new()
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0, if error { RED } else { BORDER }))
         .inner_margin(egui::Margin::symmetric(8, 4))
         .show(ui, |ui| {
             let fill = !width.is_finite();
@@ -1348,7 +1348,7 @@ fn bordered_input_colored(
                 egui::TextEdit::singleline(buf)
                     .frame(false)
                     .hint_text(hint)
-                    .text_color(color)
+                    .text_color(if error { RED } else { TEXT })
                     .desired_width(if fill { f32::INFINITY } else { width }),
             )
         })
@@ -1834,14 +1834,13 @@ fn responses(ui: &mut egui::Ui, model: &mut EditModel, resp_tab: &mut usize, edi
         let r = &mut model.responses[idx];
         if editing {
             ui.horizontal(|ui| {
-                // Empty / non-numeric code blocks the save; render it red with a
-                // hint so the user sees what to fix without reading the footer.
                 let code_ok = r.code.trim().parse::<u16>().is_ok();
-                ui.label(RichText::new("code").color(if code_ok { DIM } else { RED }));
-                bordered_input_colored(ui, &mut r.code, 60.0, "", if code_ok { TEXT } else { RED });
-                if !code_ok {
-                    ui.label(RichText::new("required, e.g. 200").color(RED).size(10.0));
-                }
+                let box_h = ui.text_style_height(&egui::TextStyle::Body) + 10.0;
+                ui.add_sized(
+                    [34.0, box_h],
+                    egui::Label::new(RichText::new("code").color(if code_ok { DIM } else { RED })),
+                );
+                bordered_input_colored(ui, &mut r.code, 60.0, "", !code_ok);
                 ui.label(RichText::new("desc").color(DIM));
                 bordered_input(ui, &mut r.description, f32::INFINITY, "description");
             });
