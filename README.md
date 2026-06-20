@@ -9,10 +9,10 @@ CLI, TUI, and desktop GUI, all over one shared core (`apic-core`), so every inte
 > ## ROADMAP
 > - Distribution
 >   - ~Aur~
->   - Copr
+>   - ~Copr~
 >   - Launchpad
 >   - Flatpak
->   - Winget
+>   - ~Winget~
 >   - Homebrew
 > - Git GUI
 
@@ -29,6 +29,12 @@ Mainstream API tooling gates collaboration behind paywalls, charging per team me
 
 `apic` ships as two binaries that share one core: `apic` (the CLI/TUI) and
 `apic-gui` (the desktop app). Install either or both.
+
+### Package managers
+
+- **Arch / CachyOS (AUR):** `yay -S apic-bin` (or `paru -S apic-bin`) — ships both binaries.
+- **Fedora (COPR):** `sudo dnf copr enable rizukirr/apic && sudo dnf install apic-cli apic-gui`.
+- **Windows (winget):** `winget install rizukirr.apic` (CLI) · `winget install rizukirr.apic-gui` (GUI).
 
 ### CLI / TUI (`apic`)
 
