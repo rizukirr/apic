@@ -1,0 +1,5 @@
+# flatpak-builder artifacts
+.flatpak-builder/
+build-dir/
+*.local.yml
+flatpak-cargo-generator.py

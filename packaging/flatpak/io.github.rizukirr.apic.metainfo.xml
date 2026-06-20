@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.rizukirr.apic</id>
+  <name>apic</name>
+  <summary>Design and review API contracts as plain JSON</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.rizukirr">
+    <name>Rizki Rakasiwi</name>
+  </developer>
+  <description>
+    <p>
+      apic stores your API contracts as plain JSON in your repository, so they
+      are diffable, reviewable, and versioned like the rest of your code.
+    </p>
+    <p>
+      The desktop app opens a project folder and lets you browse, read, edit,
+      and repair contracts with a graphical interface, sharing the same engine
+      as the apic CLI and TUI.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.rizukirr.apic.desktop</launchable>
+  <url type="homepage">https://github.com/rizukirr/apic</url>
+  <url type="bugtracker">https://github.com/rizukirr/apic/issues</url>
+  <url type="vcs-browser">https://github.com/rizukirr/apic</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Browsing and editing API contracts</caption>
+      <image>https://github.com/user-attachments/assets/9b0d474c-7ac5-4f90-ae16-6ca0d55c5337</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.3.2" date="2026-06-19"/>
+  </releases>
+</component>
