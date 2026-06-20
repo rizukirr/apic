@@ -982,6 +982,15 @@ impl App {
                     ui.add_space(SPACE_MEDIUM); // left padding so the title isn't flush to the edge
                     ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
                     ui.add_space(SPACE_MEDIUM);
+                    let toggle_glyph = if self.sidebar_open { "[ ‹ ]" } else { "[ › ]" };
+                    if ui
+                        .button(RichText::new(toggle_glyph).color(GREEN))
+                        .on_hover_text("Toggle sidebar")
+                        .clicked()
+                    {
+                        action = Some(SidebarAction::ToggleSidebar);
+                    }
+                    ui.add_space(SPACE_EXTRA_SMALL);
                     if ui.button(RichText::new("[ Open ]").color(GREEN)).clicked() {
                         action = Some(SidebarAction::OpenProject);
                     }
