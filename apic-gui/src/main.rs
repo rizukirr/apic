@@ -30,6 +30,12 @@ const TEXT: Color32 = Color32::from_rgb(190, 225, 205);
 const RED: Color32 = Color32::from_rgb(255, 86, 86);
 const AMBER: Color32 = Color32::from_rgb(255, 196, 0);
 
+// Space Convention.
+const SPACE_MEDIUM: f32 = 8.0;
+const SPACE_SMALL: f32 = 6.0;
+const SPACE_EXTRA_SMALL: f32 = 4.0;
+const SPACE_LARGE: f32 = 16.0;
+
 fn main() -> eframe::Result {
     if std::env::args().skip(1).any(|a| a == "--desktop-entry") {
         match desktop::install_desktop_entry() {
@@ -340,9 +346,11 @@ impl App {
         }
     }
 
-    /// Previews template `i` by resolving it against the built-in default into a
-    /// full contract. Read-only: `path` is cleared so Save cannot overwrite the
-    /// partial template file with a full contract.
+    /// Loads template `i` into the editor, resolved against the built-in default
+    /// into a full contract. Editable and savable like any contract: `path` keeps
+    /// the template file so Save writes the edited contract straight back to it.
+    /// (Saving a resolved template makes it a full template, every field it then
+    /// contains is enforced when creating contracts from it.)
     fn load_template(&mut self, i: usize) {
         let Some((name, path)) = self.templates.get(i).cloned() else {
             return;
@@ -352,13 +360,13 @@ impl App {
         {
             Ok(contract) => {
                 self.model = Some(EditModel::from_contract(contract));
-                self.path = None;
+                self.path = Some(path);
                 self.selected = None;
                 self.selected_template = Some(i);
                 self.resp_tab = 0;
                 self.editing = false;
                 self.row_height = 0.0;
-                self.status = format!("template '{name}' (preview, read-only)");
+                self.status = format!("template '{name}'");
             }
             Err(err) => self.status = format!("template error: {err}"),
         }
@@ -561,12 +569,12 @@ impl App {
                             .size(16.0),
                     );
                 });
-                ui.add_space(6.0);
+                ui.add_space(SPACE_SMALL);
                 ui.label(RichText::new("template name").color(DIM));
-                ui.add_space(8.0);
+                ui.add_space(SPACE_MEDIUM);
                 let buf = self.new_template.as_mut().expect("dialog open");
                 bordered_input(ui, buf, f32::INFINITY, "");
-                ui.add_space(12.0);
+                ui.add_space(SPACE_LARGE);
                 ui.columns(2, |cols| {
                     cols[0].vertical_centered(|ui| {
                         if ui.button(RichText::new("Create").color(GREEN)).clicked() {
@@ -672,12 +680,12 @@ impl App {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("NEW REQUEST").color(GREEN).strong().size(16.0));
                 });
-                ui.add_space(6.0);
+                ui.add_space(SPACE_SMALL);
                 ui.label(RichText::new("path under the contracts directory").color(DIM));
-                ui.add_space(8.0);
+                ui.add_space(SPACE_MEDIUM);
                 let buf = self.new_request.as_mut().expect("dialog open");
                 bordered_input(ui, buf, f32::INFINITY, "");
-                ui.add_space(4.0);
+                ui.add_space(SPACE_EXTRA_SMALL);
                 ui.label(
                     RichText::new("end with .json for a contract (auth/logout.json); a bare name makes a folder")
                         .color(DIM)
@@ -694,7 +702,7 @@ impl App {
                         .get(self.new_request_seed)
                         .cloned()
                         .unwrap_or_default();
-                    ui.add_space(8.0);
+                    ui.add_space(SPACE_MEDIUM);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("template").color(DIM));
                         egui::ComboBox::from_id_salt("new_request_template")
@@ -707,7 +715,7 @@ impl App {
                     });
                 }
 
-                ui.add_space(12.0);
+                ui.add_space(SPACE_LARGE);
                 ui.columns(2, |cols| {
                     cols[0].vertical_centered(|ui| {
                         if ui.button(RichText::new("Create").color(GREEN)).clicked() {
@@ -755,13 +763,13 @@ impl App {
                     RichText::new("This folder is not an apic project and has invalid contracts. Fix them, then open it again.")
                         .color(TEXT),
                 );
-                ui.add_space(6.0);
+                ui.add_space(SPACE_SMALL);
                 for (path, err) in &failures {
                     ui.label(RichText::new(path.to_string_lossy()).color(RED).strong());
                     ui.label(RichText::new(err).color(DIM).size(11.0));
-                    ui.add_space(4.0);
+                    ui.add_space(SPACE_EXTRA_SMALL);
                 }
-                ui.add_space(4.0);
+                ui.add_space(SPACE_EXTRA_SMALL);
                 if ui.button(RichText::new("[ Close ]").color(GREEN)).clicked() {
                     close = true;
                 }
@@ -794,18 +802,18 @@ impl App {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("DELETE").color(RED).strong().size(16.0));
                 });
-                ui.add_space(8.0);
+                ui.add_space(SPACE_MEDIUM);
                 ui.label(RichText::new(format!("Delete {what}")).color(DIM));
                 ui.label(RichText::new(&name).color(TEXT).strong());
                 if folder_warn {
-                    ui.add_space(4.0);
+                    ui.add_space(SPACE_EXTRA_SMALL);
                     ui.label(
                         RichText::new("this also deletes every contract inside it")
                             .color(RED)
                             .size(10.0),
                     );
                 }
-                ui.add_space(12.0);
+                ui.add_space(SPACE_LARGE);
                 ui.columns(2, |cols| {
                     cols[0].vertical_centered(|ui| {
                         if ui.button(RichText::new("Delete").color(RED)).clicked() {
@@ -956,22 +964,23 @@ impl App {
     fn top_bar(&mut self, ctx: &egui::Context) -> Option<SidebarAction> {
         let mut action = None;
         egui::TopBottomPanel::top("nav").show(ctx, |ui| {
-            ui.add_space(4.0);
+            ui.add_space(SPACE_EXTRA_SMALL);
             ui.horizontal(|ui| {
                 let row_h = 26.0;
                 ui.set_min_height(row_h);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.set_min_height(row_h);
+                    ui.add_space(SPACE_MEDIUM); // left padding so the title isn't flush to the edge
                     ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
-                    ui.add_space(8.0);
+                    ui.add_space(SPACE_MEDIUM);
                     if ui.button(RichText::new("[ Open ]").color(GREEN)).clicked() {
                         action = Some(SidebarAction::OpenProject);
                     }
-                    ui.add_space(4.0);
+                    ui.add_space(SPACE_EXTRA_SMALL);
                     if ui.button(RichText::new("[ New ]").color(GREEN)).clicked() {
                         action = Some(SidebarAction::NewProject);
                     }
-                    ui.add_space(4.0);
+                    ui.add_space(SPACE_EXTRA_SMALL);
                     ui.menu_button(RichText::new("[ Import ]").color(GREEN), |ui| {
                         if ui.button("Postman collection").clicked() {
                             action = Some(SidebarAction::ImportPostman);
@@ -981,13 +990,13 @@ impl App {
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.set_min_height(row_h);
-                    ui.add_space(8.0);
+                    ui.add_space(SPACE_MEDIUM);
                     bordered_input(ui, &mut self.search, 200.0, "SEARCH...");
-                    ui.add_space(6.0);
+                    ui.add_space(SPACE_EXTRA_SMALL);
                     ui.label(RichText::new("🔍").color(DIM));
                 });
             });
-            ui.add_space(4.0);
+            ui.add_space(SPACE_EXTRA_SMALL);
         });
         action
     }
@@ -1031,20 +1040,20 @@ impl App {
                 egui::TopBottomPanel::bottom("new_request_bar")
                     .show_separator_line(false)
                     .show_inside(ui, |ui| {
-                        ui.add_space(4.0);
+                        ui.add_space(SPACE_EXTRA_SMALL);
                         let button = egui::Button::new(RichText::new("[ NEW REQUEST ]").color(BG))
                             .fill(GREEN);
                         if ui.add_sized([ui.available_width(), 26.0], button).clicked() {
                             action = Some(SidebarAction::NewRequest(String::new()));
                         }
-                        ui.add_space(4.0);
+                        ui.add_space(SPACE_EXTRA_SMALL);
                     });
 
-                ui.add_space(6.0);
+                ui.add_space(SPACE_MEDIUM);
                 ui.label(RichText::new("EXPLORER").color(GREEN).strong().size(16.0));
 
                 // TEMPLATES section (on top), with a `+` to add a new template.
-                ui.add_space(8.0);
+                ui.add_space(SPACE_MEDIUM);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("TEMPLATES").color(DIM).size(11.0));
                     if ui
@@ -1132,7 +1141,7 @@ impl App {
                 ui.add_space(40.0);
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("No project open").color(DIM).size(16.0));
-                    ui.add_space(6.0);
+                    ui.add_space(SPACE_SMALL);
                     ui.label(
                         RichText::new(
                             "Use [ Open ] to open a project folder, or [ New ] to create one.",
@@ -1143,7 +1152,7 @@ impl App {
                 return;
             }
             if let Some(rep) = repair.as_mut() {
-                ui.add_space(6.0);
+                ui.add_space(SPACE_SMALL);
                 if rep.error.is_empty() {
                     ui.label(
                         RichText::new("Valid — opening editor…")
@@ -1154,7 +1163,7 @@ impl App {
                     ui.label(RichText::new("INVALID CONTRACT").color(RED).strong());
                     ui.label(RichText::new(&rep.error).color(AMBER).size(12.0));
                 }
-                ui.add_space(6.0);
+                ui.add_space(SPACE_SMALL);
                 let resp = ui.add_sized(
                     [
                         ui.available_width(),
@@ -1192,7 +1201,11 @@ impl App {
                     if ui.button(RichText::new("[ SAVE ]").color(GREEN)).clicked() {
                         match path.as_deref() {
                             Some(p) => match model.save(p) {
-                                Ok(()) => *status = format!("saved {}", p.display()),
+                                Ok(()) => {
+                                    *status = format!("saved {}", p.display());
+                                    *editing = false; // back to read-only on success
+                                    *row_height = 0.0; // recompute equal-height row
+                                }
                                 Err(e) => *status = format!("save error: {e}"),
                             },
                             None => *status = "no path to save to".into(),
@@ -1205,17 +1218,15 @@ impl App {
                     }
                 });
             });
-            ui.add_space(6.0);
+            ui.add_space(SPACE_SMALL);
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     endpoint_info(ui, model, *editing);
-                    ui.add_space(8.0);
-                    // PARAMETERS and HEADERS sit side by side and must share a
-                    // height. egui can't know the taller column until it's drawn,
-                    // so force both to the previous frame's max and feed the new
-                    // max forward (reset on load / edit-toggle so it can shrink).
+                    ui.add_space(SPACE_MEDIUM);
+                    let saved_x = ui.spacing().item_spacing.x;
+                    ui.spacing_mut().item_spacing.x = 1.0;
                     let target = *row_height;
                     let mut measured = 0.0_f32;
                     ui.columns(2, |cols| {
@@ -1228,9 +1239,10 @@ impl App {
                         measured = h0.max(h1);
                     });
                     *row_height = measured;
-                    ui.add_space(8.0);
+                    ui.spacing_mut().item_spacing.x = saved_x;
+                    ui.add_space(SPACE_MEDIUM);
                     request_body(ui, model, *editing);
-                    ui.add_space(8.0);
+                    ui.add_space(SPACE_MEDIUM);
                     responses(ui, model, resp_tab, *editing);
                 });
         });
@@ -1246,31 +1258,40 @@ impl App {
     }
 }
 
-/// A single-line text field with a border and consistent 8/4 padding, shared by
-/// the popups and the header search box. Pass `f32::INFINITY` for `width` to
-/// fill the available space, or a fixed width.
-fn bordered_input(ui: &mut egui::Ui, buf: &mut String, width: f32, hint: &str) {
+/// A single-line text field with a border and consistent 8/4 padding, the shared
+/// input style used everywhere (header search, popups, and every edit field).
+/// Pass `f32::INFINITY` for `width` to fill the available space, or a fixed
+/// width. Returns the inner `Response` so callers can react to edits.
+fn bordered_input(ui: &mut egui::Ui, buf: &mut String, width: f32, hint: &str) -> egui::Response {
+    bordered_input_colored(ui, buf, width, hint, TEXT)
+}
+
+/// `bordered_input` with an explicit text color (e.g. red to flag an invalid
+/// value). See [`bordered_input`] for the width contract.
+fn bordered_input_colored(
+    ui: &mut egui::Ui,
+    buf: &mut String,
+    width: f32,
+    hint: &str,
+    color: Color32,
+) -> egui::Response {
     egui::Frame::new()
         .stroke(Stroke::new(1.0, BORDER))
         .inner_margin(egui::Margin::symmetric(8, 4))
         .show(ui, |ui| {
-            if width.is_finite() {
-                ui.add(
-                    egui::TextEdit::singleline(buf)
-                        .frame(false)
-                        .hint_text(hint)
-                        .desired_width(width),
-                );
-            } else {
+            let fill = !width.is_finite();
+            if fill {
                 ui.set_min_width(ui.available_width());
-                ui.add(
-                    egui::TextEdit::singleline(buf)
-                        .frame(false)
-                        .hint_text(hint)
-                        .desired_width(f32::INFINITY),
-                );
             }
-        });
+            ui.add(
+                egui::TextEdit::singleline(buf)
+                    .frame(false)
+                    .hint_text(hint)
+                    .text_color(color)
+                    .desired_width(if fill { f32::INFINITY } else { width }),
+            )
+        })
+        .inner
 }
 
 /// A labeled bordered panel, the `┌─ TITLE ─┐` box from the mockup. Pass
@@ -1282,14 +1303,14 @@ fn panel(ui: &mut egui::Ui, title: &str, min_height: f32, add: impl FnOnce(&mut 
         .stroke(Stroke::new(1.0, BORDER))
         .inner_margin(egui::Margin::same(10))
         .show(ui, |ui| {
-            // Fill the available width so the bordered box spans the panel/column
-            // instead of shrinking to its content.
-            ui.set_min_width(ui.available_width());
+            let w = (ui.available_width() - SPACE_MEDIUM).max(0.0);
+            ui.set_min_width(w);
+            ui.set_max_width(w);
             if min_height > 0.0 {
                 ui.set_min_height(min_height);
             }
             ui.label(RichText::new(title).color(DIM).size(11.0));
-            ui.add_space(6.0);
+            ui.add_space(SPACE_MEDIUM);
             add(ui);
             ui.min_rect().height()
         })
@@ -1328,16 +1349,16 @@ fn endpoint_info(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
             } else {
                 method_badge(ui, &method_str(&model.method));
             }
-            ui.add_space(8.0);
+            ui.add_space(SPACE_MEDIUM);
             if editing {
-                ui.add(egui::TextEdit::singleline(&mut model.url.protocol).desired_width(54.0));
+                bordered_input(ui, &mut model.url.protocol, 54.0, "");
                 ui.label(RichText::new("://").color(DIM));
-                ui.text_edit_singleline(&mut model.url.host);
+                bordered_input(ui, &mut model.url.host, f32::INFINITY, "host");
             } else {
                 ui.label(RichText::new(build_url(model)).color(CYAN).strong());
             }
         });
-        ui.add_space(4.0);
+        ui.add_space(SPACE_EXTRA_SMALL);
         if editing {
             // Path segments (add / edit / delete).
             let mut actions: Vec<EditAction> = Vec::new();
@@ -1346,7 +1367,7 @@ fn endpoint_info(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
                 let mut del = None;
                 for i in 0..model.url.path.len() {
                     ui.label(RichText::new("/").color(DIM));
-                    ui.add(egui::TextEdit::singleline(&mut model.url.path[i]).desired_width(80.0));
+                    bordered_input(ui, &mut model.url.path[i], 80.0, "");
                     if ui.button(RichText::new("x").color(RED)).clicked() {
                         del = Some(i);
                     }
@@ -1364,11 +1385,11 @@ fn endpoint_info(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
             });
             ui.horizontal(|ui| {
                 ui.label(RichText::new("name").color(DIM));
-                ui.text_edit_singleline(&mut model.name);
+                bordered_input(ui, &mut model.name, f32::INFINITY, "name");
             });
             ui.horizontal(|ui| {
                 ui.label(RichText::new("desc").color(DIM));
-                ui.text_edit_singleline(&mut model.description);
+                bordered_input(ui, &mut model.description, f32::INFINITY, "description");
             });
             for a in &actions {
                 apply(model, a);
@@ -1394,8 +1415,8 @@ fn parameters(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
         ui.horizontal(|ui| {
             if editing {
                 let q = &mut model.url.query[i];
-                ui.add(egui::TextEdit::singleline(&mut q.name).desired_width(90.0));
-                ui.add(egui::TextEdit::singleline(&mut q.dtype).desired_width(56.0));
+                bordered_input(ui, &mut q.name, 90.0, "name");
+                bordered_input(ui, &mut q.dtype, 56.0, "type");
                 ui.checkbox(&mut q.required, RichText::new("req").color(DIM));
                 if ui.button(RichText::new("x").color(RED)).clicked() {
                     actions.push(EditAction::Delete {
@@ -1417,7 +1438,7 @@ fn parameters(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
         });
     }
 
-    ui.add_space(6.0);
+    ui.add_space(SPACE_SMALL);
     ui.label(RichText::new("PATH VARIABLES").color(DIM).size(11.0));
     if model.url.variable.is_empty() && !editing {
         ui.label(RichText::new("(none)").color(DIM));
@@ -1426,8 +1447,8 @@ fn parameters(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
         ui.horizontal(|ui| {
             if editing {
                 let v = &mut model.url.variable[i];
-                ui.add(egui::TextEdit::singleline(&mut v.name).desired_width(90.0));
-                ui.add(egui::TextEdit::singleline(&mut v.dtype).desired_width(56.0));
+                bordered_input(ui, &mut v.name, 90.0, "name");
+                bordered_input(ui, &mut v.dtype, 56.0, "type");
                 ui.checkbox(&mut v.required, RichText::new("req").color(DIM));
                 if ui.button(RichText::new("x").color(RED)).clicked() {
                     actions.push(EditAction::Delete {
@@ -1467,11 +1488,13 @@ fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     for i in 0..model.headers.len() {
         ui.horizontal(|ui| {
             if editing {
-                ui.text_edit_singleline(&mut model.headers[i].name);
-                ui.text_edit_singleline(&mut model.headers[i].value);
-                if ui.button(RichText::new("x").color(RED)).clicked() {
-                    delete = Some(Field::HeaderName(i));
-                }
+                bordered_input(ui, &mut model.headers[i].name, 130.0, "name");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(RichText::new("x").color(RED)).clicked() {
+                        delete = Some(Field::HeaderName(i));
+                    }
+                    bordered_input(ui, &mut model.headers[i].value, f32::INFINITY, "value");
+                });
             } else {
                 ui.label(RichText::new(&model.headers[i].name).color(TEXT));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1536,8 +1559,39 @@ fn edit_schema_fields(
         path.push(i);
         ui.horizontal(|ui| {
             ui.add_space((path.len() as f32 - 1.0) * 14.0);
-            ui.add(egui::TextEdit::singleline(&mut f.name).desired_width(110.0));
-            ui.add(egui::TextEdit::singleline(&mut f.dtype).desired_width(70.0));
+            bordered_input(ui, &mut f.name, 110.0, "name");
+            // Data type dropdown: scalars plus their array variants, instead of
+            // free text. (`number` is omitted, it is a synonym of `int` here.)
+            let loc_tag = match loc {
+                BodyLoc::Request => "req".to_string(),
+                BodyLoc::Response(n) => format!("resp{n}"),
+            };
+            egui::ComboBox::from_id_salt(("schema_type", &loc_tag, path.as_slice()))
+                .width(90.0)
+                .selected_text(
+                    RichText::new(if f.dtype.is_empty() {
+                        "string"
+                    } else {
+                        &f.dtype
+                    })
+                    .color(CYAN),
+                )
+                .show_ui(ui, |ui| {
+                    for t in [
+                        "string",
+                        "int",
+                        "float",
+                        "boolean",
+                        "object",
+                        "string[]",
+                        "int[]",
+                        "float[]",
+                        "boolean[]",
+                        "object[]",
+                    ] {
+                        ui.selectable_value(&mut f.dtype, t.to_string(), t);
+                    }
+                });
             ui.checkbox(&mut f.required, RichText::new("req").color(DIM));
             if ui.button(RichText::new("x").color(RED)).clicked() {
                 actions.push(EditAction::Delete {
@@ -1607,7 +1661,7 @@ fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
             }
             ui.columns(2, |cols| {
                 cols[0].label(RichText::new("SCHEMA DEFINITION").color(DIM).size(11.0));
-                cols[0].add_space(4.0);
+                cols[0].add_space(SPACE_EXTRA_SMALL);
                 if editing {
                     let mut path = Vec::new();
                     edit_schema_fields(
@@ -1631,7 +1685,7 @@ fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
                     schema_fields(&mut cols[0], &req.schema, 0);
                 }
                 cols[1].label(RichText::new("EXAMPLE JSON").color(DIM).size(11.0));
-                cols[1].add_space(4.0);
+                cols[1].add_space(SPACE_EXTRA_SMALL);
                 if editing {
                     if cols[1]
                         .button(RichText::new("generate from schema").color(GREEN))
@@ -1676,7 +1730,15 @@ fn responses(ui: &mut egui::Ui, model: &mut EditModel, resp_tab: &mut usize, edi
         ui.horizontal_wrapped(|ui| {
             for (i, r) in model.responses.iter().enumerate() {
                 let label = format!("[ {} ]", if r.code.is_empty() { "?" } else { &r.code });
-                let color = if i == *resp_tab { GREEN } else { DIM };
+                // Flag a response whose code is not a valid number so the user can
+                // see which tab is blocking the save.
+                let color = if r.code.trim().parse::<u16>().is_err() {
+                    RED
+                } else if i == *resp_tab {
+                    GREEN
+                } else {
+                    DIM
+                };
                 if ui
                     .selectable_label(i == *resp_tab, RichText::new(label).color(color))
                     .clicked()
@@ -1707,10 +1769,16 @@ fn responses(ui: &mut egui::Ui, model: &mut EditModel, resp_tab: &mut usize, edi
         let r = &mut model.responses[idx];
         if editing {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("code").color(DIM));
-                ui.add(egui::TextEdit::singleline(&mut r.code).desired_width(60.0));
+                // Empty / non-numeric code blocks the save; render it red with a
+                // hint so the user sees what to fix without reading the footer.
+                let code_ok = r.code.trim().parse::<u16>().is_ok();
+                ui.label(RichText::new("code").color(if code_ok { DIM } else { RED }));
+                bordered_input_colored(ui, &mut r.code, 60.0, "", if code_ok { TEXT } else { RED });
+                if !code_ok {
+                    ui.label(RichText::new("required, e.g. 200").color(RED).size(10.0));
+                }
                 ui.label(RichText::new("desc").color(DIM));
-                ui.text_edit_singleline(&mut r.description);
+                bordered_input(ui, &mut r.description, f32::INFINITY, "description");
             });
             ui.horizontal(|ui| {
                 if ui
@@ -1733,7 +1801,7 @@ fn responses(ui: &mut egui::Ui, model: &mut EditModel, resp_tab: &mut usize, edi
         }
         ui.columns(2, |cols| {
             cols[0].label(RichText::new("RESPONSE SCHEMA").color(DIM).size(11.0));
-            cols[0].add_space(4.0);
+            cols[0].add_space(SPACE_EXTRA_SMALL);
             if editing {
                 let mut path = Vec::new();
                 edit_schema_fields(
@@ -1757,7 +1825,7 @@ fn responses(ui: &mut egui::Ui, model: &mut EditModel, resp_tab: &mut usize, edi
                 schema_fields(&mut cols[0], &r.schema, 0);
             }
             cols[1].label(RichText::new("RESPONSE_PREVIEW").color(DIM).size(11.0));
-            cols[1].add_space(4.0);
+            cols[1].add_space(SPACE_EXTRA_SMALL);
             if editing {
                 if cols[1]
                     .button(RichText::new("generate from schema").color(GREEN))
