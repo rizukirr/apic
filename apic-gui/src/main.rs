@@ -188,6 +188,9 @@ struct App {
     /// Whether the left contracts sidebar is shown. Toggled from the top bar;
     /// not persisted, so it always starts `true` on launch.
     sidebar_open: bool,
+    /// Snapshot of `model` taken when edit mode is entered, so [ CANCEL ] can
+    /// restore the pre-edit state. `None` whenever not editing.
+    original_model: Option<EditModel>,
 }
 
 /// Which action consumes the path chosen by an in-flight file dialog.
@@ -223,6 +226,7 @@ impl App {
             pending_delete: None,
             pending_dialog: None,
             sidebar_open: true,
+            original_model: None,
         };
         let settings = Settings::load();
         if let Some(root) = settings.last_project
@@ -308,6 +312,24 @@ impl App {
 
     /// Loads entry `i` into the editable model.
     /// Loads an invalid contract's raw text into the repair editor.
+    /// Enter edit mode, snapshotting the current model so the edits can be
+    /// discarded on cancel.
+    fn begin_edit(&mut self) {
+        self.original_model = self.model.clone();
+        self.editing = true;
+        self.row_height = 0.0; // recompute equal-height row for the new mode
+    }
+
+    /// Leave edit mode, restoring the pre-edit snapshot and discarding any edits
+    /// made since [ EDIT ] was pressed.
+    fn cancel_edit(&mut self) {
+        if let Some(original) = self.original_model.take() {
+            self.model = Some(original);
+        }
+        self.editing = false;
+        self.row_height = 0.0; // recompute equal-height row for the new mode
+    }
+
     fn enter_repair(&mut self, i: usize) {
         let Some(entry) = self.entries.get(i) else {
             return;
@@ -315,6 +337,7 @@ impl App {
         let buffer = apic_core::file::read_file(&entry.path).unwrap_or_default();
         let error = entry.error.clone().unwrap_or_default();
         self.model = None;
+        self.original_model = None;
         self.selected = Some(i);
         self.selected_template = None;
         self.repair = Some(Repair {
@@ -341,6 +364,7 @@ impl App {
                 self.selected_template = None;
                 self.resp_tab = 0;
                 self.editing = false;
+                self.original_model = None;
                 self.row_height = 0.0;
                 self.status = self
                     .path
@@ -371,6 +395,7 @@ impl App {
                 self.selected_template = Some(i);
                 self.resp_tab = 0;
                 self.editing = false;
+                self.original_model = None;
                 self.row_height = 0.0;
                 self.status = format!("template '{name}'");
             }
@@ -1148,6 +1173,7 @@ impl App {
     fn central(&mut self, ctx: &egui::Context) {
         let no_project = self.project_root.is_none();
         let mut promote: Option<(PathBuf, String)> = None;
+        let mut toggle_edit = false;
         let App {
             model,
             path,
@@ -1157,6 +1183,7 @@ impl App {
             row_height,
             repair,
             entries,
+            original_model,
             ..
         } = self;
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -1227,6 +1254,7 @@ impl App {
                                 Ok(()) => {
                                     *status = format!("saved {}", p.display());
                                     *editing = false; // back to read-only on success
+                                    *original_model = None; // commit: drop the snapshot
                                     *row_height = 0.0; // recompute equal-height row
                                 }
                                 Err(e) => *status = format!("save error: {e}"),
@@ -1236,8 +1264,9 @@ impl App {
                     }
                     let edit_label = if *editing { "[ CANCEL ]" } else { "[ EDIT ]" };
                     if ui.button(RichText::new(edit_label).color(GREEN)).clicked() {
-                        *editing = !*editing;
-                        *row_height = 0.0; // recompute equal-height row for the new mode
+                        // Applied after the panel closure via begin_edit/cancel_edit
+                        // so the snapshot is taken/restored on `self`.
+                        toggle_edit = true;
                     }
                 });
             });
@@ -1269,6 +1298,13 @@ impl App {
                     responses(ui, model, resp_tab, *editing);
                 });
         });
+        if toggle_edit {
+            if self.editing {
+                self.cancel_edit();
+            } else {
+                self.begin_edit();
+            }
+        }
         if let Some((path, buffer)) = promote
             && std::fs::write(&path, &buffer).is_ok()
         {
@@ -1970,5 +2006,46 @@ impl TreeNode {
                 });
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal but valid contract, loaded the same way `load()` does.
+    fn sample_model() -> EditModel {
+        let json = r#"{
+            "name": "test",
+            "method": "GET",
+            "url": { "protocol": "https", "host": "example.com" },
+            "headers": [],
+            "responses": [ { "code": 200, "description": "ok" } ]
+        }"#;
+        let contract = apic_core::json::json_get(json, None).expect("valid sample contract");
+        EditModel::from_contract(contract)
+    }
+
+    #[test]
+    fn cancel_edit_restores_pre_edit_model() {
+        let mut app = App::new();
+        app.model = Some(sample_model());
+        let original = app.model.clone();
+
+        app.begin_edit();
+        // Simulate the reported destructive edit: clear the response code 200.
+        app.model.as_mut().unwrap().responses[0].code = String::new();
+        assert_ne!(app.model, original, "the edit should change the model");
+
+        app.cancel_edit();
+        assert_eq!(
+            app.model, original,
+            "cancel must restore the pre-edit model"
+        );
+        assert!(!app.editing, "cancel must exit edit mode");
+        assert!(
+            app.original_model.is_none(),
+            "snapshot must be cleared after cancel"
+        );
     }
 }
