@@ -18,3 +18,7 @@
 .vibe-worktrees/
 .docs/
 /docs
+
+# Flathub submission lives in its own separate git repo (flathub/io.github.rizukirr.apic),
+# cloned here for convenience. Not tracked by the main repo.
+/packaging/flatpak/flathub/

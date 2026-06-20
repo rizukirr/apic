@@ -21,18 +21,28 @@
         }
     ],
     "request": {
+        "type": "object",
         "schema": [
             {
                 "name": "username",
                 "type": "string",
+                "default": null,
                 "description": "username",
                 "required": true
             },
             {
                 "name": "password",
                 "type": "string",
+                "default": null,
                 "description": "user password",
                 "required": true
+            },
+            {
+                "name": "data",
+                "type": "object",
+                "default": null,
+                "description": "",
+                "required": false
             }
         ],
         "example": {
@@ -44,65 +54,54 @@
         {
             "code": 200,
             "description": "Successful response",
+            "type": "object",
+            "schema": [
+                {
+                    "name": "message",
+                    "type": "string",
+                    "default": null,
+                    "description": "Human-readable message",
+                    "required": true
+                },
+                {
+                    "name": "data",
+                    "type": "object",
+                    "default": null,
+                    "description": "Response payload",
+                    "required": false
+                }
+            ],
             "example": {
                 "status": 200,
                 "message": "OK",
                 "data": null
-            },
-            "schema": [
-                {
-                    "name": "status",
-                    "type": "int",
-                    "default": "200",
-                    "description": "Status code",
-                    "required": true,
-                    "properties": null
-                },
-                {
-                    "name": "message",
-                    "type": "string",
-                    "default": null,
-                    "description": "Human-readable message",
-                    "required": true,
-                    "properties": null
-                },
-                {
-                    "name": "data",
-                    "type": "object",
-                    "default": null,
-                    "description": "Response payload",
-                    "required": false,
-                    "properties": null
-                }
-            ]
+            }
         },
         {
             "code": 400,
             "description": "Bad request",
+            "type": "object",
             "schema": [
                 {
                     "name": "status",
                     "type": "int",
                     "default": "200",
                     "description": "Status code",
-                    "required": true,
-                    "properties": null
+                    "required": true
                 },
                 {
                     "name": "message",
                     "type": "string",
                     "default": null,
                     "description": "Human-readable message",
-                    "required": true,
-                    "properties": null
+                    "required": true
                 },
                 {
                     "name": "data",
                     "type": "object",
                     "default": null,
                     "description": "Response payload",
-                    "required": false,
-                    "properties": null
+                    "required": false
                 }
             ]
         }

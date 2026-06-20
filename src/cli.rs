@@ -17,12 +17,11 @@ use std::path::{Path, PathBuf};
 #[command(name = "apic")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(author = "rizukirr")]
-#[command(about = "Git-able API contracts — per-endpoint JSON files in your repo")]
 #[command(
-    long_about = "apic stores API contracts as plain per-endpoint JSON files in your \
-repository, so they are versioned, diffable, and reviewable alongside code.\n\n\
-Typical flow: `apic init` to set up a project, `apic config --set-dir <dir>` to point at your \
-contracts folder, then `create`, `open`, `read`, and `validate` to work with contracts."
+    about = "A lightweight, Git-friendly tool for designing and collaborating on API contracts "
+)]
+#[command(
+    long_about = "A Free, Full Open Source Git-able api contract tools. Apic stores your API contracts as plain JSON in your repo, so they're diffable, reviewable, and versioned like any other code. No paywalled seats or separate workspaces, if a teammate can clone the repo, they can collaborate on the contract."
 )]
 struct Cli {
     #[command(subcommand)]
