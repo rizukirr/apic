@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-06-20
+
+### Changed
+- `apic-gui` adopts the flatpak app id (`FLATPAK_ID`) as its window app id when
+  running inside a Flatpak, so the compositor associates the window with the
+  installed desktop entry (correct icon and name). Behavior is unchanged outside
+  Flatpak.
+
+### Packaging
+- Distribution packaging added: AUR (`apic-bin`), Fedora COPR (`apic-cli` /
+  `apic-gui`), winget (`rizukirr.apic` / `rizukirr.apic-gui`), and a Flathub
+  Flatpak manifest (`io.github.rizukirr.apic`).
+
 ## [0.3.1] - 2026-06-19
 
 ### Added
