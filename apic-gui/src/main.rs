@@ -1029,6 +1029,11 @@ impl App {
     /// Left sidebar: a TEMPLATES section on top, then the contract picker
     /// (folder tree, method-badged, filtered by search).
     fn sidebar(&mut self, ctx: &egui::Context) -> Option<SidebarAction> {
+        // When collapsed, skip building/showing the panel entirely so the
+        // CentralPanel reclaims the full width.
+        if !self.sidebar_open {
+            return None;
+        }
         let q = self.search.to_lowercase();
         let mut tree = TreeNode::default();
         for (i, e) in self.entries.iter().enumerate() {
