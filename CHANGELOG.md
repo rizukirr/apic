@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-06-21
+
+### Added
+- `apic-gui` can collapse its sidebar: a top-bar button toggles the sidebar, the
+  collapsed sidebar (and its search) is skipped from rendering to give the
+  editor more room, and the open/closed state is tracked via a `sidebar_open`
+  flag and `ToggleSidebar` action.
+- `apic-gui` schema editor now lets you edit field descriptions in request and
+  response schemas, and request/response templates are editable.
+
+### Changed
+- New responses default to HTTP status code `200`, with a clearer error message
+  for invalid codes.
+- Invalid GUI inputs are flagged via an explicit error state, and the response
+  code label is centered.
+- Reworded the CLI `about` / `long_about` help text for clarity.
+- Removed the search icon from the GUI search field.
+
+### Fixed
+- Editing a contract and then cancelling now restores the original contract
+  data instead of keeping the partial edits.
+
 ## [0.3.2] - 2026-06-20
 
 ### Changed
