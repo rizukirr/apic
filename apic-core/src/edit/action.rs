@@ -20,16 +20,22 @@ use super::model::{
 pub enum EditAction {
     /// Write a string `value` into the text field at `field`.
     SetText { field: Field, value: String },
+
     /// Flip the boolean field at `field` (e.g. a `required` flag).
     ToggleBool { field: Field },
+
     /// Append a new row/entity for an `*Add` field (or toggle the request body).
     Add { field: Field },
+
     /// Remove the row/entity addressed by `field`.
     Delete { field: Field },
+
     /// Cycle the HTTP method forward (`true`) or backward (`false`).
     CycleMethod { forward: bool },
+
     /// Toggle a body between `object` and `object[]`.
     ToggleBodyType { loc: BodyLoc },
+
     /// Fill a body's example buffer from its schema fields.
     GenerateExample { loc: BodyLoc },
 }

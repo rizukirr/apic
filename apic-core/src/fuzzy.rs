@@ -65,19 +65,16 @@ pub(crate) fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usiz
         if c == query_chars[query_index] {
             score += 10;
 
-            // Bonus: consecutive match
             if let Some(last_index) = last_match_index
                 && candidate_index == last_index + 1
             {
                 score += 15;
             }
 
-            // Bonus: match near beginning
             if candidate_index == 0 {
                 score += 20;
             }
 
-            // Bonus: word/path boundary
             if let Some(prev) = prev_char
                 && (prev == '/' || prev == '-' || prev == '_' || prev == ' ')
             {
@@ -93,7 +90,6 @@ pub(crate) fn fuzzy_match(query: &str, candidate: &str) -> Option<(i32, Vec<usiz
     }
 
     if query_index == query_chars.len() {
-        // Penalty: longer candidate is weaker
         score -= candidate.len() as i32 / 2;
         Some((score, matched_indices))
     } else {

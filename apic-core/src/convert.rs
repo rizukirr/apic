@@ -60,7 +60,7 @@ fn unique_slug(taken: &mut HashSet<String>, base: &str) -> String {
 /// Query pairs become [`Query`] entries (`required: false`). A missing scheme
 /// yields an empty `protocol`; a host-only URL yields no path.
 fn split_raw_url(raw: &str) -> Url {
-    let raw = raw.split('#').next().unwrap_or(raw); // drop fragment
+    let raw = raw.split('#').next().unwrap_or(raw);
 
     let (protocol, rest) = match raw.split_once("://") {
         Some((scheme, rest)) => (scheme.to_string(), rest),
@@ -147,8 +147,10 @@ struct RawRequest {
     method: String,
     raw_url: String,
     headers: Vec<(String, String)>,
+
     /// Raw request body text (e.g. Postman `body.raw`), if any.
     body: Option<String>,
+
     /// Saved responses: (status code, status text, raw body text).
     responses: Vec<(u16, String, Option<String>)>,
 }
@@ -209,6 +211,7 @@ fn build_contract(raw: RawRequest) -> JsonContent {
 pub(crate) struct MappedContract {
     pub(crate) rel_path: PathBuf,
     pub(crate) contract: JsonContent,
+
     /// A lossy-mapping note surfaced to the user (e.g. an unsupported HTTP
     /// method downgraded to GET). `None` when the mapping was clean.
     pub(crate) warning: Option<String>,
@@ -417,7 +420,6 @@ fn url_raw_v2_0(url: &v2_0_0::Url) -> String {
 fn map_v1(spec: &v1_0_0::Spec) -> Vec<MappedContract> {
     use std::collections::HashMap;
 
-    // Index requests by id.
     let by_id: HashMap<&str, &v1_0_0::Request> =
         spec.requests.iter().map(|r| (r.id.as_str(), r)).collect();
 

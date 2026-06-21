@@ -30,6 +30,7 @@ pub enum InitOutcome {
     /// and the seeded `template/convention.json`). `warning` carries a
     /// best-effort seed-failure note for the caller to print, if any.
     Initialized { warning: Option<String> },
+
     /// The project already existed and only its missing template was seeded.
     TemplateSeeded,
 }

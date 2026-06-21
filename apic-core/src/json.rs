@@ -1,4 +1,5 @@
-//! Discovery of JSOj contract files beneath a project root.
+//! The contract data model plus parsing, validation, URL/JSON formatting, and
+//! discovery of JSON contract files beneath a project root.
 
 use crate::file::{FindFileResult, find_file_by_ext_downward};
 use serde::{Deserialize, Serialize};
@@ -97,12 +98,15 @@ pub struct Header {
 pub struct Response {
     pub code: u16,
     pub description: String,
+
     /// Body shape: `"object"` (default) or an array form like `"object[]"`.
     #[serde(rename = "type", default = "default_body_type")]
     pub dtype: String,
+
     /// Field-level schema; may be omitted when only an example is provided.
     #[serde(default)]
     pub schema: Vec<Schema>,
+
     /// Raw JSON example payload for this response.
     #[serde(default)]
     pub example: Option<serde_json::Value>,
@@ -118,6 +122,7 @@ pub struct Schema {
     pub required: bool,
     #[serde(default)]
     pub properties: Option<Vec<Schema>>,
+
     /// Accepted MIME types for `file` fields in multipart requests, e.g.
     /// `"image/png, image/jpeg"`. Omitted for ordinary fields.
     #[serde(default)]

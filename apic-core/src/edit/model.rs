@@ -262,7 +262,6 @@ impl EditModel {
             Value::String(crate::json::method_str(&self.method)),
         );
 
-        // url
         let mut url = serde_json::Map::new();
         url.insert("protocol".into(), Value::String(self.url.protocol.clone()));
         url.insert("host".into(), Value::String(self.url.host.clone()));

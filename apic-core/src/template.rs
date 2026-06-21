@@ -396,8 +396,10 @@ fn schema_field_names(schema: &Value, prefix: &str, out: &mut Vec<String>) {
 pub enum TemplateCheck {
     /// No project, or no readable template file present — nothing to validate.
     Absent,
+
     /// The template merges onto the default and yields a valid contract.
     Valid,
+
     /// The template exists but is invalid; the string explains why.
     Invalid(String),
 }

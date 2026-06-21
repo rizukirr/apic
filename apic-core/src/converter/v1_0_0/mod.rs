@@ -18,6 +18,7 @@ pub(crate) struct Spec {
 pub(crate) struct Folder {
     #[serde(default)]
     pub(crate) name: String,
+
     /// Request ids belonging to this folder, in order.
     #[serde(default)]
     pub(crate) order: Vec<String>,
@@ -31,12 +32,14 @@ pub(crate) struct Request {
     pub(crate) name: String,
     #[serde(default)]
     pub(crate) method: String,
+
     /// Newline-separated `Key: Value` header blob.
     #[serde(default)]
     pub(crate) headers: String,
     #[serde(default)]
     pub(crate) url: String,
     pub(crate) description: Option<String>,
+
     /// Raw request body. Any JSON shape is accepted; only a string carries a
     /// payload apic maps (other shapes are treated as no body).
     #[serde(rename = "rawModeData")]
