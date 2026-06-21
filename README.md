@@ -6,8 +6,10 @@ CLI, TUI, and desktop GUI, all over one shared core (`apic-core`), so every inte
 
 <img width="1329" height="875" alt="2026-06-21-075816_hyprshot" src="https://github.com/user-attachments/assets/7b8e027b-cdc7-4506-b8d9-cd7db806c790" />
 
+> **NOTE**: the GUI is AI SLOP until we fix it, please report if you found any issue
+
 > ## ROADMAP
-> FIX AI F**KING SLOP
+> - FIX AI F**KING SLOP
 > - Distribution
 >   - ~Aur~
 >   - ~Copr~
