@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-06-22
+
+### Added
+- `apic-gui` new-file and new-template dialogs submit on Enter (not only the
+  Create button) and auto-focus the name input the moment the dialog opens.
+- Newly created contracts and templates open immediately in the central editor,
+  with no extra click.
+- A `+ field` button at the bottom of each nested object in the schema editor.
+
+### Changed
+- Contract creation rules in `apic-gui`: a trailing slash creates a folder,
+  otherwise a contract file is created with `.json` appended when omitted (so a
+  bare `logout` becomes `logout.json`).
+- Template names already ending in `.json` no longer get a duplicate extension.
+- Extracted the `apic-gui` layout, widgets, and theme into a `ui` module so the
+  presentation lives apart from app state.
+
+### Fixed
+- Restored the response tabs and the add-response button in the schema editor,
+  including in preview mode.
+
 ## [0.3.3] - 2026-06-21
 
 ### Added

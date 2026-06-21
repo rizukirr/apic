@@ -1,6 +1,6 @@
 # Maintainer: Rizki Rakasiwi <rizkirr.xyz@gmail.com>
 pkgname=apic-bin
-pkgver=0.3.3
+pkgver=0.3.4
 pkgrel=1
 pkgdesc="Git-friendly API contracts tools: CLI/TUI (apic) and desktop GUI (apic-gui), prebuilt binaries"
 arch=('x86_64' 'aarch64')
