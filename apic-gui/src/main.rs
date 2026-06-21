@@ -226,15 +226,14 @@ impl App {
             app.project_root = Some(root);
         }
         app.reload_project();
-        if let Ok(sub) = std::env::var("APIC_AUTOEDIT") {
-            if let Some(i) = app
+        if let Ok(sub) = std::env::var("APIC_AUTOEDIT")
+            && let Some(i) = app
                 .entries
                 .iter()
                 .position(|e| e.error.is_none() && e.rel.contains(&sub))
-            {
-                app.load(i);
-                app.begin_edit();
-            }
+        {
+            app.load(i);
+            app.begin_edit();
         }
         app
     }
@@ -1511,11 +1510,13 @@ mod tests {
         let ctx = egui::Context::default();
 
         let run_at = |app: &mut App, w: f32, h: f32, frames: usize| {
-            let mut input = egui::RawInput::default();
-            input.screen_rect = Some(egui::Rect::from_min_size(
-                egui::pos2(0.0, 0.0),
-                egui::vec2(w, h),
-            ));
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(w, h),
+                )),
+                ..Default::default()
+            };
             let mut delays = Vec::new();
             for _ in 0..frames {
                 let out = ctx.run(input.clone(), |ctx| {
