@@ -59,7 +59,7 @@ fn parse_last_project(text: &str) -> Option<PathBuf> {
     None
 }
 
-/// Test seam: parse is pure and unit-testable without touching the filesystem.
+/// Checks that `p` ends with `apic-gui/config.toml`, the expected settings path.
 #[allow(dead_code)]
 fn _path_is(p: &Path) -> bool {
     p.ends_with("apic-gui/config.toml")

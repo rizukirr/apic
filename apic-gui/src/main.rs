@@ -8,33 +8,25 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use apic_core::edit::{BodyLoc, EditAction, EditModel, EditSchema, Field, apply};
+use apic_core::edit::EditModel;
 use apic_core::json::method_str;
 use eframe::egui;
-use egui::{Color32, RichText, Stroke};
+use egui::RichText;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod desktop;
 mod settings;
+mod ui;
 use settings::Settings;
+use ui::sections::{endpoint_info, headers, parameters, request_body, responses};
+use ui::theme::*;
+use ui::widgets::{bordered_input, panel, take_pending_focus};
 
-// Terminal/cyberpunk palette.
-const BG: Color32 = Color32::from_rgb(8, 12, 10);
-const PANEL_BG: Color32 = Color32::from_rgb(12, 17, 14);
-const BORDER: Color32 = Color32::from_rgb(30, 64, 46);
-const GREEN: Color32 = Color32::from_rgb(0, 230, 118);
-const CYAN: Color32 = Color32::from_rgb(86, 197, 255);
-const DIM: Color32 = Color32::from_rgb(110, 140, 122);
-const TEXT: Color32 = Color32::from_rgb(190, 225, 205);
-const RED: Color32 = Color32::from_rgb(255, 86, 86);
-const AMBER: Color32 = Color32::from_rgb(255, 196, 0);
-
-// Space Convention.
-const SPACE_MEDIUM: f32 = 8.0;
-const SPACE_SMALL: f32 = 6.0;
-const SPACE_EXTRA_SMALL: f32 = 4.0;
-const SPACE_LARGE: f32 = 16.0;
+// egui temp-data keys for the "focus the input when the dialog opens" markers,
+// claimed once via `take_pending_focus` the first frame each modal renders.
+const FOCUS_NEW_REQUEST: &str = "apic.focus.new_request";
+const FOCUS_NEW_TEMPLATE: &str = "apic.focus.new_template";
 
 fn main() -> eframe::Result {
     if std::env::args().skip(1).any(|a| a == "--desktop-entry") {
@@ -76,33 +68,12 @@ fn load_icon() -> egui::IconData {
         .expect("bundled icon.png is a valid PNG")
 }
 
-/// Installs the dark, monospace, neon theme.
-fn apply_theme(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
-    style.override_text_style = Some(egui::TextStyle::Monospace);
-    let v = &mut style.visuals;
-    v.dark_mode = true;
-    v.panel_fill = BG;
-    v.window_fill = BG;
-    v.extreme_bg_color = Color32::from_rgb(4, 6, 5);
-    v.faint_bg_color = PANEL_BG;
-    v.override_text_color = Some(TEXT);
-    v.hyperlink_color = CYAN;
-    v.selection.bg_fill = Color32::from_rgb(0, 80, 45);
-    v.selection.stroke = Stroke::new(1.0, GREEN);
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
-    v.widgets.inactive.bg_fill = PANEL_BG;
-    v.widgets.inactive.weak_bg_fill = PANEL_BG;
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, GREEN);
-    v.widgets.active.bg_stroke = Stroke::new(1.0, GREEN);
-    ctx.set_style(style);
-}
-
 /// A discovered contract plus the lightweight summary shown in the sidebar.
 struct Entry {
     path: PathBuf,
     rel: String,
     method: String,
+
     /// Validation error when this contract is invalid; `None` when it is valid.
     error: Option<String>,
 }
@@ -111,8 +82,10 @@ struct Entry {
 struct Repair {
     /// Index into `entries` of the file being repaired.
     index: usize,
+
     /// Editable raw file text.
     buffer: String,
+
     /// Current validation error for `buffer` (empty once valid).
     error: String,
 }
@@ -125,12 +98,15 @@ enum SidebarAction {
     NewProject,
     ImportPostman,
     NewTemplate,
+
     /// Open the new-request dialog, pre-filled with this path prefix (e.g.
     /// `auth/` when `+` is clicked on the `auth` folder, empty for the root
     /// button).
     NewRequest(String),
+
     /// Ask to delete something; shows a confirmation before anything is removed.
     RequestDelete(DeleteTarget),
+
     /// Toggle the left contracts sidebar between fully hidden and shown.
     ToggleSidebar,
 }
@@ -140,6 +116,7 @@ enum SidebarAction {
 enum DeleteTarget {
     /// A contract or folder, by path relative to the contracts root.
     Contract { rel: String, is_dir: bool },
+
     /// A template file in `.apic/template/`, by display name and absolute path.
     Template { name: String, path: PathBuf },
 }
@@ -155,39 +132,53 @@ struct App {
     editing: bool,
     search: String,
     resp_tab: usize,
+
     /// Shared height for the side-by-side PARAMETERS/HEADERS row (the taller of
     /// the two from the previous frame); reset on load / edit-toggle.
     row_height: f32,
+
     /// The `.apic` directory, for locating templates.
     apic_dir: Option<PathBuf>,
+
     /// Absolute root of the active project (the dir containing `.apic/`). `None`
     /// when no project is open. All discovery resolves against this, never cwd.
     project_root: Option<PathBuf>,
+
     /// When `Some`, a modal listing contracts that must be fixed before the
     /// picked non-project folder can be opened/initialized.
     open_blocked: Option<Vec<(PathBuf, String)>>,
+
     /// Raw-JSON repair editor state for an invalid contract; `None` when not
-    /// repairing. Behavior is wired in Task 10/11.
+    /// repairing.
     repair: Option<Repair>,
+
     /// Project templates: (display name, path) from `.apic/template/`.
     templates: Vec<(String, PathBuf)>,
+
     /// Index into `templates` when a template is being previewed.
     selected_template: Option<usize>,
+
     /// When `Some`, the "new template" dialog is open with this name buffer.
     new_template: Option<String>,
+
     /// When `Some`, the "new request" dialog is open with this path buffer.
     new_request: Option<String>,
+
     /// Index into `templates` of the template to seed a new request from, used
     /// only when more than one template exists (the dialog shows a chooser).
     new_request_seed: usize,
+
     /// When `Some`, the delete-confirmation dialog is open for this target.
     pending_delete: Option<DeleteTarget>,
+
     /// In-flight native file dialog, run on a background thread so the portal
     /// call never blocks the UI, plus the action to perform on its result.
     pending_dialog: Option<(DialogKind, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
+
     /// Whether the left contracts sidebar is shown. Toggled from the top bar;
     /// not persisted, so it always starts `true` on launch.
     sidebar_open: bool,
+
     /// Snapshot of `model` taken when edit mode is entered, so [ CANCEL ] can
     /// restore the pre-edit state. `None` whenever not editing.
     original_model: Option<EditModel>,
@@ -235,6 +226,16 @@ impl App {
             app.project_root = Some(root);
         }
         app.reload_project();
+        if let Ok(sub) = std::env::var("APIC_AUTOEDIT") {
+            if let Some(i) = app
+                .entries
+                .iter()
+                .position(|e| e.error.is_none() && e.rel.contains(&sub))
+            {
+                app.load(i);
+                app.begin_edit();
+            }
+        }
         app
     }
 
@@ -310,8 +311,6 @@ impl App {
         }
     }
 
-    /// Loads entry `i` into the editable model.
-    /// Loads an invalid contract's raw text into the repair editor.
     /// Enter edit mode, snapshotting the current model so the edits can be
     /// discarded on cancel.
     fn begin_edit(&mut self) {
@@ -330,6 +329,7 @@ impl App {
         self.row_height = 0.0; // recompute equal-height row for the new mode
     }
 
+    /// Loads an invalid contract's raw text into the repair editor.
     fn enter_repair(&mut self, i: usize) {
         let Some(entry) = self.entries.get(i) else {
             return;
@@ -347,6 +347,7 @@ impl App {
         });
     }
 
+    /// Loads entry `i` into the editable model.
     fn load(&mut self, i: usize) {
         let Some(entry) = self.entries.get(i) else {
             return;
@@ -474,7 +475,7 @@ impl App {
                     (DialogKind::OpenProject, Some(p)) => self.finish_open(p),
                     (DialogKind::NewProject, Some(p)) => self.finish_new(p),
                     (DialogKind::ImportPostman, Some(p)) => self.finish_import_postman(p),
-                    (_, None) => {} // cancelled
+                    (_, None) => {}
                 }
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint(),
@@ -557,7 +558,12 @@ impl App {
             return;
         };
         let dir = apic_core::template::dir(&apic_dir);
-        let dest = match apic_core::file::confine_to_dir(&dir, Path::new(&format!("{name}.json"))) {
+        let file_name = if name.ends_with(".json") {
+            name.to_string()
+        } else {
+            format!("{name}.json")
+        };
+        let dest = match apic_core::file::confine_to_dir(&dir, Path::new(&file_name)) {
             Ok(p) => p,
             Err(e) => {
                 self.status = e;
@@ -575,6 +581,11 @@ impl App {
         match std::fs::write(&dest, apic_core::template::DEFAULT) {
             Ok(()) => {
                 self.reload_project();
+                // Open the freshly created template in the central view, the same
+                // way create_request opens a new contract.
+                if let Some(i) = self.templates.iter().position(|(_, p)| *p == dest) {
+                    self.load_template(i);
+                }
                 self.status = format!("created template '{name}'");
             }
             Err(e) => self.status = format!("write error: {e}"),
@@ -604,7 +615,13 @@ impl App {
                 ui.label(RichText::new("template name").color(DIM));
                 ui.add_space(SPACE_MEDIUM);
                 let buf = self.new_template.as_mut().expect("dialog open");
-                bordered_input(ui, buf, f32::INFINITY, "");
+                let resp = bordered_input(ui, buf, f32::INFINITY, "");
+                // Drop the caret into the input the frame the dialog opens.
+                take_pending_focus(ui, FOCUS_NEW_TEMPLATE, "open", &resp);
+                // Submit on Enter, same as clicking Create.
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    create = true;
+                }
                 ui.add_space(SPACE_LARGE);
                 ui.columns(2, |cols| {
                     cols[0].vertical_centered(|ui| {
@@ -628,9 +645,10 @@ impl App {
     }
 
     /// Creates a new request from the dialog input, relative to the contracts
-    /// root. A name ending in `.json` creates a contract file seeded from
-    /// `template` (or the built-in default when `None`) and opens it; any other
-    /// name creates a folder.
+    /// root. A name ending in `/` creates a folder; any other name creates a
+    /// contract file (with `.json` appended when the user did not type it),
+    /// seeded from `template` (or the built-in default when `None`) and opened.
+    /// Intermediate folders in the path are created as needed.
     ///
     /// Safety: the path is confined to the working dir (rejecting `..`/symlink
     /// escapes) and an existing file is never overwritten.
@@ -644,7 +662,19 @@ impl App {
             self.status = "no project".into();
             return;
         };
-        let dest = match apic_core::file::confine_to_dir(&root, Path::new(input)) {
+        let is_folder = input.ends_with('/');
+        let rel = if is_folder {
+            input.trim_end_matches('/').to_string()
+        } else if input.ends_with(".json") {
+            input.to_string()
+        } else {
+            format!("{input}.json")
+        };
+        if rel.is_empty() {
+            self.status = "name required".into();
+            return;
+        }
+        let dest = match apic_core::file::confine_to_dir(&root, Path::new(&rel)) {
             Ok(p) => p,
             Err(e) => {
                 self.status = e;
@@ -652,9 +682,9 @@ impl App {
             }
         };
 
-        if input.ends_with(".json") {
+        if !is_folder {
             if dest.exists() {
-                self.status = format!("{input} already exists; not overwriting");
+                self.status = format!("{rel} already exists; not overwriting");
                 return;
             }
             // Seed from the chosen template (merged onto the built-in default),
@@ -681,16 +711,15 @@ impl App {
                     if let Some(i) = self.entries.iter().position(|e| e.path == dest) {
                         self.load(i);
                     }
-                    self.status = format!("created {input}");
+                    self.status = format!("created {rel}");
                 }
                 Err(e) => self.status = format!("write error: {e}"),
             }
         } else {
-            // No `.json` extension: treat as a folder.
             match std::fs::create_dir_all(&dest) {
                 Ok(()) => {
                     self.reload_project();
-                    self.status = format!("created folder {input}/");
+                    self.status = format!("created folder {rel}/");
                 }
                 Err(e) => self.status = format!("create dir error: {e}"),
             }
@@ -715,7 +744,13 @@ impl App {
                 ui.label(RichText::new("path under the contracts directory").color(DIM));
                 ui.add_space(SPACE_MEDIUM);
                 let buf = self.new_request.as_mut().expect("dialog open");
-                bordered_input(ui, buf, f32::INFINITY, "");
+                let resp = bordered_input(ui, buf, f32::INFINITY, "");
+                // Drop the caret into the input the frame the dialog opens.
+                take_pending_focus(ui, FOCUS_NEW_REQUEST, "open", &resp);
+                // Submit on Enter, same as clicking Create.
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    create = true;
+                }
                 ui.add_space(SPACE_EXTRA_SMALL);
                 ui.label(
                     RichText::new("end with .json for a contract (auth/logout.json); a bare name makes a folder")
@@ -936,17 +971,6 @@ fn display_location(path: &Path) -> String {
     apic_core::file::home_relative(&apic_core::file::to_slash(path))
 }
 
-/// Color for an HTTP method badge.
-fn method_color(method: &str) -> Color32 {
-    match method {
-        "GET" | "HEAD" => GREEN,
-        "POST" => CYAN,
-        "PUT" | "PATCH" => AMBER,
-        "DELETE" => RED,
-        _ => DIM,
-    }
-}
-
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_dialog(ctx);
@@ -971,10 +995,18 @@ impl eframe::App for App {
             Some(SidebarAction::OpenProject) => self.open_project(ctx),
             Some(SidebarAction::NewProject) => self.new_project(ctx),
             Some(SidebarAction::ImportPostman) => self.import_postman(ctx),
-            Some(SidebarAction::NewTemplate) => self.new_template = Some(String::new()),
+            Some(SidebarAction::NewTemplate) => {
+                self.new_template = Some(String::new());
+                ctx.data_mut(|d| {
+                    d.insert_temp(egui::Id::new(FOCUS_NEW_TEMPLATE), "open".to_string())
+                });
+            }
             Some(SidebarAction::NewRequest(prefix)) => {
                 self.new_request = Some(prefix);
                 self.new_request_seed = 0;
+                ctx.data_mut(|d| {
+                    d.insert_temp(egui::Id::new(FOCUS_NEW_REQUEST), "open".to_string())
+                });
             }
             Some(SidebarAction::RequestDelete(target)) => {
                 self.pending_delete = Some(target);
@@ -1076,7 +1108,6 @@ impl App {
             .resizable(true)
             .default_width(240.0)
             .show(ctx, |ui| {
-                // [ NEW REQUEST ] pinned to the bottom of the sidebar.
                 egui::TopBottomPanel::bottom("new_request_bar")
                     .show_separator_line(false)
                     .show_inside(ui, |ui| {
@@ -1092,7 +1123,6 @@ impl App {
                 ui.add_space(SPACE_MEDIUM);
                 ui.label(RichText::new("EXPLORER").color(GREEN).strong().size(16.0));
 
-                // TEMPLATES section (on top), with a `+` to add a new template.
                 ui.add_space(SPACE_MEDIUM);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("TEMPLATES").color(DIM).size(11.0));
@@ -1211,6 +1241,11 @@ impl App {
                     ui.label(RichText::new(&rep.error).color(AMBER).size(12.0));
                 }
                 ui.add_space(SPACE_SMALL);
+                let pretty = ui.button(RichText::new("pretty").color(AMBER)).clicked();
+                if pretty {
+                    rep.buffer = apic_core::json::pretty_json(&rep.buffer);
+                }
+                ui.add_space(SPACE_SMALL);
                 let resp = ui.add_sized(
                     [
                         ui.available_width(),
@@ -1220,7 +1255,7 @@ impl App {
                         .code_editor()
                         .desired_width(f32::INFINITY),
                 );
-                if resp.changed() {
+                if resp.changed() || pretty {
                     rep.error = match apic_core::json::validate(&rep.buffer) {
                         Ok(()) => String::new(),
                         Err(e) => e.to_string(),
@@ -1242,7 +1277,6 @@ impl App {
                 return;
             };
 
-            // Toolbar: Edit toggle + Save.
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
                     if ui.button(RichText::new("[ SAVE ]").color(GREEN)).clicked() {
@@ -1267,32 +1301,31 @@ impl App {
                     }
                 });
             });
-            ui.add_space(SPACE_SMALL);
+            ui.add_space(SPACE_MEDIUM);
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    endpoint_info(ui, model, *editing);
-                    ui.add_space(SPACE_MEDIUM);
-                    let saved_x = ui.spacing().item_spacing.x;
-                    ui.spacing_mut().item_spacing.x = 1.0;
-                    let target = *row_height;
-                    let mut measured = 0.0_f32;
-                    ui.columns(2, |cols| {
-                        let h0 = panel(&mut cols[0], "PARAMETERS", target, |ui| {
-                            parameters(ui, model, *editing)
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::same(8))
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = SPACE_LARGE;
+                            endpoint_info(ui, model, *editing);
+                            let target = *row_height;
+                            let mut measured = 0.0_f32;
+                            ui.columns(2, |cols| {
+                                let h0 = panel(&mut cols[0], "PARAMETERS", target, |ui| {
+                                    parameters(ui, model, *editing)
+                                });
+                                let h1 = panel(&mut cols[1], "HEADERS", target, |ui| {
+                                    headers(ui, model, *editing)
+                                });
+                                measured = h0.max(h1);
+                            });
+                            *row_height = measured;
+                            request_body(ui, model, *editing);
+                            responses(ui, model, resp_tab, *editing);
                         });
-                        let h1 = panel(&mut cols[1], "HEADERS", target, |ui| {
-                            headers(ui, model, *editing)
-                        });
-                        measured = h0.max(h1);
-                    });
-                    *row_height = measured;
-                    ui.spacing_mut().item_spacing.x = saved_x;
-                    ui.add_space(SPACE_MEDIUM);
-                    request_body(ui, model, *editing);
-                    ui.add_space(SPACE_MEDIUM);
-                    responses(ui, model, resp_tab, *editing);
                 });
         });
         if toggle_edit {
@@ -1312,602 +1345,6 @@ impl App {
             }
         }
     }
-}
-
-/// A single-line text field with a border and consistent 8/4 padding, the shared
-/// input style used everywhere (header search, popups, and every edit field).
-/// Pass `f32::INFINITY` for `width` to fill the available space, or a fixed
-/// width. Returns the inner `Response` so callers can react to edits.
-fn bordered_input(ui: &mut egui::Ui, buf: &mut String, width: f32, hint: &str) -> egui::Response {
-    bordered_input_colored(ui, buf, width, hint, false)
-}
-
-/// `bordered_input` with an explicit text color (e.g. red to flag an invalid
-/// value). See [`bordered_input`] for the width contract.
-fn bordered_input_colored(
-    ui: &mut egui::Ui,
-    buf: &mut String,
-    width: f32,
-    hint: &str,
-    error: bool,
-) -> egui::Response {
-    egui::Frame::new()
-        .stroke(Stroke::new(1.0, if error { RED } else { BORDER }))
-        .inner_margin(egui::Margin::symmetric(8, 4))
-        .show(ui, |ui| {
-            let fill = !width.is_finite();
-            if fill {
-                ui.set_min_width(ui.available_width());
-            }
-            ui.add(
-                egui::TextEdit::singleline(buf)
-                    .frame(false)
-                    .hint_text(hint)
-                    .text_color(if error { RED } else { TEXT })
-                    .desired_width(if fill { f32::INFINITY } else { width }),
-            )
-        })
-        .inner
-}
-
-/// A labeled bordered panel, the `┌─ TITLE ─┐` box from the mockup. Pass
-/// `min_height > 0.0` to force a minimum content height (used to equalize the
-/// side-by-side row); returns the content height so callers can measure it.
-fn panel(ui: &mut egui::Ui, title: &str, min_height: f32, add: impl FnOnce(&mut egui::Ui)) -> f32 {
-    egui::Frame::group(ui.style())
-        .fill(PANEL_BG)
-        .stroke(Stroke::new(1.0, BORDER))
-        .inner_margin(egui::Margin::same(10))
-        .show(ui, |ui| {
-            let w = (ui.available_width() - SPACE_MEDIUM).max(0.0);
-            ui.set_min_width(w);
-            ui.set_max_width(w);
-            if min_height > 0.0 {
-                ui.set_min_height(min_height);
-            }
-            ui.label(RichText::new(title).color(DIM).size(11.0));
-            ui.add_space(SPACE_MEDIUM);
-            add(ui);
-            ui.min_rect().height()
-        })
-        .inner
-}
-
-fn method_badge(ui: &mut egui::Ui, method: &str) {
-    ui.label(
-        RichText::new(format!(" {method} "))
-            .color(BG)
-            .background_color(method_color(method))
-            .strong(),
-    );
-}
-
-fn build_url(model: &EditModel) -> String {
-    // Reuse the shared URL renderer so the GUI matches `apic read`/TUI exactly
-    // (handles empty protocol/host/path the same way).
-    apic_core::json::build_url(&model.url.protocol, &model.url.host, &model.url.path)
-}
-
-fn endpoint_info(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
-    panel(ui, "ENDPOINT_INFO", 0.0, |ui| {
-        ui.set_min_width(ui.available_width());
-        ui.horizontal(|ui| {
-            if editing {
-                if ui
-                    .button(
-                        RichText::new(method_str(&model.method))
-                            .color(method_color(&method_str(&model.method))),
-                    )
-                    .clicked()
-                {
-                    apply(model, &EditAction::CycleMethod { forward: true });
-                }
-            } else {
-                method_badge(ui, &method_str(&model.method));
-            }
-            ui.add_space(SPACE_MEDIUM);
-            if editing {
-                bordered_input(ui, &mut model.url.protocol, 54.0, "");
-                ui.label(RichText::new("://").color(DIM));
-                bordered_input(ui, &mut model.url.host, f32::INFINITY, "host");
-            } else {
-                ui.label(RichText::new(build_url(model)).color(CYAN).strong());
-            }
-        });
-        ui.add_space(SPACE_EXTRA_SMALL);
-        if editing {
-            // Path segments (add / edit / delete).
-            let mut actions: Vec<EditAction> = Vec::new();
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("path").color(DIM));
-                let mut del = None;
-                for i in 0..model.url.path.len() {
-                    ui.label(RichText::new("/").color(DIM));
-                    bordered_input(ui, &mut model.url.path[i], 80.0, "");
-                    if ui.button(RichText::new("x").color(RED)).clicked() {
-                        del = Some(i);
-                    }
-                }
-                if ui.button(RichText::new("+ seg").color(GREEN)).clicked() {
-                    actions.push(EditAction::Add {
-                        field: Field::PathAdd,
-                    });
-                }
-                if let Some(i) = del {
-                    actions.push(EditAction::Delete {
-                        field: Field::PathSeg(i),
-                    });
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("name").color(DIM));
-                bordered_input(ui, &mut model.name, f32::INFINITY, "name");
-            });
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("desc").color(DIM));
-                bordered_input(ui, &mut model.description, f32::INFINITY, "description");
-            });
-            for a in &actions {
-                apply(model, a);
-            }
-        } else {
-            ui.label(RichText::new(&model.name).color(TEXT).strong());
-            if !model.description.is_empty() {
-                ui.label(RichText::new(&model.description).color(DIM));
-            }
-        }
-    });
-}
-
-/// Body of the PARAMETERS panel (wrapped by `panel` at the call site).
-fn parameters(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
-    let mut actions: Vec<EditAction> = Vec::new();
-
-    ui.label(RichText::new("QUERY PARAMS").color(DIM).size(11.0));
-    if model.url.query.is_empty() && !editing {
-        ui.label(RichText::new("(none)").color(DIM));
-    }
-    for i in 0..model.url.query.len() {
-        ui.horizontal(|ui| {
-            if editing {
-                let q = &mut model.url.query[i];
-                bordered_input(ui, &mut q.name, 90.0, "name");
-                bordered_input(ui, &mut q.dtype, 56.0, "type");
-                ui.checkbox(&mut q.required, RichText::new("req").color(DIM));
-                if ui.button(RichText::new("x").color(RED)).clicked() {
-                    actions.push(EditAction::Delete {
-                        field: Field::QueryName(i),
-                    });
-                }
-            } else {
-                let q = &model.url.query[i];
-                ui.label(RichText::new(&q.name).color(TEXT));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(&q.dtype).color(CYAN));
-                });
-            }
-        });
-    }
-    if editing && ui.button(RichText::new("+ query").color(GREEN)).clicked() {
-        actions.push(EditAction::Add {
-            field: Field::QueryAdd,
-        });
-    }
-
-    ui.add_space(SPACE_SMALL);
-    ui.label(RichText::new("PATH VARIABLES").color(DIM).size(11.0));
-    if model.url.variable.is_empty() && !editing {
-        ui.label(RichText::new("(none)").color(DIM));
-    }
-    for i in 0..model.url.variable.len() {
-        ui.horizontal(|ui| {
-            if editing {
-                let v = &mut model.url.variable[i];
-                bordered_input(ui, &mut v.name, 90.0, "name");
-                bordered_input(ui, &mut v.dtype, 56.0, "type");
-                ui.checkbox(&mut v.required, RichText::new("req").color(DIM));
-                if ui.button(RichText::new("x").color(RED)).clicked() {
-                    actions.push(EditAction::Delete {
-                        field: Field::VarName(i),
-                    });
-                }
-            } else {
-                let v = &model.url.variable[i];
-                ui.label(RichText::new(&v.name).color(TEXT));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(&v.dtype).color(CYAN));
-                });
-            }
-        });
-    }
-    if editing
-        && ui
-            .button(RichText::new("+ variable").color(GREEN))
-            .clicked()
-    {
-        actions.push(EditAction::Add {
-            field: Field::VarAdd,
-        });
-    }
-
-    for a in &actions {
-        apply(model, a);
-    }
-}
-
-/// Body of the HEADERS panel (wrapped by `panel` at the call site).
-fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
-    if model.headers.is_empty() {
-        ui.label(RichText::new("(none)").color(DIM));
-    }
-    let mut delete = None;
-    for i in 0..model.headers.len() {
-        ui.horizontal(|ui| {
-            if editing {
-                bordered_input(ui, &mut model.headers[i].name, 130.0, "name");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(RichText::new("x").color(RED)).clicked() {
-                        delete = Some(Field::HeaderName(i));
-                    }
-                    bordered_input(ui, &mut model.headers[i].value, f32::INFINITY, "value");
-                });
-            } else {
-                ui.label(RichText::new(&model.headers[i].name).color(TEXT));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(&model.headers[i].value).color(GREEN));
-                });
-            }
-        });
-    }
-    if let Some(field) = delete {
-        apply(model, &EditAction::Delete { field });
-    }
-    if editing
-        && ui
-            .button(RichText::new("+ add header").color(GREEN))
-            .clicked()
-    {
-        apply(
-            model,
-            &EditAction::Add {
-                field: Field::HeaderAdd,
-            },
-        );
-    }
-}
-
-/// Renders schema fields as `name: type [REQUIRED]`, recursing into properties.
-fn schema_fields(ui: &mut egui::Ui, fields: &[apic_core::edit::EditSchema], depth: usize) {
-    for f in fields {
-        ui.horizontal(|ui| {
-            ui.add_space(depth as f32 * 14.0);
-            ui.label(RichText::new(format!("{}:", f.name)).color(TEXT));
-            ui.label(RichText::new(&f.dtype).color(CYAN));
-            if f.required {
-                ui.label(
-                    RichText::new(" REQUIRED ")
-                        .color(BG)
-                        .background_color(RED)
-                        .size(10.0),
-                );
-            } else {
-                ui.label(RichText::new("[OPTIONAL]").color(DIM).size(10.0));
-            }
-            if !f.description.is_empty() {
-                ui.label(RichText::new(&f.description).color(DIM).size(11.0));
-            }
-        });
-        if !f.properties.is_empty() {
-            schema_fields(ui, &f.properties, depth + 1);
-        }
-    }
-}
-
-/// Edit-mode schema editor: binds name/type/required directly and collects
-/// structural add/delete edits into `actions` (applied after the borrow ends).
-/// Recurses into nested object `properties`; an object field gets a `+` to add a
-/// child.
-fn edit_schema_fields(
-    ui: &mut egui::Ui,
-    loc: &BodyLoc,
-    fields: &mut [EditSchema],
-    path: &mut Vec<usize>,
-    actions: &mut Vec<EditAction>,
-) {
-    for (i, f) in fields.iter_mut().enumerate() {
-        path.push(i);
-        ui.horizontal(|ui| {
-            ui.add_space((path.len() as f32 - 1.0) * 14.0);
-            bordered_input(ui, &mut f.name, 110.0, "name");
-            // Data type dropdown: scalars plus their array variants, instead of
-            // free text. (`number` is omitted, it is a synonym of `int` here.)
-            let loc_tag = match loc {
-                BodyLoc::Request => "req".to_string(),
-                BodyLoc::Response(n) => format!("resp{n}"),
-            };
-            egui::ComboBox::from_id_salt(("schema_type", &loc_tag, path.as_slice()))
-                .width(90.0)
-                .selected_text(
-                    RichText::new(if f.dtype.is_empty() {
-                        "string"
-                    } else {
-                        &f.dtype
-                    })
-                    .color(CYAN),
-                )
-                .show_ui(ui, |ui| {
-                    for t in [
-                        "string",
-                        "int",
-                        "float",
-                        "boolean",
-                        "object",
-                        "string[]",
-                        "int[]",
-                        "float[]",
-                        "boolean[]",
-                        "object[]",
-                    ] {
-                        ui.selectable_value(&mut f.dtype, t.to_string(), t);
-                    }
-                });
-            ui.checkbox(&mut f.required, RichText::new("req").color(DIM));
-            bordered_input(ui, &mut f.description, 160.0, "description");
-            if ui.button(RichText::new("x").color(RED)).clicked() {
-                actions.push(EditAction::Delete {
-                    field: Field::SchemaName(loc.clone(), path.clone()),
-                });
-            }
-            if apic_core::json::parse_type(&f.dtype).0 == "object"
-                && ui.button(RichText::new("+").color(GREEN)).clicked()
-            {
-                actions.push(EditAction::Add {
-                    field: Field::SchemaAdd(loc.clone(), path.clone()),
-                });
-            }
-        });
-        if !f.properties.is_empty() {
-            edit_schema_fields(ui, loc, &mut f.properties, path, actions);
-        }
-        path.pop();
-    }
-}
-
-fn json_block(ui: &mut egui::Ui, raw: &str) {
-    // Pretty-print via the shared core formatter (reformats whitespace only,
-    // preserving numbers/key order/strings exactly).
-    let mut text = if raw.trim().is_empty() {
-        "(no example)".to_string()
-    } else {
-        apic_core::json::pretty_json(raw)
-    };
-    egui::Frame::new()
-        .fill(Color32::from_rgb(4, 6, 5))
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            // A read-only code editor preserves the indentation (a plain Label
-            // collapses leading whitespace, flattening the JSON).
-            ui.add(
-                egui::TextEdit::multiline(&mut text)
-                    .code_editor()
-                    .interactive(false)
-                    .frame(false)
-                    .text_color(GREEN)
-                    .desired_width(f32::INFINITY),
-            );
-        });
-}
-
-fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
-    panel(ui, "REQUEST_BODY", 0.0, |ui| {
-        let mut actions: Vec<EditAction> = Vec::new();
-        if let Some(req) = model.request.as_mut() {
-            if editing {
-                ui.horizontal(|ui| {
-                    if ui
-                        .button(RichText::new(format!("type: {}", req.dtype)).color(CYAN))
-                        .clicked()
-                    {
-                        actions.push(EditAction::ToggleBodyType {
-                            loc: BodyLoc::Request,
-                        });
-                    }
-                    if ui.button(RichText::new("remove body").color(RED)).clicked() {
-                        actions.push(EditAction::Add {
-                            field: Field::RequestToggle,
-                        });
-                    }
-                });
-            }
-            ui.columns(2, |cols| {
-                cols[0].label(RichText::new("SCHEMA DEFINITION").color(DIM).size(11.0));
-                cols[0].add_space(SPACE_EXTRA_SMALL);
-                if editing {
-                    let mut path = Vec::new();
-                    edit_schema_fields(
-                        &mut cols[0],
-                        &BodyLoc::Request,
-                        &mut req.schema,
-                        &mut path,
-                        &mut actions,
-                    );
-                    if cols[0]
-                        .button(RichText::new("+ field").color(GREEN))
-                        .clicked()
-                    {
-                        actions.push(EditAction::Add {
-                            field: Field::SchemaAdd(BodyLoc::Request, Vec::new()),
-                        });
-                    }
-                } else if req.schema.is_empty() {
-                    cols[0].label(RichText::new("(none)").color(DIM));
-                } else {
-                    schema_fields(&mut cols[0], &req.schema, 0);
-                }
-                cols[1].label(RichText::new("EXAMPLE JSON").color(DIM).size(11.0));
-                cols[1].add_space(SPACE_EXTRA_SMALL);
-                if editing {
-                    if cols[1]
-                        .button(RichText::new("generate from schema").color(GREEN))
-                        .clicked()
-                    {
-                        actions.push(EditAction::GenerateExample {
-                            loc: BodyLoc::Request,
-                        });
-                    }
-                    cols[1].add(
-                        egui::TextEdit::multiline(&mut req.example)
-                            .code_editor()
-                            .desired_rows(6),
-                    );
-                } else {
-                    json_block(&mut cols[1], &req.example);
-                }
-            });
-        } else {
-            ui.label(RichText::new("(no request body)").color(DIM));
-            if editing
-                && ui
-                    .button(RichText::new("+ add request body").color(GREEN))
-                    .clicked()
-            {
-                actions.push(EditAction::Add {
-                    field: Field::RequestToggle,
-                });
-            }
-        }
-        for a in &actions {
-            apply(model, a);
-        }
-    });
-}
-
-fn responses(ui: &mut egui::Ui, model: &mut EditModel, resp_tab: &mut usize, editing: bool) {
-    panel(ui, "RESPONSES", 0.0, |ui| {
-        let mut actions: Vec<EditAction> = Vec::new();
-
-        // Tabs (+ add).
-        ui.horizontal_wrapped(|ui| {
-            for (i, r) in model.responses.iter().enumerate() {
-                let label = format!("[ {} ]", if r.code.is_empty() { "?" } else { &r.code });
-                // Flag a response whose code is not a valid number so the user can
-                // see which tab is blocking the save.
-                let color = if r.code.trim().parse::<u16>().is_err() {
-                    RED
-                } else if i == *resp_tab {
-                    GREEN
-                } else {
-                    DIM
-                };
-                if ui
-                    .selectable_label(i == *resp_tab, RichText::new(label).color(color))
-                    .clicked()
-                {
-                    *resp_tab = i;
-                }
-            }
-            if editing && ui.button(RichText::new("+ add").color(GREEN)).clicked() {
-                actions.push(EditAction::Add {
-                    field: Field::ResponseAdd,
-                });
-            }
-        });
-
-        if model.responses.is_empty() {
-            ui.label(RichText::new("(no responses)").color(DIM));
-            for a in &actions {
-                apply(model, a);
-            }
-            return;
-        }
-        if *resp_tab >= model.responses.len() {
-            *resp_tab = 0;
-        }
-        ui.separator();
-
-        let idx = *resp_tab;
-        let r = &mut model.responses[idx];
-        if editing {
-            ui.horizontal(|ui| {
-                let code_ok = r.code.trim().parse::<u16>().is_ok();
-                let box_h = ui.text_style_height(&egui::TextStyle::Body) + 10.0;
-                ui.add_sized(
-                    [34.0, box_h],
-                    egui::Label::new(RichText::new("code").color(if code_ok { DIM } else { RED })),
-                );
-                bordered_input_colored(ui, &mut r.code, 60.0, "", !code_ok);
-                ui.label(RichText::new("desc").color(DIM));
-                bordered_input(ui, &mut r.description, f32::INFINITY, "description");
-            });
-            ui.horizontal(|ui| {
-                if ui
-                    .button(RichText::new(format!("type: {}", r.dtype)).color(CYAN))
-                    .clicked()
-                {
-                    actions.push(EditAction::ToggleBodyType {
-                        loc: BodyLoc::Response(idx),
-                    });
-                }
-                if ui
-                    .button(RichText::new("delete response").color(RED))
-                    .clicked()
-                {
-                    actions.push(EditAction::Delete {
-                        field: Field::ResponseCode(idx),
-                    });
-                }
-            });
-        }
-        ui.columns(2, |cols| {
-            cols[0].label(RichText::new("RESPONSE SCHEMA").color(DIM).size(11.0));
-            cols[0].add_space(SPACE_EXTRA_SMALL);
-            if editing {
-                let mut path = Vec::new();
-                edit_schema_fields(
-                    &mut cols[0],
-                    &BodyLoc::Response(idx),
-                    &mut r.schema,
-                    &mut path,
-                    &mut actions,
-                );
-                if cols[0]
-                    .button(RichText::new("+ field").color(GREEN))
-                    .clicked()
-                {
-                    actions.push(EditAction::Add {
-                        field: Field::SchemaAdd(BodyLoc::Response(idx), Vec::new()),
-                    });
-                }
-            } else if r.schema.is_empty() {
-                cols[0].label(RichText::new("(none)").color(DIM));
-            } else {
-                schema_fields(&mut cols[0], &r.schema, 0);
-            }
-            cols[1].label(RichText::new("RESPONSE_PREVIEW").color(DIM).size(11.0));
-            cols[1].add_space(SPACE_EXTRA_SMALL);
-            if editing {
-                if cols[1]
-                    .button(RichText::new("generate from schema").color(GREEN))
-                    .clicked()
-                {
-                    actions.push(EditAction::GenerateExample {
-                        loc: BodyLoc::Response(idx),
-                    });
-                }
-                cols[1].add(
-                    egui::TextEdit::multiline(&mut r.example)
-                        .code_editor()
-                        .desired_rows(6),
-                );
-            } else {
-                json_block(&mut cols[1], &r.example);
-            }
-        });
-
-        for a in &actions {
-            apply(model, a);
-        }
-    });
 }
 
 /// A folder tree of contracts built from their `/`-separated relative paths.
@@ -1956,7 +1393,6 @@ impl TreeNode {
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
                     ui.label(RichText::new(name).color(DIM));
-                    // Action buttons aligned to the end of the row.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .small_button(RichText::new("-").color(DIM))
@@ -1994,7 +1430,6 @@ impl TreeNode {
                 {
                     *to_load = Some(*idx);
                 }
-                // Delete button aligned to the end of the row.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .small_button(RichText::new("-").color(DIM))
@@ -2047,5 +1482,85 @@ mod tests {
             app.original_model.is_none(),
             "snapshot must be cleared after cancel"
         );
+    }
+
+    #[test]
+    fn edit_mode_layout_settles() {
+        let json = r#"{
+            "name": "test",
+            "method": "POST",
+            "url": { "protocol": "https", "host": "example.com", "path": ["users"],
+                     "query": [{"name":"page","type":"int","required":false}],
+                     "variable": [{"name":"id","type":"string","required":true}] },
+            "headers": [{"name":"Authorization","value":"Bearer x"}],
+            "request": { "type": "json", "example": {"name":"a"}, "schema": [
+                {"name":"name","type":"string","default":null,"description":"n","required":true,"properties":null},
+                {"name":"meta","type":"object","default":null,"description":"m","required":false,"properties":[
+                    {"name":"age","type":"int","default":null,"description":"a","required":false,"properties":null}
+                ]}
+            ] },
+            "responses": [ { "code": 200, "description": "ok", "example": {"id":"x"},
+                "schema": [{"name":"id","type":"string","default":null,"description":"i","required":true,"properties":null}] } ]
+        }"#;
+        let contract = apic_core::json::json_get(json, None).expect("valid contract");
+        let mut app = App::new();
+        app.project_root = Some(std::path::PathBuf::from("/tmp"));
+        app.model = Some(EditModel::from_contract(contract));
+        app.begin_edit();
+
+        let ctx = egui::Context::default();
+
+        let run_at = |app: &mut App, w: f32, h: f32, frames: usize| {
+            let mut input = egui::RawInput::default();
+            input.screen_rect = Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(w, h),
+            ));
+            let mut delays = Vec::new();
+            for _ in 0..frames {
+                let out = ctx.run(input.clone(), |ctx| {
+                    app.top_bar(ctx);
+                    app.bottom_bar(ctx);
+                    app.sidebar(ctx);
+                    app.central(ctx);
+                });
+                delays.push(
+                    out.viewport_output
+                        .get(&egui::ViewportId::ROOT)
+                        .map(|v| v.repaint_delay)
+                        .unwrap_or(std::time::Duration::MAX),
+                );
+            }
+            delays
+        };
+
+        // Across a range of window sizes (a too-narrow window is the prime
+        // suspect for a layout that overflows and oscillates), egui must stop
+        // demanding an immediate (ZERO-delay) repaint once the row-height
+        // feedback converges. Perpetual ZERO is the 100%-CPU "not responding"
+        // spin.
+        for (w, h) in [(1280.0, 800.0), (900.0, 700.0), (640.0, 600.0)] {
+            let delays = run_at(&mut app, w, h, 16);
+            let tail_zero = delays[8..].iter().all(|d| *d == std::time::Duration::ZERO);
+            assert!(!tail_zero, "layout never settles at {w}x{h}: {delays:?}");
+        }
+
+        // Simulate the new-row focus feature firing: add a query row and mark it
+        // for focus exactly as the `+ query` button does. A freshly focused
+        // TextEdit must not pin egui into a permanent repaint.
+        {
+            let m = app.model.as_mut().unwrap();
+            let new_idx = m.url.query.len();
+            apic_core::edit::apply(
+                m,
+                &apic_core::edit::EditAction::Add {
+                    field: apic_core::edit::Field::QueryAdd,
+                },
+            );
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new("apic.focus.query"), new_idx.to_string()));
+        }
+        let delays = run_at(&mut app, 1280.0, 800.0, 16);
+        let tail_zero = delays[8..].iter().all(|d| *d == std::time::Duration::ZERO);
+        assert!(!tail_zero, "focus feature pins repaint: {delays:?}");
     }
 }
