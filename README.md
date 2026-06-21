@@ -4,14 +4,9 @@
 
 CLI, TUI, and desktop GUI, all over one shared core (`apic-core`), so every interface edits the same files and never drifts.
 
-<img width="1329" height="875" alt="2026-06-21-075816_hyprshot" src="https://github.com/user-attachments/assets/7b8e027b-cdc7-4506-b8d9-cd7db806c790" />
-
-
-> ## **NOTE**
-> The GUI is AI SLOP until we fix it by hand, please report if you found any issue
+<img width="1307" height="953" alt="2026-06-22-010702_hyprshot" src="https://github.com/user-attachments/assets/b22ccbdd-5c19-42bf-b0bb-0c1654e5219e" />
 
 > ## ROADMAP
-> - FIX AI F**KING SLOP
 > - Distribution
 >   - ~Aur~
 >   - ~Copr~
