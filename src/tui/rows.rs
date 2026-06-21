@@ -126,6 +126,7 @@ fn field_row_i_prefixed(indent: u16, cells: Vec<Cell>, prefix: String) -> TableR
         prefix,
     }
 }
+
 /// A Body section's title row, drawn as the bold section title. Its single
 /// non-editable `Label` cell carries the read title string.
 fn title_row(title: String) -> TableRow {

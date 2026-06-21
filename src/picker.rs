@@ -17,6 +17,7 @@ use std::io::{self, Write};
 enum Outcome {
     /// The user confirmed the candidate at this index.
     Picked(usize),
+
     /// The user cancelled (Esc, `q`, or Ctrl-C).
     Cancelled,
 }
@@ -101,7 +102,6 @@ pub(crate) fn pick(prompt: &str, labels: &[String]) -> io::Result<Option<usize>>
         }
     };
 
-    // Clear the picker block, leave raw mode, then print the summary line.
     execute!(
         out,
         MoveUp(labels.len() as u16 + 1),

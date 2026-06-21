@@ -56,7 +56,6 @@ fn init_seeds_template_file() {
         "init should seed .apic/template/convention.json"
     );
     let content = fs::read_to_string(&template).unwrap();
-    // The built-in default's endpoint name.
     assert!(content.contains("endpoint-name"));
 }
 
@@ -166,9 +165,8 @@ fn create_fails_when_template_malformed() {
         .failure()
         .stderr(predicate::str::contains("is not valid JSON"));
 
-    // No contract is created when the template is invalid...
     assert!(!dir.join("contracts/bar.json").exists());
-    // ...and the user's (broken) template is left untouched.
+    // The user's broken template must be left untouched on failure.
     let template = fs::read_to_string(dir.join(".apic/template/convention.json")).unwrap();
     assert_eq!(template, broken);
 }
@@ -206,7 +204,6 @@ fn validate_passes_for_valid_and_fails_for_broken() {
         .assert()
         .success();
 
-    // A valid contract validates and exits 0.
     apic(&dir)
         .arg("validate")
         .assert()
@@ -214,7 +211,6 @@ fn validate_passes_for_valid_and_fails_for_broken() {
         .stdout(predicate::str::contains("ok"))
         .stdout(predicate::str::contains("0 failed"));
 
-    // A malformed contract makes validate exit non-zero.
     fs::write(dir.join("contracts/broken.json"), "{ not json").unwrap();
     apic(&dir)
         .arg("validate")
@@ -227,14 +223,12 @@ fn validate_passes_for_valid_and_fails_for_broken() {
 fn validate_template_reports_ok_fail_and_rejects_filename() {
     let dir = init_project("validate_template");
 
-    // The seeded default template is valid: exits 0 with `ok`.
     apic(&dir)
         .args(["validate", "--template"])
         .assert()
         .success()
         .stdout(predicate::str::contains("ok"));
 
-    // A malformed template makes `validate --template` exit non-zero with `FAIL`.
     fs::write(dir.join(".apic/template/convention.json"), "{ not json").unwrap();
     apic(&dir)
         .args(["validate", "--template"])
@@ -276,7 +270,6 @@ fn validate_folder_query_checks_every_contract_recursively() {
         .stdout(predicate::str::contains("auth/sub/refresh.json"))
         .stdout(predicate::str::contains("2 passed, 0 failed"));
 
-    // A non-existent folder query fails clearly.
     apic(&dir)
         .args(["validate", "-f", "nope/"])
         .assert()
@@ -339,7 +332,6 @@ fn list_defaults_to_relative_paths() {
         .args(["create", "--editor", "true", "-f", "auth/login.json"])
         .assert()
         .success();
-    // Default output is relative: the contract path, not the absolute prefix.
     apic(&dir)
         .arg("list")
         .assert()
@@ -464,7 +456,6 @@ fn read_example_only_contract_shows_none_by_default() {
         .stdout(predicate::str::contains("\"probe\": true").not())
         .stdout(predicate::str::contains("\"pong\": true").not());
 
-    // --example still renders the raw payloads.
     apic(&dir)
         .args(["read", "-f", "ping", "--example"])
         .assert()
@@ -485,7 +476,6 @@ fn list_filter_fuzzy_matches_contracts() {
         .assert()
         .success();
 
-    // Matching contracts are shown, non-matching ones are not.
     apic(&dir)
         .args(["list", "--filter", "user"])
         .assert()

@@ -179,7 +179,7 @@ fn push_header(
                 lines.push(line);
             }
             RowKind::UrlLine => {
-                lines.push(Line::raw("")); // blank line before the URL
+                lines.push(Line::raw(""));
                 if selected {
                     *sel = (lines.len(), lines.len());
                 }
@@ -307,7 +307,7 @@ fn push_section(
     sel: &mut (usize, usize),
     cursor: &mut Option<(usize, usize)>,
 ) {
-    lines.push(Line::raw("")); // blank line before the title
+    lines.push(Line::raw(""));
 
     // For Body sections the title is carried by a `RowKind::Title` row (so the
     // expand selection lands on it); Table sections print `section.title`.
@@ -477,7 +477,7 @@ fn push_example_block(
     lines: &mut Vec<Line<'static>>,
     sel: &mut (usize, usize),
 ) {
-    lines.push(Line::raw("")); // blank line before Example:
+    lines.push(Line::raw(""));
     let example_label = lines.len();
     lines.push(Line::from(Span::styled(" Example:", dim())));
     push_example(state, row, selected, lines);

@@ -41,6 +41,7 @@ enum Commands {
         #[arg(long, value_name = "DIR")]
         set_dir: Option<String>,
     },
+
     /// Initialize an apic project in the current directory.
     ///
     /// Creates `.apic/config.toml`. Run this once at the root of your repo.
@@ -50,6 +51,7 @@ enum Commands {
         #[arg(long, value_name = "DIR")]
         set_dir: Option<String>,
     },
+
     /// List discovered contract files under the working directory.
     List {
         /// Show only contracts whose path fuzzy-matches this query, best match
@@ -62,6 +64,7 @@ enum Commands {
         #[arg(long, value_name = "BOOL", default_value_t = false, action = clap::ArgAction::Set)]
         absolute: bool,
     },
+
     /// Render a contract as formatted, colorized tables.
     ///
     /// The filename is resolved flexibly: an exact path (`user/user.json`), the
@@ -81,6 +84,7 @@ enum Commands {
         #[arg(long, short = 'e')]
         example: bool,
     },
+
     /// Scaffold a new contract — or, with `--template`, a new project template.
     ///
     /// Opens a full-screen editor seeded from the project template's structure;
@@ -120,6 +124,7 @@ enum Commands {
         #[arg(long, value_name = "NAME")]
         use_template: Option<String>,
     },
+
     /// Check that contracts parse and conform to the schema.
     ///
     /// With no query, every contract under the working directory is checked.
@@ -140,6 +145,7 @@ enum Commands {
         #[arg(long, conflicts_with = "find")]
         template: bool,
     },
+
     /// Edit an existing contract in the interactive TUI.
     ///
     /// Resolves the filename like `read` (exact, extensionless, or fuzzy) and
@@ -170,6 +176,7 @@ enum Commands {
         #[arg(long)]
         template: bool,
     },
+
     /// Delete a contract file, or a project template with `--template`.
     ///
     /// The filename is resolved like `read`: an exact path (`user/user.json`),
@@ -194,6 +201,7 @@ enum Commands {
         #[arg(long, short = 't', value_name = "NAME", conflicts_with = "find")]
         template: Option<String>,
     },
+
     /// Import a Postman collection as apic contract files.
     ///
     /// Reads a Postman Collection export (v1.0.0 / v2.0.0 / v2.1.0) and writes
@@ -272,8 +280,10 @@ pub(crate) fn list(is_absolute: bool) -> Option<Vec<PathBuf>> {
 enum Resolution {
     /// Exactly one contract matched.
     One(PathBuf),
+
     /// The reference is ambiguous; the caller must disambiguate.
     Many(Vec<PathBuf>),
+
     /// Nothing matched.
     None,
 }
@@ -289,7 +299,6 @@ enum Resolution {
 /// 3. the fuzzy fallback — a shared top score is ambiguous, a distinct top
 ///    score wins.
 fn classify(filename: &str, root: &Path, files: &[PathBuf]) -> Resolution {
-    // exact file under the working directory, with or without `.json`.
     let candidates = [
         PathBuf::from(filename),
         PathBuf::from(format!("{filename}.json")),
@@ -322,7 +331,6 @@ fn classify(filename: &str, root: &Path, files: &[PathBuf]) -> Resolution {
         }
     }
 
-    // fuzzy fallback with tie detection on the top score.
     let file_str: Vec<String> = files.iter().map(|f| to_slash(f)).collect();
     match fuzzy_find(filename, &file_str) {
         Some(hits) => {
@@ -364,8 +372,6 @@ fn classify_template(name: &str, templates: &[PathBuf]) -> Resolution {
         _ => {}
     }
 
-    // Fuzzy fallback over the template file names, with tie detection on the top
-    // score, mapping each surviving name back to its path.
     let names: Vec<String> = templates
         .iter()
         .map(|t| {
@@ -405,9 +411,11 @@ fn classify_template(name: &str, templates: &[PathBuf]) -> Resolution {
 enum TemplateChoice {
     /// Seed from this specific template file.
     Template(PathBuf),
+
     /// No specific template — use the project default (`convention.json`, then
     /// the built-in).
     Default,
+
     /// The user cancelled an interactive pick.
     Cancelled,
 }
@@ -504,8 +512,10 @@ fn pick_template(
 enum Resolved {
     /// Exactly one contract — proceed.
     Path(PathBuf),
+
     /// The user cancelled an interactive pick — not an error.
     Cancelled,
+
     /// Nothing matched.
     NotFound,
 }
@@ -548,7 +558,6 @@ fn resolve_one(filename: &str) -> Result<Resolved, String> {
         Resolution::Many(candidates) => {
             let labels: Vec<String> = candidates.iter().map(|c| rel_display(c, &root)).collect();
             if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
-                // Non-interactive: fail loudly with every candidate and a hint.
                 let mut msg = format!(
                     "'{}' is ambiguous, {} contracts match:\n",
                     sanitize(filename),
@@ -643,8 +652,6 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
     let root = read_config_file().and_then(|c| c.get_root_dir()).ok();
 
     let targets: Vec<PathBuf> = match find {
-        // Folder mode: a query ending in `/` validates every contract beneath
-        // that directory, at any depth.
         Some(name) if name.ends_with('/') => {
             let base = root
                 .clone()
@@ -665,7 +672,6 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
             }
             in_dir
         }
-        // Single contract resolved like `read`.
         Some(name) => match resolve_one(name)? {
             Resolved::Path(path) => vec![path],
             Resolved::Cancelled => return cancelled(),
@@ -830,7 +836,6 @@ fn create_template_cmd(
         return Err(format!("template '{}' already exists", sanitize(&file)));
     }
 
-    // Seed source: an existing template (via --use-template) or the built-in.
     let source = match use_template {
         Some(src) => match select_create_template(&apic_dir, Some(src))? {
             TemplateChoice::Template(p) => Some(p),
@@ -894,7 +899,6 @@ fn create_contract_cmd(
     };
 
     if editor.is_some() {
-        // Legacy path: scaffold to disk, then open the external editor.
         let contract = match &chosen {
             Some(p) => {
                 let (contract, warnings) = apic_core::template::resolve_contract_from(p)?;
@@ -918,8 +922,7 @@ fn create_contract_cmd(
             .map_err(|err| format!("Failed to open editor: {err}"));
     }
 
-    // Default path: seed an EditModel and open the TUI. The file is written only
-    // when the user saves inside the TUI.
+    // The file is written only when the user saves inside the TUI.
     let overlay = match &chosen {
         Some(p) => read_file(p).ok(),
         None => read_project_template(),
@@ -1124,10 +1127,12 @@ fn open_in_editor(path: &Path, editor: Option<&str>) -> std::io::Result<()> {
     Ok(())
 }
 
-/// List files in the current working directory, print it as a tree.
+/// Lists discovered contract files, printed as a tree on a terminal or one
+/// path per line when piped.
 ///
 /// If `filter` is given, only files whose path fuzzy-matches it are printed.
-/// If `absolute` is true, the working directory is not prepended to the path.
+/// When `absolute` is true, paths are absolute: the tree shows the working
+/// directory as a root label and piped output prints absolute paths.
 fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), String> {
     if let Some(files) = list(absolute) {
         // Fuzzy-match the filter against the sanitized, working-dir-
@@ -1138,10 +1143,12 @@ fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), String> {
         struct Row {
             /// Working-dir-relative display path (tree view).
             rel: String,
+
             /// Match positions in `rel`; unused when piped (the cost
             /// is bounded by the query length).
             indices: Vec<usize>,
             score: i32,
+
             /// Path in the requested form (flat piped view).
             shown: String,
         }
@@ -1174,9 +1181,6 @@ fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), String> {
             // A filter that matches nothing prints nothing — also
             // skips the `--absolute` root label.
         } else if is_tty {
-            // Tree view: alphabetical, directories first; under a
-            // filter only matching files appear, with matched
-            // characters highlighted.
             let mut tree_root = tree::Node::default();
             for row in &rows {
                 tree_root.insert(Path::new(&row.rel), &row.indices);
@@ -1189,8 +1193,6 @@ fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), String> {
             };
             print!("{}", tree::render(root_label.as_deref(), &tree_root, true));
         } else {
-            // Piped: flat path-per-line for scripts. With a filter,
-            // print the best match first.
             if filter.is_some() {
                 rows.sort_by_key(|row| std::cmp::Reverse(row.score));
             }

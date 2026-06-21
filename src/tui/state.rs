@@ -41,6 +41,7 @@ pub(crate) struct UiState {
     pub dirty: bool,
     pub status: String,
     pub expanded: Option<Expand>,
+
     /// Baseline snapshot (last loaded/saved model) against which `dirty` is
     /// computed, so the unsaved indicator reflects real differences.
     pub original: EditModel,
@@ -85,8 +86,6 @@ impl UiState {
                 self.cell = None;
             }
         }
-        // Authoritative dirty signal: compare against the baseline snapshot.
-        // `refresh` runs after every mutation, so this is always accurate.
         self.dirty = model != &self.original;
     }
 
@@ -262,8 +261,6 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
 /// Generates an example JSON for the request/response body the cursor is in,
 /// from that body's schema fields, filling its example buffer.
 fn generate_example_here(state: &mut UiState, model: &mut EditModel) {
-    // Which body the cursor is in is view state; the generation itself is a
-    // shared core edit.
     let loc = match state.sections.get(state.sec).and_then(|s| s.expand) {
         Some(Expand::Request) => BodyLoc::Request,
         Some(Expand::Response(i)) => BodyLoc::Response(i),
@@ -282,11 +279,11 @@ fn generate_example_here(state: &mut UiState, model: &mut EditModel) {
 fn append_here(state: &mut UiState, model: &mut EditModel) {
     let target = if let Some((loc, path, is_object)) = focused_schema_target(state) {
         if is_object {
-            Field::SchemaAdd(loc, path) // add a child under the object field
+            Field::SchemaAdd(loc, path)
         } else {
             let mut parent = path;
             parent.pop();
-            Field::SchemaAdd(loc, parent) // add a sibling at this level
+            Field::SchemaAdd(loc, parent)
         }
     } else if let Some(field) = state.sections.get(state.sec).and_then(|s| s.add.clone()) {
         field
@@ -415,7 +412,6 @@ fn handle_cell(state: &mut UiState, model: &mut EditModel, key: KeyEvent) -> Act
             Action::None
         }
         KeyCode::Char(' ') => {
-            // Space toggles a focused bool cell.
             if let (Some(c), Some(field)) = (state.cell, state.focused_field()) {
                 let is_bool = state
                     .current_row()
@@ -431,7 +427,6 @@ fn handle_cell(state: &mut UiState, model: &mut EditModel, key: KeyEvent) -> Act
             Action::None
         }
         KeyCode::Char('i') => {
-            // Vim-style: `i` enters insert mode on a focused text cell.
             if let Some(cell) = state
                 .cell
                 .and_then(|c| state.current_row().and_then(|r| r.cells.get(c)))

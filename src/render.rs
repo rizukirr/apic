@@ -277,9 +277,8 @@ impl Printer {
     }
 }
 
-/// Builds the VARIABLE table headers and rows. Kept as a pure helper (like
-/// `request_rows`) so the REQ column is testable without capturing terminal
-/// output.
+/// Builds the VARIABLE table headers and rows. Kept as a pure helper so the
+/// REQ column is testable without capturing terminal output.
 fn variable_rows(variables: &[Variable]) -> (Vec<&'static str>, Vec<Vec<String>>) {
     let headers = vec!["NAME", "TYPE", "REQ", "DESCRIPTION"];
     let rows = variables

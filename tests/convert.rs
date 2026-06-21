@@ -9,7 +9,6 @@ fn convert_imports_v2_1_collection() {
     let _ = fs::remove_dir_all(&work);
     fs::create_dir_all(&work).unwrap();
 
-    // Initialize an apic project rooted at `work`.
     Command::cargo_bin("apic")
         .unwrap()
         .current_dir(&work)
@@ -44,7 +43,6 @@ fn convert_imports_v2_1_collection() {
     assert!(work.join("imported/pets/list_pets.json").is_file());
     assert!(work.join("imported/pets/get_pet.json").is_file());
 
-    // The generated contracts validate.
     Command::cargo_bin("apic")
         .unwrap()
         .current_dir(&work)
