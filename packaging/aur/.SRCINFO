@@ -22,11 +22,11 @@ pkgbase = apic-bin
 	sha256sums = 53fc69e9f347afbeca2b180cc840698a56ebdcf7e3de944557ce5c04dcba7c66
 	source_x86_64 = apic-0.3.3-x86_64.tar.gz::https://github.com/rizukirr/apic/releases/download/v0.3.3/apic-v0.3.3-x86_64-unknown-linux-gnu.tar.gz
 	source_x86_64 = apic-gui-0.3.3-x86_64.tar.gz::https://github.com/rizukirr/apic/releases/download/v0.3.3/apic-gui-v0.3.3-x86_64-unknown-linux-gnu.tar.gz
-	sha256sums_x86_64 = d9198a46ceaf2f1f2eaadd9293a5f9c5cb046040db099721c5cce7cb0f68709f
-	sha256sums_x86_64 = 4f3f3002e2aebc931e321362a0c60f79d59d7b83bd48a92dbe902b7d760999f1
+	sha256sums_x86_64 = 62eeebf5674f9aec8eceb28da4af957a962b6a78c2dad831d1fbb08025ef4305
+	sha256sums_x86_64 = b58bea1847f372c8bafc016d2fa3cc744d6337a54b006e1d882110c088b6bd7c
 	source_aarch64 = apic-0.3.3-aarch64.tar.gz::https://github.com/rizukirr/apic/releases/download/v0.3.3/apic-v0.3.3-aarch64-unknown-linux-gnu.tar.gz
 	source_aarch64 = apic-gui-0.3.3-aarch64.tar.gz::https://github.com/rizukirr/apic/releases/download/v0.3.3/apic-gui-v0.3.3-aarch64-unknown-linux-gnu.tar.gz
-	sha256sums_aarch64 = e09a19426e401a7cc7882503449bc7ccb11f2ce5f403fc8803dff42165ac4d96
-	sha256sums_aarch64 = ca3b22ac180c926ebeab548ae3ec987dab68ea097e6e4ea5aebad1489ab47d3d
+	sha256sums_aarch64 = 1d41b9473880af9c2b5f9c9b45280407a4dd717d8d56f2b85195c7c7d847fb92
+	sha256sums_aarch64 = 10eb14bf01d61b0372e6d6c29eb17edd961cc21aca24476a9d70531030fdd09f
 
 pkgname = apic-bin

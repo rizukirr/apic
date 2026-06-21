@@ -9,11 +9,6 @@ Source-build Flatpak of the `apic-gui` desktop app for
 - **Status:** submitted to Flathub — https://github.com/flathub/flathub/pull/9041
   (Flathub builds + reviews; merge = published)
 
-> Flathub is **not** self-service like AUR/COPR. Publishing = opening a PR to
-> `flathub/flathub` against the **`new-pr`** branch; their bot builds it and a
-> reviewer approves. Updates after that are pushed to the app's own
-> `flathub/io.github.rizukirr.apic` repo.
-
 ## 1. Prerequisites (Arch / CachyOS)
 
 ```bash
