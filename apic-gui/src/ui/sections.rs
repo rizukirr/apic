@@ -32,7 +32,7 @@ const FOCUS_SCHEMA: &str = "apic.focus.schema";
 
 /// Fraction of the schema/example row given to the schema column; the example
 /// preview takes the remaining ~30%.
-const SCHEMA_COL_FRAC: f32 = 0.6;
+const SCHEMA_COL_FRAC: f32 = 0.5;
 
 /// Renders the full URL the way `apic read`/TUI do, so the GUI never drifts.
 pub(crate) fn build_url(model: &EditModel) -> String {
@@ -522,53 +522,51 @@ pub(crate) fn responses(
                 }
             });
         }
-        weighted_columns(ui, SCHEMA_COL_FRAC, |cols| {
-            section_label(&mut cols[0], "RESPONSE SCHEMA");
+        section_label(ui, "RESPONSE SCHEMA");
+        if editing {
+            let mut path = Vec::new();
+            edit_schema_fields(
+                ui,
+                &BodyLoc::Response(idx),
+                &mut r.schema,
+                &mut path,
+                &mut actions,
+            );
+            schema_add_button(
+                ui,
+                "+ field",
+                &BodyLoc::Response(idx),
+                &[],
+                r.schema.len(),
+                &mut actions,
+            );
+        } else if r.schema.is_empty() {
+            ui.label(RichText::new("(none)").color(DIM));
+        } else {
+            schema_fields(ui, &r.schema, 0);
+        }
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
+            section_label(ui, "EXAMPLE");
             if editing {
-                let mut path = Vec::new();
-                edit_schema_fields(
-                    &mut cols[0],
-                    &BodyLoc::Response(idx),
-                    &mut r.schema,
-                    &mut path,
-                    &mut actions,
-                );
-                schema_add_button(
-                    &mut cols[0],
-                    "+ field",
-                    &BodyLoc::Response(idx),
-                    &[],
-                    r.schema.len(),
-                    &mut actions,
-                );
-            } else if r.schema.is_empty() {
-                cols[0].label(RichText::new("(none)").color(DIM));
-            } else {
-                schema_fields(&mut cols[0], &r.schema, 0);
-            }
-            cols[1].horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
-                section_label(ui, "EXAMPLE");
-                if editing {
-                    if ui
-                        .button(RichText::new("generate from schema").color(GREEN))
-                        .clicked()
-                    {
-                        actions.push(EditAction::GenerateExample {
-                            loc: BodyLoc::Response(idx),
-                        });
-                    }
-                    if ui.button(RichText::new("pretty").color(AMBER)).clicked() {
-                        r.example = apic_core::json::pretty_json(&r.example);
-                    }
+                if ui
+                    .button(RichText::new("generate from schema").color(GREEN))
+                    .clicked()
+                {
+                    actions.push(EditAction::GenerateExample {
+                        loc: BodyLoc::Response(idx),
+                    });
                 }
-            });
-            if editing {
-                code_block(&mut cols[1], &mut r.example);
-            } else {
-                json_block(&mut cols[1], &r.example);
+                if ui.button(RichText::new("pretty").color(AMBER)).clicked() {
+                    r.example = apic_core::json::pretty_json(&r.example);
+                }
             }
         });
+        if editing {
+            code_block(ui, &mut r.example);
+        } else {
+            json_block(ui, &r.example);
+        }
 
         for a in &actions {
             apply(model, a);

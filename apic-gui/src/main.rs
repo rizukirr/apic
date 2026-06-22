@@ -1106,6 +1106,7 @@ impl App {
         egui::SidePanel::left("contracts")
             .resizable(true)
             .default_width(240.0)
+            .min_width(100.0)
             .show(ctx, |ui| {
                 egui::TopBottomPanel::bottom("new_request_bar")
                     .show_separator_line(false)
@@ -1139,15 +1140,9 @@ impl App {
                 }
                 for (i, (name, path)) in templates.iter().enumerate() {
                     ui.horizontal(|ui| {
-                        if ui
-                            .selectable_label(
-                                sel_template == Some(i),
-                                RichText::new(format!("◆ {name}")).color(AMBER),
-                            )
-                            .clicked()
-                        {
-                            action = Some(SidebarAction::LoadTemplate(i));
-                        }
+                        // Reserve the trailing delete button first so the name
+                        // label truncates to the space that's left instead of
+                        // forcing the panel wider than its dragged width.
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
                                 .small_button(RichText::new("-").color(DIM))
@@ -1160,6 +1155,19 @@ impl App {
                                         path: path.clone(),
                                     }));
                             }
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    let label = egui::Button::selectable(
+                                        sel_template == Some(i),
+                                        RichText::new(format!("◆ {name}")).color(AMBER),
+                                    )
+                                    .truncate();
+                                    if ui.add(label).clicked() {
+                                        action = Some(SidebarAction::LoadTemplate(i));
+                                    }
+                                },
+                            );
                         });
                     });
                 }
@@ -1391,7 +1399,9 @@ impl TreeNode {
             let id = ui.make_persistent_id(("tree", &folder_path));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    ui.label(RichText::new(name).color(DIM));
+                    // Trailing buttons are reserved first (right-to-left) so the
+                    // folder name truncates to the remaining width rather than
+                    // forcing the side panel wider than its dragged width.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .small_button(RichText::new("-").color(DIM))
@@ -1407,6 +1417,9 @@ impl TreeNode {
                         {
                             *new_in = Some(format!("{folder_path}/"));
                         }
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add(egui::Label::new(RichText::new(name).color(DIM)).truncate());
+                        });
                     });
                 })
                 .body(|ui| child.show(ui, &folder_path, selected, to_load, new_in, delete));
@@ -1423,12 +1436,10 @@ impl TreeNode {
                         .on_hover_text("Invalid contract — click to repair");
                 }
                 ui.label(RichText::new(method).color(method_color(method)).size(11.0));
-                if ui
-                    .selectable_label(selected == Some(*idx), RichText::new(label).color(TEXT))
-                    .clicked()
-                {
-                    *to_load = Some(*idx);
-                }
+                // Reserve the delete button on the right, then let the file name
+                // truncate into whatever width is left. Without truncation a long
+                // name measures wider than the panel, and egui stores that as the
+                // panel width every frame — blocking resize below the longest name.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .small_button(RichText::new("-").color(DIM))
@@ -1437,6 +1448,16 @@ impl TreeNode {
                     {
                         *delete = Some((rel.clone(), false));
                     }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let file = egui::Button::selectable(
+                            selected == Some(*idx),
+                            RichText::new(label).color(TEXT),
+                        )
+                        .truncate();
+                        if ui.add(file).clicked() {
+                            *to_load = Some(*idx);
+                        }
+                    });
                 });
             });
         }
