@@ -3,10 +3,11 @@
 use crate::picker;
 use crate::render::{render, sanitize};
 use crate::tree;
-use apic_core::config::{Config, InitOutcome, read_config_file};
+use apic_core::config::{Config, InitOutcome, find_apic_dir, read_config_file};
 use apic_core::file::{confine_to_dir, home_relative, read_file, to_slash};
 use apic_core::fuzzy::{fuzzy_find, fuzzy_match_path};
 use apic_core::json::{json_get, scan_json_file};
+use apic_core::template::list_templates;
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::io::{IsTerminal, Write};
@@ -72,8 +73,14 @@ enum Commands {
     /// fuzzy fragment (`user`, `logn`). Exact matches win over fuzzy ones.
     Read {
         /// Contract to read — path, extensionless path, or fuzzy fragment.
-        #[arg(long, short = 'f', value_name = "QUERY")]
-        find: String,
+        #[arg(
+            long,
+            short = 'f',
+            value_name = "QUERY",
+            required_unless_present = "template",
+            conflicts_with = "template"
+        )]
+        find: Option<String>,
 
         /// Show only the response with this HTTP status code (e.g. `401`).
         #[arg(long, short = 's', value_name = "CODE")]
@@ -83,6 +90,11 @@ enum Commands {
         /// instead of the schema tables.
         #[arg(long, short = 'e')]
         example: bool,
+
+        /// Show the project template (in `.apic/template/`) instead of a
+        /// contract, seeding it from the default if it does not exist.
+        #[arg(long)]
+        template: bool,
     },
 
     /// Scaffold a new contract — or, with `--template`, a new project template.
@@ -582,8 +594,59 @@ fn resolve_one(filename: &str) -> Result<Resolved, String> {
     }
 }
 
+/// Reads the project template if present, if multiple templates exist, picks
+/// one, otherwise fails.
+fn read_template_cmd() -> Result<(), String> {
+    let apic_dir = find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
+    let templates = list_templates(&apic_dir);
+    let root = apic_dir.parent().unwrap_or(&apic_dir);
+
+    match classify_template("", &templates) {
+        Resolution::One(path) => match read_file(&path) {
+            Ok(content) => read(&content, None, false),
+            Err(err) => {
+                eprintln!(
+                    "Failed to read {}: {}",
+                    home_relative(&sanitize(&to_slash(&path))),
+                    err
+                );
+                println!("No contract found");
+                Ok(())
+            }
+        },
+        Resolution::None => Err(no_template_error("", &templates, root)),
+        Resolution::Many(candidates) => {
+            let labels: Vec<String> = candidates.iter().map(|c| rel_display(c, root)).collect();
+            if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+                let mut msg = format!("'' is ambiguous, {} templates match:\n", labels.len());
+                for label in &labels {
+                    msg.push_str(&format!("  {label}\n"));
+                }
+                msg.push_str(&format!("Specify the path, e.g. -f {}", labels[0]));
+                return Err(msg);
+            }
+            let prompt = format!("{} templates match \"\":", candidates.len(),);
+            match picker::pick(&prompt, &labels).map_err(|err| format!("picker failed: {err}"))? {
+                Some(_) => Ok(()),
+                None => Ok(()),
+            }
+        }
+    }
+}
+
 /// Handles `apic read`: resolve to one contract, read it, render it.
-fn read_cmd(filename: &str, status: Option<u16>, example: bool) -> Result<(), String> {
+fn read_cmd(
+    filename: Option<&str>,
+    status: Option<u16>,
+    example: bool,
+    template: bool,
+) -> Result<(), String> {
+    if template {
+        return read_template_cmd();
+    }
+
+    // The parser requires `-f` unless `--template` is given, so this is safe.
+    let filename = filename.expect("a find query is required without --template");
     match resolve_one(filename)? {
         Resolved::Path(path) => match read_file(&path) {
             Ok(content) => read(&content, status, example),
@@ -1228,7 +1291,8 @@ pub(crate) fn run() {
             find,
             status,
             example,
-        } => read_cmd(&find, status, example),
+            template,
+        } => read_cmd(find.as_deref(), status, example, template),
         Commands::Validate { find, template } => validate_cmd(template, find.as_deref()),
         Commands::Open {
             find,
