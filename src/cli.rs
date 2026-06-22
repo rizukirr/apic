@@ -626,8 +626,11 @@ fn read_template_cmd() -> Result<(), String> {
                 return Err(msg);
             }
             let prompt = format!("{} templates match \"\":", candidates.len(),);
-            match picker::pick(&prompt, &labels).map_err(|err| format!("picker failed: {err}"))? {
-                Some(_) => Ok(()),
+            match picker::pick(&prompt, &labels).map_err(|err| format!("picker failed: {}", err))? {
+                Some(idx) => match read_file(&templates[idx]) {
+                    Ok(content) => read(&content, None, false),
+                    Err(_) => Err(no_template_error("", &templates, root)),
+                },
                 None => Ok(()),
             }
         }
