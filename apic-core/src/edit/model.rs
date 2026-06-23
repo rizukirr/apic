@@ -489,7 +489,10 @@ pub fn schema_from_example(example: &str) -> Result<Vec<EditSchema>, String> {
         },
         _ => return Err("example must be a JSON object or array of objects".to_string()),
     };
-    Ok(fields.iter().map(|(name, v)| infer_field(name, v)).collect())
+    Ok(fields
+        .iter()
+        .map(|(name, v)| infer_field(name, v))
+        .collect())
 }
 
 /// Builds one `EditSchema` from a JSON `(name, value)` pair, recursing into
