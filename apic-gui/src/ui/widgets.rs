@@ -272,3 +272,20 @@ pub(crate) fn code_block(ui: &mut egui::Ui, raw: &mut String) {
             );
         });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_block_renders_without_panicking() {
+        // Exercises the TextEdit `.layouter` path (which the highlighter unit
+        // tests don't reach) across real JSON, the empty placeholder, and
+        // malformed input.
+        egui::__run_test_ui(|ui| {
+            json_block(ui, "{\n  \"a\": 1,\n  \"ok\": true\n}");
+            json_block(ui, "");
+            json_block(ui, "not json");
+        });
+    }
+}

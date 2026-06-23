@@ -63,7 +63,15 @@ pub(crate) fn highlight_json(text: &str, font_id: FontId, wrap_width: f32) -> La
                 while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
                     i += 1;
                 }
-                append(&mut job, &text[start..i], &font_id, RED);
+                // Only the JSON literals are RED; any other bare word (e.g. the
+                // "(no example)" placeholder) falls back to default text.
+                let word = &text[start..i];
+                let color = if matches!(word, "true" | "false" | "null") {
+                    RED
+                } else {
+                    TEXT
+                };
+                append(&mut job, word, &font_id, color);
             }
             b'{' | b'}' | b'[' | b']' | b':' | b',' => {
                 append(&mut job, &text[i..i + 1], &font_id, DIM);
@@ -84,6 +92,7 @@ pub(crate) fn highlight_json(text: &str, font_id: FontId, wrap_width: f32) -> La
 }
 
 /// Bytes that begin a distinctly-colored token; a default run stops before them.
+/// This set must mirror the non-`_` arms of the `match` in `highlight_json`.
 fn is_significant(b: u8) -> bool {
     matches!(
         b,
@@ -141,5 +150,31 @@ mod tests {
         let json = "{\n  \"nested\": [1, 2, {\"a\": false}]\n}";
         let job = highlight_json(json, FontId::monospace(12.0), f32::INFINITY);
         assert_eq!(job.text, json);
+    }
+
+    #[test]
+    fn handles_non_json_without_panicking() {
+        // Malformed / placeholder input must never panic and must round-trip the
+        // text unchanged (byte indices are clamped, slices land on boundaries).
+        for input in [
+            "(no example)",
+            "",
+            "not json at all",
+            "{\"a\": ",
+            "\"unterminated",
+            "1.5e-3 plus 字",
+        ] {
+            let job = highlight_json(input, FontId::monospace(12.0), f32::INFINITY);
+            assert_eq!(job.text, input, "text must round-trip for {input:?}");
+        }
+    }
+
+    #[test]
+    fn bare_words_that_are_not_literals_are_not_red() {
+        let job = highlight_json("(no example)", FontId::monospace(12.0), f32::INFINITY);
+        assert!(
+            !colors(&job).contains(&RED),
+            "non-literal words must not be colored as JSON literals"
+        );
     }
 }
