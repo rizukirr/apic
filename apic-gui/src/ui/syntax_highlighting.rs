@@ -105,8 +105,16 @@ type JsonHighlightCache = FrameCache<LayoutJob, JsonHighlighter>;
 /// Memoized [`highlight_json`]: caches the `LayoutJob` keyed by `(text, font)`,
 /// so re-rendering unchanged JSON every frame skips re-tokenizing. Wrap width is
 /// not part of the key — the caller sets `job.wrap.max_width` on the result.
-pub(crate) fn highlight_json_cached(ctx: &egui::Context, text: &str, font_id: &FontId) -> LayoutJob {
-    ctx.memory_mut(|mem| mem.caches.cache::<JsonHighlightCache>().get((text, font_id)))
+pub(crate) fn highlight_json_cached(
+    ctx: &egui::Context,
+    text: &str,
+    font_id: &FontId,
+) -> LayoutJob {
+    ctx.memory_mut(|mem| {
+        mem.caches
+            .cache::<JsonHighlightCache>()
+            .get((text, font_id))
+    })
 }
 
 /// Bytes that begin a distinctly-colored token; a default run stops before them.
@@ -114,17 +122,7 @@ pub(crate) fn highlight_json_cached(ctx: &egui::Context, text: &str, font_id: &F
 fn is_significant(b: u8) -> bool {
     matches!(
         b,
-        b'"' | b'-'
-            | b'0'..=b'9'
-            | b't'
-            | b'f'
-            | b'n'
-            | b'{'
-            | b'}'
-            | b'['
-            | b']'
-            | b':'
-            | b','
+        b'"' | b'-' | b'0'..=b'9' | b't' | b'f' | b'n' | b'{' | b'}' | b'[' | b']' | b':' | b','
     )
 }
 
