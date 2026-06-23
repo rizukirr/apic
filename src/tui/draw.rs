@@ -367,7 +367,8 @@ fn push_section(
         // rows are the expanded `type`/`code`/`description` lead rows.
         let schema_rows_exist = field_rows
             .iter()
-            .any(|r| ncols > 0 && r.cells.len() == ncols);
+            .any(|r| ncols > 0 && r.cells.len() == ncols)
+            || has_example;
 
         // Always render the lead kv rows (expanded type/code/description).
         for (ri, row) in section.rows.iter().enumerate() {
