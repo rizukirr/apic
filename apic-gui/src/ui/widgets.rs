@@ -5,7 +5,7 @@
 //! `RichText`/`Frame` recipe at each call site, is what keeps the UI uniform:
 //! one delete button, one add button, one sub-heading, used everywhere.
 
-use eframe::egui;
+use eframe::egui::{self, TextBuffer};
 use egui::{Color32, RichText, Stroke};
 
 use super::theme::{
@@ -233,18 +233,25 @@ pub(crate) fn json_block(ui: &mut egui::Ui, raw: &str) {
     } else {
         apic_core::json::pretty_json(raw)
     };
+    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+    let mut layouter = move |ui: &egui::Ui, buf: &dyn TextBuffer, wrap_width: f32| {
+        let job =
+            super::syntax_highlighting::highlight_json(buf.as_str(), font_id.clone(), wrap_width);
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
     egui::Frame::new()
         .fill(Color32::from_rgb(4, 6, 5))
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             // A read-only code editor preserves the indentation (a plain Label
-            // collapses leading whitespace, flattening the JSON).
+            // collapses leading whitespace, flattening the JSON). The layouter
+            // adds JSON syntax colors on top of that.
             ui.add(
                 egui::TextEdit::multiline(&mut text)
                     .code_editor()
                     .interactive(false)
                     .frame(false)
-                    .text_color(GREEN)
+                    .layouter(&mut layouter)
                     .desired_width(f32::INFINITY),
             );
         });
@@ -257,6 +264,7 @@ pub(crate) fn code_block(ui: &mut egui::Ui, raw: &mut String) {
             ui.add(
                 egui::TextEdit::multiline(raw)
                     .frame(false)
+                    .lock_focus(true)
                     .code_editor()
                     .interactive(true)
                     .desired_width(f32::INFINITY)
