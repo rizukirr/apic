@@ -4,7 +4,7 @@
 
 CLI, TUI, and desktop GUI, all over one shared core (`apic-core`), so every interface edits the same files and never drifts.
 
-<img width="1266" height="899" alt="2026-06-23-172409_hyprshot" src="https://github.com/user-attachments/assets/3444d2dc-91be-4e7c-a203-e36448485b56" />
+<img width="1266" height="896" alt="2026-06-23-172511_hyprshot" src="https://github.com/user-attachments/assets/a899859a-c23c-4e31-93f8-12981ef74c26" />
 
 > ## ROADMAP
 > - Distribution
