@@ -16,5 +16,5 @@ pub use action::{EditAction, apply};
 pub use address::{BodyLoc, Field};
 pub use model::{
     EditBody, EditHeader, EditModel, EditQuery, EditResponse, EditSchema, EditUrl, EditVariable,
-    example_from_schema,
+    example_from_schema, schema_from_example,
 };
