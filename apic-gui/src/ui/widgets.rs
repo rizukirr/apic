@@ -297,4 +297,15 @@ mod tests {
             json_block(ui, "not json");
         });
     }
+
+    #[test]
+    fn code_block_renders_without_panicking() {
+        // Drives the editable layouter path across valid and malformed JSON.
+        egui::__run_test_ui(|ui| {
+            let mut good = "{\n  \"a\": 1,\n  \"ok\": true\n}".to_string();
+            let mut bad = "not json".to_string();
+            code_block(ui, &mut good);
+            code_block(ui, &mut bad);
+        });
+    }
 }
