@@ -4,6 +4,7 @@
 //! example fields as raw `String` buffers so half-typed input is always a
 //! valid in-memory state. Conversion to a real contract happens only on save.
 
+use super::address::BodyLoc;
 use crate::json::Method;
 
 /// The whole contract under edit.
@@ -16,6 +17,10 @@ pub struct EditModel {
     pub headers: Vec<EditHeader>,
     pub request: Option<EditBody>,
     pub responses: Vec<EditResponse>,
+    /// Transient UI feedback as `(which body, message)`, e.g. a failed schema
+    /// inference. Scoped to a `BodyLoc` so it renders only under that body. Not
+    /// serialized.
+    pub last_error: Option<(BodyLoc, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -199,6 +204,7 @@ impl EditModel {
                     example: example_to_text(r.example.as_ref()),
                 })
                 .collect(),
+            last_error: None,
         }
     }
 }
@@ -471,6 +477,73 @@ impl EditSchema {
     }
 }
 
+/// Infers an editor schema (the inverse of [`example_from_schema`]) from an
+/// example JSON string. The example must be a JSON object, or a non-empty array
+/// of objects; each field's type is detected from its value. Returns `Err` with
+/// a human-readable message for malformed JSON or an unusable top-level shape.
+pub fn schema_from_example(example: &str) -> Result<Vec<EditSchema>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(example).map_err(|e| format!("invalid JSON: {e}"))?;
+    let fields = match &value {
+        serde_json::Value::Object(map) => map,
+        serde_json::Value::Array(items) => match items.first() {
+            Some(serde_json::Value::Object(map)) => map,
+            _ => return Err("example must be a JSON object or array of objects".to_string()),
+        },
+        _ => return Err("example must be a JSON object or array of objects".to_string()),
+    };
+    Ok(fields
+        .iter()
+        .map(|(name, v)| infer_field(name, v))
+        .collect())
+}
+
+/// Builds one `EditSchema` from a JSON `(name, value)` pair, recursing into
+/// objects and array element types. `required` is `true` for every present
+/// value except `null` (which carries no type, so it becomes an optional
+/// string). `default`/`description`/`accept` are left empty.
+fn infer_field(name: &str, value: &serde_json::Value) -> EditSchema {
+    use serde_json::Value;
+    let mut field = EditSchema::blank();
+    field.name = name.to_string();
+    field.required = !value.is_null();
+    match value {
+        Value::String(_) => field.dtype = "string".to_string(),
+        Value::Number(n) => field.dtype = number_base(n).to_string(),
+        Value::Bool(_) => field.dtype = "boolean".to_string(),
+        Value::Null => field.dtype = "string".to_string(),
+        Value::Object(map) => {
+            field.dtype = "object".to_string();
+            field.properties = map.iter().map(|(k, v)| infer_field(k, v)).collect();
+        }
+        Value::Array(items) => {
+            field.dtype = format!("{}[]", element_base(items.first()));
+            if let Some(Value::Object(map)) = items.first() {
+                field.properties = map.iter().map(|(k, v)| infer_field(k, v)).collect();
+            }
+        }
+    }
+    field
+}
+
+/// The base type name for an array's elements, taken from the first element.
+/// An empty array (or a nested-array/null element, neither representable as a
+/// single `[]` type) defaults to `string`.
+fn element_base(first: Option<&serde_json::Value>) -> &'static str {
+    use serde_json::Value;
+    match first {
+        Some(Value::Number(n)) => number_base(n),
+        Some(Value::Bool(_)) => "boolean",
+        Some(Value::Object(_)) => "object",
+        _ => "string",
+    }
+}
+
+/// `"int"` for an integer JSON number, `"float"` for a fractional one.
+fn number_base(n: &serde_json::Number) -> &'static str {
+    if n.is_f64() { "float" } else { "int" }
+}
+
 /// Builds an example JSON object from schema fields:
 /// string/file → "{name}", int-like → 0, float-like → 0.0, bool → false,
 /// object with properties → nested object, empty object → {} if required else null,
@@ -636,6 +709,69 @@ mod tests {
         assert_eq!(v["status"], json!(0));
         assert_eq!(v["message"], json!("{message}"));
         assert_eq!(v["data"], serde_json::Value::Null); // object, not required -> null
+    }
+
+    #[test]
+    fn schema_from_example_infers_scalar_types() {
+        let fields =
+            schema_from_example(r#"{"name":"john","age":1,"score":1.5,"ok":true}"#).unwrap();
+        let by = |n: &str| fields.iter().find(|f| f.name == n).unwrap();
+        assert_eq!(by("name").dtype, "string");
+        assert_eq!(by("age").dtype, "int");
+        assert_eq!(by("score").dtype, "float");
+        assert_eq!(by("ok").dtype, "boolean");
+        assert!(by("name").required);
+    }
+
+    #[test]
+    fn schema_from_example_whole_float_is_float() {
+        // A JSON number with a fraction is a float even when whole (`1.0`).
+        let fields = schema_from_example(r#"{"x":1.0}"#).unwrap();
+        assert_eq!(fields[0].dtype, "float");
+    }
+
+    #[test]
+    fn schema_from_example_null_is_optional_string() {
+        let fields = schema_from_example(r#"{"x":null}"#).unwrap();
+        assert_eq!(fields[0].dtype, "string");
+        assert!(!fields[0].required);
+    }
+
+    #[test]
+    fn schema_from_example_nested_object_and_arrays() {
+        let fields = schema_from_example(
+            r#"{"user":{"email":"a@b.c"},"tags":["x"],"nums":[1],"items":[{"id":1}],"empty":[]}"#,
+        )
+        .unwrap();
+        let by = |n: &str| fields.iter().find(|f| f.name == n).unwrap();
+        assert_eq!(by("user").dtype, "object");
+        assert_eq!(by("user").properties[0].name, "email");
+        assert_eq!(by("user").properties[0].dtype, "string");
+        assert_eq!(by("tags").dtype, "string[]");
+        assert_eq!(by("nums").dtype, "int[]");
+        assert_eq!(by("items").dtype, "object[]");
+        assert_eq!(by("items").properties[0].dtype, "int");
+        assert_eq!(by("empty").dtype, "string[]");
+    }
+
+    #[test]
+    fn schema_from_example_top_level_array_of_objects() {
+        let fields = schema_from_example(r#"[{"id":1}]"#).unwrap();
+        assert_eq!(fields[0].name, "id");
+        assert_eq!(fields[0].dtype, "int");
+    }
+
+    #[test]
+    fn schema_from_example_rejects_malformed_json() {
+        let err = schema_from_example("{not json").unwrap_err();
+        assert!(err.starts_with("invalid JSON"), "got: {err}");
+    }
+
+    #[test]
+    fn schema_from_example_rejects_non_object_top_level() {
+        assert!(schema_from_example(r#""just a string""#).is_err());
+        assert!(schema_from_example("[1,2,3]").is_err());
+        assert!(schema_from_example("[]").is_err());
     }
 
     #[test]

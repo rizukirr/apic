@@ -12,7 +12,7 @@
 use super::address::{BodyLoc, Field};
 use super::model::{
     EditBody, EditHeader, EditModel, EditQuery, EditResponse, EditSchema, EditVariable,
-    example_from_schema,
+    example_from_schema, schema_from_example,
 };
 
 /// A single edit to apply to an [`EditModel`].
@@ -38,6 +38,9 @@ pub enum EditAction {
 
     /// Fill a body's example buffer from its schema fields.
     GenerateExample { loc: BodyLoc },
+
+    /// Fill a body's schema from its example buffer (inverse of `GenerateExample`).
+    InferSchema { loc: BodyLoc },
 }
 
 /// Applies `action` to `model`, returning `true` when it changed the model
@@ -55,6 +58,7 @@ pub fn apply(model: &mut EditModel, action: &EditAction) -> bool {
         }
         EditAction::ToggleBodyType { loc } => toggle_body_type(model, loc),
         EditAction::GenerateExample { loc } => generate_example(model, loc),
+        EditAction::InferSchema { loc } => infer_schema(model, loc),
     }
 }
 
@@ -325,6 +329,41 @@ fn generate_example(model: &mut EditModel, loc: &BodyLoc) -> bool {
     true
 }
 
+/// Fills a body's schema from its example buffer (the inverse of
+/// `generate_example`). On a parse/shape error the message is stored in
+/// `model.last_error` and the schema is left unchanged. Returns `true` on success.
+fn infer_schema(model: &mut EditModel, loc: &BodyLoc) -> bool {
+    model.last_error = None;
+    let example = match loc {
+        BodyLoc::Request => model.request.as_ref().map(|b| b.example.clone()),
+        BodyLoc::Response(i) => model.responses.get(*i).map(|r| r.example.clone()),
+    };
+    let Some(example) = example else {
+        return false;
+    };
+    match schema_from_example(&example) {
+        Ok(fields) => {
+            match loc {
+                BodyLoc::Request => {
+                    if let Some(b) = model.request.as_mut() {
+                        b.schema = fields;
+                    }
+                }
+                BodyLoc::Response(i) => {
+                    if let Some(r) = model.responses.get_mut(*i) {
+                        r.schema = fields;
+                    }
+                }
+            }
+            true
+        }
+        Err(msg) => {
+            model.last_error = Some((loc.clone(), msg));
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,6 +467,46 @@ mod tests {
             }
         ));
         assert!(m.request.as_ref().unwrap().example.contains("\"status\""));
+    }
+
+    #[test]
+    fn infer_schema_fills_schema() {
+        let mut m = model();
+        if let Some(b) = m.request.as_mut() {
+            b.example = r#"{"status":1,"label":"x"}"#.to_string();
+            b.schema.clear();
+        }
+        assert!(apply(
+            &mut m,
+            &EditAction::InferSchema {
+                loc: BodyLoc::Request
+            }
+        ));
+        let schema = &m.request.as_ref().unwrap().schema;
+        assert_eq!(
+            schema.iter().find(|f| f.name == "status").unwrap().dtype,
+            "int"
+        );
+        assert_eq!(
+            schema.iter().find(|f| f.name == "label").unwrap().dtype,
+            "string"
+        );
+        assert!(m.last_error.is_none());
+    }
+
+    #[test]
+    fn infer_schema_reports_error_on_invalid() {
+        let mut m = model();
+        if let Some(b) = m.request.as_mut() {
+            b.example = "{bad".to_string();
+        }
+        assert!(!apply(
+            &mut m,
+            &EditAction::InferSchema {
+                loc: BodyLoc::Request
+            }
+        ));
+        assert!(m.last_error.is_some());
     }
 
     #[test]
