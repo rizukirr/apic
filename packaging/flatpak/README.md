@@ -4,7 +4,7 @@ Source-build Flatpak of the `apic-gui` desktop app for
 [Flathub](https://flathub.org/).
 
 - **App id:** `io.github.rizukirr.apic`
-- **Manifest:** `io.github.rizukirr.apic.yml` (builds the `v0.3.4` tag; `apic-gui`
+- **Manifest:** `io.github.rizukirr.apic.yml` (builds the `v0.3.5` tag; `apic-gui`
   picks up `FLATPAK_ID` as its window id, added in `0.3.2`)
 - **Status:** submitted to Flathub — https://github.com/flathub/flathub/pull/9041
   (Flathub builds + reviews; merge = published)
@@ -19,7 +19,7 @@ flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flath
 
 ## 2. Build & test locally
 
-Flathub builds the `v0.3.4` git tag. To test the *current working tree* instead,
+Flathub builds the `v0.3.5` git tag. To test the *current working tree* instead,
 make a throwaway local manifest (gitignored via `*.local.yml`) whose `sources:`
 block builds the local checkout:
 

@@ -1,5 +1,5 @@
 Name:           apic-cli
-Version:        0.3.4
+Version:        0.3.5
 Release:        1%{?dist}
 Summary:        Git-friendly API contracts, CLI/TUI (prebuilt)
 License:        MIT
@@ -67,6 +67,9 @@ cp -p %{SOURCE4} %{_builddir}/LICENSE
 %{_datadir}/icons/hicolor/256x256/apps/apic-gui.png
 
 %changelog
+* Wed Jun 24 2026 Rizki Rakasiwi <tech_salty_team3@salt.co.id> - 0.3.5-1
+- Update to apic 0.3.5.
+
 * Mon Jun 22 2026 Rizki Rakasiwi <tech_salty_team3@salt.co.id> - 0.3.4-1
 - Update to apic 0.3.4.
 
