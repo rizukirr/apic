@@ -10,7 +10,7 @@ use egui::RichText;
 use apic_core::edit::{BodyLoc, EditAction, EditModel, EditSchema, Field, apply};
 use apic_core::json::method_str;
 
-use crate::ui::theme::AMBER;
+use crate::ui::theme::{AMBER, SPACE_LARGE};
 
 use super::theme::{
     BG, CYAN, DIM, GREEN, RED, SPACE_EXTRA_SMALL, SPACE_MEDIUM, SPACE_SMALL, TEXT, method_badge,
@@ -137,7 +137,7 @@ pub(crate) fn parameters(ui: &mut egui::Ui, model: &mut EditModel, editing: bool
             });
         } else {
             let q = &model.url.query[i];
-            kv_row(ui, &q.name, &q.dtype, CYAN);
+            field_view_row(ui, &q.name, &q.dtype, q.required, &q.description, 0);
         }
     }
     if editing && add_button(ui, "+ query") {
@@ -147,7 +147,7 @@ pub(crate) fn parameters(ui: &mut egui::Ui, model: &mut EditModel, editing: bool
         });
     }
 
-    ui.add_space(SPACE_SMALL);
+    ui.add_space(SPACE_LARGE);
     section_label(ui, "PATH VARIABLES");
     if model.url.variable.is_empty() && !editing {
         ui.label(RichText::new("(none)").color(DIM));
@@ -168,7 +168,7 @@ pub(crate) fn parameters(ui: &mut egui::Ui, model: &mut EditModel, editing: bool
             });
         } else {
             let v = &model.url.variable[i];
-            kv_row(ui, &v.name, &v.dtype, CYAN);
+            field_view_row(ui, &v.name, &v.dtype, v.required, &v.description, 0);
         }
     }
     if editing && add_button(ui, "+ variable") {
@@ -228,27 +228,41 @@ pub(crate) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     ui.add_space(SPACE_MEDIUM);
 }
 
+/// Renders a single view-mode field as `name: type [REQUIRED]/[OPTIONAL] desc`.
+/// Shared by the schema viewer and the query/path-variable viewers so query
+/// params and path variables read identically to request/response fields.
+pub(crate) fn field_view_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    dtype: &str,
+    required: bool,
+    description: &str,
+    depth: usize,
+) {
+    ui.horizontal(|ui| {
+        ui.add_space(depth as f32 * 14.0);
+        ui.label(RichText::new(format!("{name}:")).color(TEXT));
+        ui.label(RichText::new(dtype).color(CYAN));
+        if required {
+            ui.label(
+                RichText::new(" REQUIRED ")
+                    .color(BG)
+                    .background_color(RED)
+                    .size(10.0),
+            );
+        } else {
+            ui.label(RichText::new("[OPTIONAL]").color(DIM).size(10.0));
+        }
+        if !description.is_empty() {
+            ui.label(RichText::new(description).color(DIM).size(11.0));
+        }
+    });
+}
+
 /// Renders schema fields as `name: type [REQUIRED]`, recursing into properties.
 pub(crate) fn schema_fields(ui: &mut egui::Ui, fields: &[EditSchema], depth: usize) {
     for f in fields {
-        ui.horizontal(|ui| {
-            ui.add_space(depth as f32 * 14.0);
-            ui.label(RichText::new(format!("{}:", f.name)).color(TEXT));
-            ui.label(RichText::new(&f.dtype).color(CYAN));
-            if f.required {
-                ui.label(
-                    RichText::new(" REQUIRED ")
-                        .color(BG)
-                        .background_color(RED)
-                        .size(10.0),
-                );
-            } else {
-                ui.label(RichText::new("[OPTIONAL]").color(DIM).size(10.0));
-            }
-            if !f.description.is_empty() {
-                ui.label(RichText::new(&f.description).color(DIM).size(11.0));
-            }
-        });
+        field_view_row(ui, &f.name, &f.dtype, f.required, &f.description, depth);
         if !f.properties.is_empty() {
             schema_fields(ui, &f.properties, depth + 1);
         }
