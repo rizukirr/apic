@@ -1199,6 +1199,32 @@ mod tests {
     }
 
     #[test]
+    fn e_key_opens_example_editor_for_response_body() {
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "responses":[{"code":200,"description":"ok","type":"object","schema":[
+                    {"name":"placeholder","type":"int","default":null,"description":"d","required":true}
+                 ]}] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        s.expanded = Some(Expand::Response(0));
+        s.refresh(&m);
+        goto(&mut s, |f| {
+            matches!(f, Field::SchemaName(BodyLoc::Response(0), _))
+        });
+        s.cell = None;
+        let action = handle_normal(&mut s, &mut m, key(KeyCode::Char('e')));
+        assert_eq!(
+            action,
+            Action::OpenExample(Field::BodyExample(BodyLoc::Response(0)), String::new())
+        );
+    }
+
+    #[test]
     fn g_wraps_array_body_example_in_an_array() {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
