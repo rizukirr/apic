@@ -225,11 +225,18 @@ pub(crate) fn type_dropdown(
         });
 }
 
-/// Lay out JSON `text` with syntax highlighting. Shared by the read-only
-/// `json_block` and the editable `code_block` so both color JSON identically.
-fn json_layout(ui: &egui::Ui, text: &str, wrap_width: f32) -> std::sync::Arc<egui::Galley> {
+/// `TextEdit` layouter shared by the read-only `json_block` and the editable
+/// `code_block`, so both color JSON identically. The highlight is memoized per
+/// `(text, font)`, so re-rendering unchanged JSON every frame is cheap.
+fn json_layouter(
+    ui: &egui::Ui,
+    buf: &dyn TextBuffer,
+    wrap_width: f32,
+) -> std::sync::Arc<egui::Galley> {
     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-    let job = super::syntax_highlighting::highlight_json(text, font_id, wrap_width);
+    let mut job =
+        super::syntax_highlighting::highlight_json_cached(ui.ctx(), buf.as_str(), &font_id);
+    job.wrap.max_width = wrap_width;
     ui.fonts_mut(|f| f.layout_job(job))
 }
 
@@ -241,9 +248,7 @@ pub(crate) fn json_block(ui: &mut egui::Ui, raw: &str) {
     } else {
         apic_core::json::pretty_json(raw)
     };
-    let mut layouter = |ui: &egui::Ui, buf: &dyn TextBuffer, wrap_width: f32| {
-        json_layout(ui, buf.as_str(), wrap_width)
-    };
+    let mut layouter = json_layouter;
     egui::Frame::new()
         .fill(Color32::from_rgb(4, 6, 5))
         .inner_margin(egui::Margin::same(8))
@@ -263,9 +268,7 @@ pub(crate) fn json_block(ui: &mut egui::Ui, raw: &str) {
 }
 
 pub(crate) fn code_block(ui: &mut egui::Ui, raw: &mut String) {
-    let mut layouter = |ui: &egui::Ui, buf: &dyn TextBuffer, wrap_width: f32| {
-        json_layout(ui, buf.as_str(), wrap_width)
-    };
+    let mut layouter = json_layouter;
     egui::Frame::group(ui.style())
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {

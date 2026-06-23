@@ -5,6 +5,7 @@
 //! deliberately supports nothing else and pulls in no dependency beyond egui.
 
 use eframe::egui;
+use egui::cache::{ComputerMut, FrameCache};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId};
 
@@ -12,11 +13,10 @@ use super::theme::{AMBER, CYAN, DIM, GREEN, RED, TEXT};
 
 /// Highlight a (pretty-printed) JSON string into a `LayoutJob`.
 ///
-/// `font_id` is the monospace font every token renders in; `wrap_width` is the
-/// available width forwarded from the `TextEdit` layouter.
-pub(crate) fn highlight_json(text: &str, font_id: FontId, wrap_width: f32) -> LayoutJob {
+/// `font_id` is the monospace font every token renders in. The job has no wrap
+/// width set; callers (or [`highlight_json_cached`]) apply that afterward.
+pub(crate) fn highlight_json(text: &str, font_id: FontId) -> LayoutJob {
     let mut job = LayoutJob::default();
-    job.wrap.max_width = wrap_width;
 
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -91,6 +91,24 @@ pub(crate) fn highlight_json(text: &str, font_id: FontId, wrap_width: f32) -> La
     job
 }
 
+#[derive(Default)]
+struct JsonHighlighter;
+
+impl ComputerMut<(&str, &FontId), LayoutJob> for JsonHighlighter {
+    fn compute(&mut self, (text, font_id): (&str, &FontId)) -> LayoutJob {
+        highlight_json(text, font_id.clone())
+    }
+}
+
+type JsonHighlightCache = FrameCache<LayoutJob, JsonHighlighter>;
+
+/// Memoized [`highlight_json`]: caches the `LayoutJob` keyed by `(text, font)`,
+/// so re-rendering unchanged JSON every frame skips re-tokenizing. Wrap width is
+/// not part of the key — the caller sets `job.wrap.max_width` on the result.
+pub(crate) fn highlight_json_cached(ctx: &egui::Context, text: &str, font_id: &FontId) -> LayoutJob {
+    ctx.memory_mut(|mem| mem.caches.cache::<JsonHighlightCache>().get((text, font_id)))
+}
+
 /// Bytes that begin a distinctly-colored token; a default run stops before them.
 /// This set must mirror the non-`_` arms of the `match` in `highlight_json`.
 fn is_significant(b: u8) -> bool {
@@ -137,7 +155,7 @@ mod tests {
     fn colors_each_json_token_type() {
         let json =
             "{\n  \"name\": \"apic\",\n  \"count\": 3,\n  \"ok\": true,\n  \"extra\": null\n}";
-        let job = highlight_json(json, FontId::monospace(12.0), f32::INFINITY);
+        let job = highlight_json(json, FontId::monospace(12.0));
         let cs = colors(&job);
         assert!(cs.contains(&CYAN), "object keys should be CYAN");
         assert!(cs.contains(&GREEN), "string values should be GREEN");
@@ -148,7 +166,7 @@ mod tests {
     #[test]
     fn preserves_the_original_text_exactly() {
         let json = "{\n  \"nested\": [1, 2, {\"a\": false}]\n}";
-        let job = highlight_json(json, FontId::monospace(12.0), f32::INFINITY);
+        let job = highlight_json(json, FontId::monospace(12.0));
         assert_eq!(job.text, json);
     }
 
@@ -164,14 +182,14 @@ mod tests {
             "\"unterminated",
             "1.5e-3 plus 字",
         ] {
-            let job = highlight_json(input, FontId::monospace(12.0), f32::INFINITY);
+            let job = highlight_json(input, FontId::monospace(12.0));
             assert_eq!(job.text, input, "text must round-trip for {input:?}");
         }
     }
 
     #[test]
     fn bare_words_that_are_not_literals_are_not_red() {
-        let job = highlight_json("(no example)", FontId::monospace(12.0), f32::INFINITY);
+        let job = highlight_json("(no example)", FontId::monospace(12.0));
         assert!(
             !colors(&job).contains(&RED),
             "non-literal words must not be colored as JSON literals"
