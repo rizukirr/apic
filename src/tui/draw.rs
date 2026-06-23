@@ -709,6 +709,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ]),
         Row::new(vec!["g", "Generate example from the schema"]),
         Row::new(vec!["G", "Generate schema from the example"]),
+        Row::new(vec!["e", "Edit the example (create one when empty)"]),
         Row::new(vec!["d", "Delete the selected row"]),
         Row::new(vec!["Ctrl-S", "Save"]),
         Row::new(vec!["q", "Quit"]),

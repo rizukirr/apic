@@ -250,6 +250,7 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
             infer_schema_here(state, model);
             Action::None
         }
+        (KeyCode::Char('e'), _) => edit_example_here(state),
         (KeyCode::Char('d'), _) => {
             if let Some(f) = delete_field(state)
                 && is_deletable(&f)
@@ -291,6 +292,21 @@ fn infer_schema_here(state: &mut UiState, model: &mut EditModel) {
         state.refresh(model);
     } else if let Some((_, msg)) = &model.last_error {
         state.status = format!("schema error: {msg}");
+    }
+}
+
+/// Opens the JSON example editor for the request/response body the cursor is in,
+/// so an example can be written even when it (and the schema) are empty. Returns
+/// `Action::None` when the cursor is not inside a body.
+fn edit_example_here(state: &UiState) -> Action {
+    match state.sections.get(state.sec).and_then(|s| s.expand) {
+        Some(Expand::Request) => {
+            Action::OpenExample(Field::BodyExample(BodyLoc::Request), String::new())
+        }
+        Some(Expand::Response(i)) => {
+            Action::OpenExample(Field::BodyExample(BodyLoc::Response(i)), String::new())
+        }
+        _ => Action::None,
     }
 }
 
@@ -1154,6 +1170,32 @@ mod tests {
         handle_normal(&mut s, &mut m, key(KeyCode::Char('G')));
         assert!(m.request.is_none());
         assert!(m.last_error.is_none());
+    }
+
+    #[test]
+    fn e_key_opens_example_editor_for_request_body() {
+        let (mut s, mut m) = request_example_state("");
+        let action = handle_normal(&mut s, &mut m, key(KeyCode::Char('e')));
+        assert_eq!(
+            action,
+            Action::OpenExample(Field::BodyExample(BodyLoc::Request), String::new())
+        );
+    }
+
+    #[test]
+    fn e_key_is_noop_when_cursor_not_in_a_body() {
+        // Default focus is the endpoint section (not a body): `e` does nothing.
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        let action = handle_normal(&mut s, &mut m, key(KeyCode::Char('e')));
+        assert_eq!(action, Action::None);
     }
 
     #[test]
