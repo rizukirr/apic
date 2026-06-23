@@ -104,6 +104,7 @@ pub(crate) fn panel(
 /// width and the right column the rest (minus the inter-column spacing), so a
 /// section can render a wide schema next to a narrow example. Mirrors egui's
 /// own `columns_dyn` layout, just with unequal widths.
+#[allow(unused)]
 pub(crate) fn weighted_columns<R>(
     ui: &mut egui::Ui,
     left_frac: f32,

@@ -19,7 +19,7 @@ use super::theme::{
 use super::widgets::{
     PARAM_TYPES, SCHEMA_TYPES, add_button, bordered_input, bordered_input_colored, code_block,
     delete_button, json_block, kv_row, panel, request_new_row_focus, section_label,
-    take_pending_focus, type_dropdown, weighted_columns,
+    take_pending_focus, type_dropdown,
 };
 
 // egui temp-data keys for the "focus the new row's name field" markers, one per
@@ -29,10 +29,6 @@ const FOCUS_QUERY: &str = "apic.focus.query";
 const FOCUS_VARIABLE: &str = "apic.focus.variable";
 const FOCUS_HEADER: &str = "apic.focus.header";
 const FOCUS_SCHEMA: &str = "apic.focus.schema";
-
-/// Fraction of the schema/example row given to the schema column; the example
-/// preview takes the remaining ~30%.
-const SCHEMA_COL_FRAC: f32 = 0.5;
 
 /// Renders the full URL the way `apic read`/TUI do, so the GUI never drifts.
 pub(crate) fn build_url(model: &EditModel) -> String {
@@ -337,12 +333,15 @@ pub(crate) fn edit_schema_fields(
                 SCHEMA_TYPES,
             );
             ui.checkbox(&mut f.required, RichText::new("req").color(DIM));
-            bordered_input(ui, &mut f.description, 160.0, "description");
-            if delete_button(ui) {
-                actions.push(EditAction::Delete {
-                    field: Field::SchemaName(loc.clone(), path.clone()),
-                });
-            }
+            ui.horizontal(|ui| {
+                let width = ui.available_width();
+                bordered_input(ui, &mut f.description, width - 48.0, "description");
+                if delete_button(ui) {
+                    actions.push(EditAction::Delete {
+                        field: Field::SchemaName(loc.clone(), path.clone()),
+                    });
+                }
+            });
         });
         if !f.properties.is_empty() {
             edit_schema_fields(ui, loc, &mut f.properties, path, actions);
@@ -365,76 +364,76 @@ pub(crate) fn edit_schema_fields(
 }
 
 pub(crate) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
-    panel(ui, "REQUEST_BODY", 0.0, |ui| {
+    panel(ui, "REQUEST BODY", 0.0, |ui| {
         ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
         let mut actions: Vec<EditAction> = Vec::new();
         if let Some(req) = model.request.as_mut() {
-            weighted_columns(ui, SCHEMA_COL_FRAC, |cols| {
-                if editing {
-                    cols[0].horizontal(|ui| {
-                        if ui
-                            .button(RichText::new(format!("type: {}", req.dtype)).color(CYAN))
-                            .clicked()
-                        {
-                            actions.push(EditAction::ToggleBodyType {
-                                loc: BodyLoc::Request,
-                            });
-                        }
-                        if ui.button(RichText::new("remove body").color(RED)).clicked() {
-                            actions.push(EditAction::Add {
-                                field: Field::RequestToggle,
-                            });
-                        }
-                    });
-                }
-                section_label(&mut cols[0], "SCHEMA DEFINITION");
-                if editing {
-                    let mut path = Vec::new();
-                    edit_schema_fields(
-                        &mut cols[0],
-                        &BodyLoc::Request,
-                        &mut req.schema,
-                        &mut path,
-                        &mut actions,
-                    );
-                    schema_add_button(
-                        &mut cols[0],
-                        "+ field",
-                        &BodyLoc::Request,
-                        &[],
-                        req.schema.len(),
-                        &mut actions,
-                    );
-                } else if req.schema.is_empty() {
-                    cols[0].label(RichText::new("(none)").color(DIM));
-                } else {
-                    schema_fields(&mut cols[0], &req.schema, 0);
-                }
-                cols[1].horizontal(|ui| {
-                    section_label(ui, "EXAMPLE");
-                    ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
-                    ui.add_space(SPACE_MEDIUM);
-                    if editing {
-                        if ui
-                            .button(RichText::new("generate from schema").color(GREEN))
-                            .clicked()
-                        {
-                            actions.push(EditAction::GenerateExample {
-                                loc: BodyLoc::Request,
-                            });
-                        }
-
-                        if ui.button(RichText::new("pretty").color(AMBER)).clicked() {
-                            req.example = apic_core::json::pretty_json(&req.example);
-                        }
+            if editing {
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(RichText::new(format!("type: {}", req.dtype)).color(CYAN))
+                        .clicked()
+                    {
+                        actions.push(EditAction::ToggleBodyType {
+                            loc: BodyLoc::Request,
+                        });
+                    }
+                    if ui.button(RichText::new("remove body").color(RED)).clicked() {
+                        actions.push(EditAction::Add {
+                            field: Field::RequestToggle,
+                        });
                     }
                 });
+            }
+            ui.add_space(SPACE_LARGE);
+            section_label(ui, "SCHEMA DEFINITION");
+            if editing {
+                let mut path = Vec::new();
+                edit_schema_fields(
+                    ui,
+                    &BodyLoc::Request,
+                    &mut req.schema,
+                    &mut path,
+                    &mut actions,
+                );
+                schema_add_button(
+                    ui,
+                    "+ field",
+                    &BodyLoc::Request,
+                    &[],
+                    req.schema.len(),
+                    &mut actions,
+                );
+            } else if req.schema.is_empty() {
+                ui.label(RichText::new("(none)").color(DIM));
+            } else {
+                schema_fields(ui, &req.schema, 0);
+            }
+            ui.add_space(SPACE_LARGE);
+            ui.horizontal(|ui| {
+                section_label(ui, "EXAMPLE");
+                ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
+                ui.add_space(SPACE_MEDIUM);
                 if editing {
-                    code_block(&mut cols[1], &mut req.example);
-                } else {
-                    json_block(&mut cols[1], &req.example);
+                    if ui
+                        .button(RichText::new("generate from schema").color(GREEN))
+                        .clicked()
+                    {
+                        actions.push(EditAction::GenerateExample {
+                            loc: BodyLoc::Request,
+                        });
+                    }
+
+                    if ui.button(RichText::new("pretty").color(AMBER)).clicked() {
+                        req.example = apic_core::json::pretty_json(&req.example);
+                    }
                 }
             });
+            if editing {
+                code_block(ui, &mut req.example);
+            } else {
+                json_block(ui, &req.example);
+            }
         } else {
             ui.label(RichText::new("(no request body)").color(DIM));
             if editing && add_button(ui, "+ request body") {
@@ -458,16 +457,10 @@ pub(crate) fn responses(
 ) {
     panel(ui, "RESPONSES", 0.0, |ui| {
         let mut actions: Vec<EditAction> = Vec::new();
-
-        // Tabs (switch between response codes), plus the edit-only `+ response`
-        // button. Shown in preview mode too so the tabs stay clickable; only the
-        // add button is gated on `editing`.
         if editing || !model.responses.is_empty() {
             ui.horizontal_wrapped(|ui| {
                 for (i, r) in model.responses.iter().enumerate() {
                     let label = format!("[ {} ]", if r.code.is_empty() { "?" } else { &r.code });
-                    // Flag a response whose code is not a valid number so the user can
-                    // see which tab is blocking the save.
                     let color = if r.code.trim().parse::<u16>().is_err() {
                         RED
                     } else if i == *resp_tab {
@@ -489,6 +482,8 @@ pub(crate) fn responses(
                 }
             });
         }
+
+        ui.spacing_mut().item_spacing.y = SPACE_SMALL;
 
         if model.responses.is_empty() {
             ui.label(RichText::new("(no responses)").color(DIM));
@@ -559,9 +554,11 @@ pub(crate) fn responses(
         } else {
             schema_fields(ui, &r.schema, 0);
         }
+        ui.add_space(SPACE_LARGE);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
             section_label(ui, "EXAMPLE");
+            ui.add_space(SPACE_MEDIUM);
             if editing {
                 if ui
                     .button(RichText::new("generate from schema").color(GREEN))
