@@ -16,6 +16,8 @@ pub struct EditModel {
     pub headers: Vec<EditHeader>,
     pub request: Option<EditBody>,
     pub responses: Vec<EditResponse>,
+    /// Transient UI feedback (e.g. a failed schema inference). Not serialized.
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -199,6 +201,7 @@ impl EditModel {
                     example: example_to_text(r.example.as_ref()),
                 })
                 .collect(),
+            last_error: None,
         }
     }
 }
