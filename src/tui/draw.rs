@@ -358,9 +358,9 @@ fn push_section(
         Vec::new()
     };
 
-    // BODY sections (REQUEST/RESPONSE) match `apic read`: show the schema table
-    // plus its example when schema fields exist; otherwise show `(none)`
-    // regardless of any example (examples are reachable via `apic read -e`).
+    // BODY sections (REQUEST/RESPONSE): show the schema table plus the inline
+    // example row. The example row always renders (even when the schema and the
+    // example are empty) so it stays reachable and editable in the TUI.
     if section.kind == SectionKind::Body {
         // The real schema fields are the `Field` rows whose cell count equals
         // the column count (NAME/TYPE/REQ/DESCRIPTION); the 2-cell `label value`
@@ -806,7 +806,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_request_body_renders_none_not_example() {
+    fn empty_request_body_renders_editable_example_row() {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
                  "url":{"protocol":"https","host":"h","path":["x"]},
@@ -823,16 +823,13 @@ mod tests {
         terminal.draw(|f| draw(f, &state)).unwrap();
         let buf = terminal.backend().buffer().clone();
         let text: String = buf.content().iter().map(|c| c.symbol()).collect();
-        // The REQUEST section shows `(none)` with no empty example/header line.
-        let req_idx = text.find("REQUEST").expect("REQUEST section present");
+        // An empty body still renders its `Example:` row (showing the empty
+        // placeholder) so the example stays reachable and editable — you can
+        // write an example first, then generate the schema from it.
+        assert!(text.contains("REQUEST"), "REQUEST section present");
         assert!(
-            text[req_idx..].trim_start().starts_with("REQUEST"),
-            "REQUEST present"
-        );
-        assert!(text.contains("(none)"), "empty body shows (none)");
-        assert!(
-            !text.contains("no example provided"),
-            "empty body should not render an Example row"
+            text.contains("no example provided"),
+            "empty body should render the editable example row"
         );
     }
 
