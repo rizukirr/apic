@@ -1058,8 +1058,9 @@ mod tests {
         assert!(m.request.as_ref().unwrap().example.contains("\"status\""));
     }
 
-    #[test]
-    fn cap_g_infers_schema_from_request_example() {
+    /// Builds a model whose request body carries `example` and a `UiState`
+    /// parked on a request schema row, ready for a `G` keypress.
+    fn request_example_state(example: &str) -> (UiState, EditModel) {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
                  "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
@@ -1071,12 +1072,18 @@ mod tests {
         )
         .unwrap();
         let mut m = EditModel::from_contract(c);
-        m.request.as_mut().unwrap().example = r#"{"name":"john","age":1}"#.to_string();
+        m.request.as_mut().unwrap().example = example.to_string();
         let mut s = UiState::new(&m);
         goto(&mut s, |f| {
             matches!(f, Field::SchemaName(BodyLoc::Request, _))
         });
         s.cell = None;
+        (s, m)
+    }
+
+    #[test]
+    fn cap_g_infers_schema_from_request_example() {
+        let (mut s, mut m) = request_example_state(r#"{"name":"john","age":1}"#);
         handle_normal(&mut s, &mut m, key(KeyCode::Char('G')));
         let schema = &m.request.as_ref().unwrap().schema;
         assert_eq!(
@@ -1092,23 +1099,7 @@ mod tests {
 
     #[test]
     fn cap_g_reports_schema_error_on_invalid_example() {
-        let c = json_get(
-            r#"{ "name":"t","method":"POST",
-                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
-                 "request":{"type":"object","schema":[
-                    {"name":"placeholder","type":"int","default":null,"description":"d","required":true}
-                 ]},
-                 "responses":[] }"#,
-            None,
-        )
-        .unwrap();
-        let mut m = EditModel::from_contract(c);
-        m.request.as_mut().unwrap().example = "{bad".to_string();
-        let mut s = UiState::new(&m);
-        goto(&mut s, |f| {
-            matches!(f, Field::SchemaName(BodyLoc::Request, _))
-        });
-        s.cell = None;
+        let (mut s, mut m) = request_example_state("{bad");
         handle_normal(&mut s, &mut m, key(KeyCode::Char('G')));
         assert!(m.last_error.is_some());
         assert!(
@@ -1116,6 +1107,53 @@ mod tests {
             "status was: {}",
             s.status
         );
+    }
+
+    #[test]
+    fn cap_g_infers_schema_from_response_example() {
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "responses":[{"code":200,"description":"ok","type":"object","schema":[
+                    {"name":"placeholder","type":"int","default":null,"description":"d","required":true}
+                 ]}] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        m.responses[0].example = r#"{"token":"abc"}"#.to_string();
+        let mut s = UiState::new(&m);
+        s.expanded = Some(Expand::Response(0));
+        s.refresh(&m);
+        goto(&mut s, |f| {
+            matches!(f, Field::SchemaName(BodyLoc::Response(0), _))
+        });
+        s.cell = None;
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('G')));
+        let schema = &m.responses[0].schema;
+        assert_eq!(
+            schema.iter().find(|f| f.name == "token").unwrap().dtype,
+            "string"
+        );
+        assert!(m.last_error.is_none());
+    }
+
+    #[test]
+    fn cap_g_is_a_noop_when_cursor_not_in_a_body() {
+        // No body under the cursor (default focus on the endpoint section):
+        // `G` resolves no `BodyLoc` and must do nothing.
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('G')));
+        assert!(m.request.is_none());
+        assert!(m.last_error.is_none());
     }
 
     #[test]
