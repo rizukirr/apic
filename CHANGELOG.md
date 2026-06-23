@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-06-24
+
+### Added
+- `apic-gui` renders JSON request/response examples with syntax highlighting, in
+  both the read-only view and the editable body editor.
+- Generate a body's schema from its example JSON (the inverse of generating an
+  example from the schema): a "generate schema from example" button in
+  `apic-gui`, and the `G` key in the TUI, with each field's type inferred from
+  its value.
+- TUI `e` key to edit a body's example directly, so an example can be written
+  even when the schema is empty (then `G` infers the schema from it).
+
+### Changed
+- The TUI keeps a body's example visible when its schema is empty, so the
+  example stays reachable and editable.
+
 ## [0.3.4] - 2026-06-22
 
 ### Added
