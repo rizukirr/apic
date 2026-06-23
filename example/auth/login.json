@@ -4,7 +4,26 @@
     "method": "POST",
     "url": {
         "protocol": "https",
-        "host": "api.example.com"
+        "host": "api.example.com",
+        "query": [
+            {
+                "name": "id",
+                "type": "string",
+                "required": true
+            },
+            {
+                "name": "name",
+                "type": "string",
+                "required": false
+            }
+        ],
+        "variable": [
+            {
+                "name": "uuid",
+                "type": "string",
+                "required": true
+            }
+        ]
     },
     "headers": [
         {
