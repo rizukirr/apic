@@ -4,6 +4,7 @@
 //! example fields as raw `String` buffers so half-typed input is always a
 //! valid in-memory state. Conversion to a real contract happens only on save.
 
+use super::address::BodyLoc;
 use crate::json::Method;
 
 /// The whole contract under edit.
@@ -16,8 +17,10 @@ pub struct EditModel {
     pub headers: Vec<EditHeader>,
     pub request: Option<EditBody>,
     pub responses: Vec<EditResponse>,
-    /// Transient UI feedback (e.g. a failed schema inference). Not serialized.
-    pub last_error: Option<String>,
+    /// Transient UI feedback as `(which body, message)`, e.g. a failed schema
+    /// inference. Scoped to a `BodyLoc` so it renders only under that body. Not
+    /// serialized.
+    pub last_error: Option<(BodyLoc, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -506,9 +509,7 @@ fn infer_field(name: &str, value: &serde_json::Value) -> EditSchema {
     field.required = !value.is_null();
     match value {
         Value::String(_) => field.dtype = "string".to_string(),
-        Value::Number(n) => {
-            field.dtype = if n.is_f64() { "float" } else { "int" }.to_string();
-        }
+        Value::Number(n) => field.dtype = number_base(n).to_string(),
         Value::Bool(_) => field.dtype = "boolean".to_string(),
         Value::Null => field.dtype = "string".to_string(),
         Value::Object(map) => {
@@ -531,17 +532,16 @@ fn infer_field(name: &str, value: &serde_json::Value) -> EditSchema {
 fn element_base(first: Option<&serde_json::Value>) -> &'static str {
     use serde_json::Value;
     match first {
-        Some(Value::Number(n)) => {
-            if n.is_f64() {
-                "float"
-            } else {
-                "int"
-            }
-        }
+        Some(Value::Number(n)) => number_base(n),
         Some(Value::Bool(_)) => "boolean",
         Some(Value::Object(_)) => "object",
         _ => "string",
     }
+}
+
+/// `"int"` for an integer JSON number, `"float"` for a fractional one.
+fn number_base(n: &serde_json::Number) -> &'static str {
+    if n.is_f64() { "float" } else { "int" }
 }
 
 /// Builds an example JSON object from schema fields:
@@ -721,6 +721,13 @@ mod tests {
         assert_eq!(by("score").dtype, "float");
         assert_eq!(by("ok").dtype, "boolean");
         assert!(by("name").required);
+    }
+
+    #[test]
+    fn schema_from_example_whole_float_is_float() {
+        // A JSON number with a fraction is a float even when whole (`1.0`).
+        let fields = schema_from_example(r#"{"x":1.0}"#).unwrap();
+        assert_eq!(fields[0].dtype, "float");
     }
 
     #[test]

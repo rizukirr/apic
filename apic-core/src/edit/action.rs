@@ -358,7 +358,7 @@ fn infer_schema(model: &mut EditModel, loc: &BodyLoc) -> bool {
             true
         }
         Err(msg) => {
-            model.last_error = Some(msg);
+            model.last_error = Some((loc.clone(), msg));
             false
         }
     }

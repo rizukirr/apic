@@ -454,7 +454,7 @@ pub(crate) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bo
         for a in &actions {
             apply(model, a);
         }
-        if let Some(err) = &model.last_error {
+        if let Some((BodyLoc::Request, err)) = &model.last_error {
             ui.label(RichText::new(err.as_str()).color(RED));
         }
         ui.add_space(SPACE_MEDIUM);
@@ -603,7 +603,9 @@ pub(crate) fn responses(
             apply(model, a);
         }
 
-        if let Some(err) = &model.last_error {
+        if let Some((BodyLoc::Response(i), err)) = &model.last_error
+            && *i == idx
+        {
             ui.label(RichText::new(err.as_str()).color(RED));
         }
         ui.add_space(SPACE_MEDIUM);
