@@ -5,7 +5,7 @@
 //! `RichText`/`Frame` recipe at each call site, is what keeps the UI uniform:
 //! one delete button, one add button, one sub-heading, used everywhere.
 
-use eframe::egui;
+use eframe::egui::{self, TextBuffer};
 use egui::{Color32, RichText, Stroke};
 
 use super::theme::{
@@ -225,6 +225,21 @@ pub(crate) fn type_dropdown(
         });
 }
 
+/// `TextEdit` layouter shared by the read-only `json_block` and the editable
+/// `code_block`, so both color JSON identically. The highlight is memoized per
+/// `(text, font)`, so re-rendering unchanged JSON every frame is cheap.
+fn json_layouter(
+    ui: &egui::Ui,
+    buf: &dyn TextBuffer,
+    wrap_width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+    let mut job =
+        super::syntax_highlighting::highlight_json_cached(ui.ctx(), buf.as_str(), &font_id);
+    job.wrap.max_width = wrap_width;
+    ui.fonts_mut(|f| f.layout_job(job))
+}
+
 /// A read-only, indentation-preserving JSON block (pretty-printed via the
 /// shared core formatter so it matches `apic read`/TUI exactly).
 pub(crate) fn json_block(ui: &mut egui::Ui, raw: &str) {
@@ -233,34 +248,67 @@ pub(crate) fn json_block(ui: &mut egui::Ui, raw: &str) {
     } else {
         apic_core::json::pretty_json(raw)
     };
+    let mut layouter = json_layouter;
     egui::Frame::new()
         .fill(Color32::from_rgb(4, 6, 5))
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             // A read-only code editor preserves the indentation (a plain Label
-            // collapses leading whitespace, flattening the JSON).
+            // collapses leading whitespace, flattening the JSON). The layouter
+            // adds JSON syntax colors on top of that.
             ui.add(
                 egui::TextEdit::multiline(&mut text)
                     .code_editor()
                     .interactive(false)
                     .frame(false)
-                    .text_color(GREEN)
+                    .layouter(&mut layouter)
                     .desired_width(f32::INFINITY),
             );
         });
 }
 
 pub(crate) fn code_block(ui: &mut egui::Ui, raw: &mut String) {
+    let mut layouter = json_layouter;
     egui::Frame::group(ui.style())
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.add(
                 egui::TextEdit::multiline(raw)
                     .frame(false)
+                    .lock_focus(true)
                     .code_editor()
                     .interactive(true)
+                    .layouter(&mut layouter)
                     .desired_width(f32::INFINITY)
                     .desired_rows(10),
             );
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_block_renders_without_panicking() {
+        // Exercises the TextEdit `.layouter` path (which the highlighter unit
+        // tests don't reach) across real JSON, the empty placeholder, and
+        // malformed input.
+        egui::__run_test_ui(|ui| {
+            json_block(ui, "{\n  \"a\": 1,\n  \"ok\": true\n}");
+            json_block(ui, "");
+            json_block(ui, "not json");
+        });
+    }
+
+    #[test]
+    fn code_block_renders_without_panicking() {
+        // Drives the editable layouter path across valid and malformed JSON.
+        egui::__run_test_ui(|ui| {
+            let mut good = "{\n  \"a\": 1,\n  \"ok\": true\n}".to_string();
+            let mut bad = "not json".to_string();
+            code_block(ui, &mut good);
+            code_block(ui, &mut bad);
+        });
+    }
 }

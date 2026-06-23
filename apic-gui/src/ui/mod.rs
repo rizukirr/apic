@@ -4,5 +4,6 @@
 //! back out to the application state.
 
 pub(crate) mod sections;
+pub(crate) mod syntax_highlighting;
 pub(crate) mod theme;
 pub(crate) mod widgets;
