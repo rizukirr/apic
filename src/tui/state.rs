@@ -246,6 +246,11 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
             generate_example_here(state, model);
             Action::None
         }
+        (KeyCode::Char('G'), _) => {
+            infer_schema_here(state, model);
+            Action::None
+        }
+        (KeyCode::Char('e'), _) => edit_example_here(state),
         (KeyCode::Char('d'), _) => {
             if let Some(f) = delete_field(state)
                 && is_deletable(&f)
@@ -269,6 +274,39 @@ fn generate_example_here(state: &mut UiState, model: &mut EditModel) {
     if apply(model, &EditAction::GenerateExample { loc }) {
         state.dirty = true;
         state.refresh(model);
+    }
+}
+
+/// Fills the schema of the request/response body the cursor is in from that
+/// body's example buffer (inverse of `generate_example_here`). On a parse/shape
+/// error the message is shown on the status line; on success the rows are
+/// refreshed and no status message is shown.
+fn infer_schema_here(state: &mut UiState, model: &mut EditModel) {
+    let loc = match state.sections.get(state.sec).and_then(|s| s.expand) {
+        Some(Expand::Request) => BodyLoc::Request,
+        Some(Expand::Response(i)) => BodyLoc::Response(i),
+        _ => return,
+    };
+    if apply(model, &EditAction::InferSchema { loc }) {
+        state.dirty = true;
+        state.refresh(model);
+    } else if let Some((_, msg)) = &model.last_error {
+        state.status = format!("schema error: {msg}");
+    }
+}
+
+/// Opens the JSON example editor for the request/response body the cursor is in,
+/// so an example can be written even when it (and the schema) are empty. Returns
+/// `Action::None` when the cursor is not inside a body.
+fn edit_example_here(state: &UiState) -> Action {
+    match state.sections.get(state.sec).and_then(|s| s.expand) {
+        Some(Expand::Request) => {
+            Action::OpenExample(Field::BodyExample(BodyLoc::Request), String::new())
+        }
+        Some(Expand::Response(i)) => {
+            Action::OpenExample(Field::BodyExample(BodyLoc::Response(i)), String::new())
+        }
+        _ => Action::None,
     }
 }
 
@@ -1034,6 +1072,156 @@ mod tests {
         s.cell = None;
         handle_normal(&mut s, &mut m, key(KeyCode::Char('g')));
         assert!(m.request.as_ref().unwrap().example.contains("\"status\""));
+    }
+
+    /// Builds a model whose request body carries `example` and a `UiState`
+    /// parked on a request schema row, ready for a `G` keypress.
+    fn request_example_state(example: &str) -> (UiState, EditModel) {
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "request":{"type":"object","schema":[
+                    {"name":"placeholder","type":"int","default":null,"description":"d","required":true}
+                 ]},
+                 "responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        m.request.as_mut().unwrap().example = example.to_string();
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| {
+            matches!(f, Field::SchemaName(BodyLoc::Request, _))
+        });
+        s.cell = None;
+        (s, m)
+    }
+
+    #[test]
+    fn cap_g_infers_schema_from_request_example() {
+        let (mut s, mut m) = request_example_state(r#"{"name":"john","age":1}"#);
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('G')));
+        let schema = &m.request.as_ref().unwrap().schema;
+        assert_eq!(
+            schema.iter().find(|f| f.name == "name").unwrap().dtype,
+            "string"
+        );
+        assert_eq!(
+            schema.iter().find(|f| f.name == "age").unwrap().dtype,
+            "int"
+        );
+        assert!(m.last_error.is_none());
+    }
+
+    #[test]
+    fn cap_g_reports_schema_error_on_invalid_example() {
+        let (mut s, mut m) = request_example_state("{bad");
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('G')));
+        assert!(m.last_error.is_some());
+        assert!(
+            s.status.starts_with("schema error"),
+            "status was: {}",
+            s.status
+        );
+    }
+
+    #[test]
+    fn cap_g_infers_schema_from_response_example() {
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "responses":[{"code":200,"description":"ok","type":"object","schema":[
+                    {"name":"placeholder","type":"int","default":null,"description":"d","required":true}
+                 ]}] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        m.responses[0].example = r#"{"token":"abc"}"#.to_string();
+        let mut s = UiState::new(&m);
+        s.expanded = Some(Expand::Response(0));
+        s.refresh(&m);
+        goto(&mut s, |f| {
+            matches!(f, Field::SchemaName(BodyLoc::Response(0), _))
+        });
+        s.cell = None;
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('G')));
+        let schema = &m.responses[0].schema;
+        assert_eq!(
+            schema.iter().find(|f| f.name == "token").unwrap().dtype,
+            "string"
+        );
+        assert!(m.last_error.is_none());
+    }
+
+    #[test]
+    fn cap_g_is_a_noop_when_cursor_not_in_a_body() {
+        // No body under the cursor (default focus on the endpoint section):
+        // `G` resolves no `BodyLoc` and must do nothing.
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('G')));
+        assert!(m.request.is_none());
+        assert!(m.last_error.is_none());
+    }
+
+    #[test]
+    fn e_key_opens_example_editor_for_request_body() {
+        let (mut s, mut m) = request_example_state("");
+        let action = handle_normal(&mut s, &mut m, key(KeyCode::Char('e')));
+        assert_eq!(
+            action,
+            Action::OpenExample(Field::BodyExample(BodyLoc::Request), String::new())
+        );
+    }
+
+    #[test]
+    fn e_key_is_noop_when_cursor_not_in_a_body() {
+        // Default focus is the endpoint section (not a body): `e` does nothing.
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        let action = handle_normal(&mut s, &mut m, key(KeyCode::Char('e')));
+        assert_eq!(action, Action::None);
+    }
+
+    #[test]
+    fn e_key_opens_example_editor_for_response_body() {
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "responses":[{"code":200,"description":"ok","type":"object","schema":[
+                    {"name":"placeholder","type":"int","default":null,"description":"d","required":true}
+                 ]}] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        s.expanded = Some(Expand::Response(0));
+        s.refresh(&m);
+        goto(&mut s, |f| {
+            matches!(f, Field::SchemaName(BodyLoc::Response(0), _))
+        });
+        s.cell = None;
+        let action = handle_normal(&mut s, &mut m, key(KeyCode::Char('e')));
+        assert_eq!(
+            action,
+            Action::OpenExample(Field::BodyExample(BodyLoc::Response(0)), String::new())
+        );
     }
 
     #[test]
