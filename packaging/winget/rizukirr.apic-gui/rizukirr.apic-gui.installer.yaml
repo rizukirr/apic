@@ -1,14 +1,12 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
 PackageIdentifier: rizukirr.apic-gui
-PackageVersion: 0.3.5
-InstallerType: zip
-NestedInstallerType: portable
-NestedInstallerFiles:
-- RelativeFilePath: apic-gui.exe
-  PortableCommandAlias: apic-gui
+PackageVersion: 0.3.6
+InstallerType: wix
 Installers:
 - Architecture: x64
-  InstallerUrl: https://github.com/rizukirr/apic/releases/download/v0.3.5/apic-gui-v0.3.5-x86_64-pc-windows-msvc.zip
-  InstallerSha256: 58F727941676E40AB0F2046120553C9D766AE428252E704BE58AD277B511185B
+  InstallerUrl: https://github.com/rizukirr/apic/releases/download/v0.3.6/apic-gui-v0.3.6-x86_64.msi
+  # Placeholder — replace with the contents of apic-gui-v0.3.6-x86_64.msi.sha256
+  # from the v0.3.6 GitHub release before submitting to winget-pkgs.
+  InstallerSha256: '0000000000000000000000000000000000000000000000000000000000000000'
 ManifestType: installer
 ManifestVersion: 1.6.0
