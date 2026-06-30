@@ -112,6 +112,26 @@ jobs:
           include: ${{ runner.os == 'Linux' && 'apic-gui/dist/install-linux.sh apic-gui/dist/apic-gui.desktop apic-gui/assets/icon.png' || '' }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Windows only: build a real MSI (Start Menu shortcut + uninstall entry) so
+      # winget can install the GUI like a normal desktop app, uploaded alongside
+      # the portable .zip above. cargo-wix drives the WiX v3 toolset, which we
+      # fetch as a portable zip (no admin / no runner-image assumptions).
+      - name: Build and upload MSI (Windows)
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo install cargo-wix --locked
+          $wix = Join-Path $env:RUNNER_TEMP 'wix314'
+          Invoke-WebRequest 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip' -OutFile "$env:RUNNER_TEMP\wix.zip"
+          Expand-Archive "$env:RUNNER_TEMP\wix.zip" -DestinationPath $wix -Force
+          $env:PATH = "$wix;$env:PATH"
+          $msi = "apic-gui-$($env:GITHUB_REF_NAME)-x86_64.msi"
+          cargo wix --package apic-gui --nocapture --output $msi
+          (Get-FileHash $msi -Algorithm SHA256).Hash.ToLower() + "  $msi" | Out-File "$msi.sha256" -Encoding ascii
+          gh release upload "$env:GITHUB_REF_NAME" "$msi" "$msi.sha256" --clobber
+
   # Wraps the macOS GUI binary into a double-clickable apic.app (with the icns
   # icon) and uploads it as apic-gui-$tag-<target>.app.zip, alongside the plain
   # binary archives from the job above. Unsigned: first launch needs right-click
