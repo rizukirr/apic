@@ -9,8 +9,6 @@ NestedInstallerFiles:
 Installers:
 - Architecture: x64
   InstallerUrl: https://github.com/rizukirr/apic/releases/download/v0.3.6/apic-v0.3.6-x86_64-pc-windows-msvc.zip
-  # Placeholder — replace with the contents of apic-v0.3.6-x86_64-pc-windows-msvc.zip.sha256
-  # from the v0.3.6 GitHub release before submitting to winget-pkgs.
-  InstallerSha256: '0000000000000000000000000000000000000000000000000000000000000000'
+  InstallerSha256: C73F587ABED7B054CA47D99EDD6EBFD687F1BAC81D780D46D7B2566B819D736D
 ManifestType: installer
 ManifestVersion: 1.6.0
