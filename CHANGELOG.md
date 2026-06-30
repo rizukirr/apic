@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-06-30
+
+### Added
+- Windows: `apic-gui` now ships as an MSI installer (via winget) that adds an
+  **apic** entry to the Start menu and an uninstaller in Settings → Apps.
+
+### Fixed
+- Windows: `apic-gui` uses the wgpu (DirectX) renderer, so it launches in
+  environments without an OpenGL driver (VMs, RDP, fresh installs) where the
+  previous OpenGL backend failed to open a window.
+
 ## [0.3.5] - 2026-06-24
 
 ### Added

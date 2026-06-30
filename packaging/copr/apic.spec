@@ -1,5 +1,5 @@
 Name:           apic-cli
-Version:        0.3.5
+Version:        0.3.6
 Release:        1%{?dist}
 Summary:        Git-friendly API contracts, CLI/TUI (prebuilt)
 License:        MIT
@@ -67,6 +67,10 @@ cp -p %{SOURCE4} %{_builddir}/LICENSE
 %{_datadir}/icons/hicolor/256x256/apps/apic-gui.png
 
 %changelog
+* Tue Jun 30 2026 Rizki Rakasiwi <rizkirr.xyz@gmail.com> - 0.3.6-1
+- Windows: apic-gui ships as an MSI (Start menu shortcut + uninstaller) and uses
+  the wgpu renderer so it launches without an OpenGL driver. (No Linux change.)
+
 * Wed Jun 24 2026 Rizki Rakasiwi <rizkirr.xyz@gmail.com> - 0.3.5-1
 - Update to apic 0.3.5.
 

@@ -35,7 +35,7 @@ Mainstream API tooling gates collaboration behind paywalls, charging per team me
 - **Arch / CachyOS (AUR):** `yay -S apic-bin` (or `paru -S apic-bin`) — ships both binaries.
 - **Fedora (COPR):** `sudo dnf copr enable rizukirr/apic && sudo dnf install apic-cli apic-gui`.
 - **Flatpak:** `flatpak install io.github.rizukirr.apic` (GUI)
-- **Windows (winget):** `winget install rizukirr.apic` (CLI) · `winget install rizukirr.apic-gui` (GUI).
+- **Windows (winget):** `winget install rizukirr.apic` (CLI) · `winget install rizukirr.apic-gui` (GUI). The GUI installs as an MSI that adds an **apic** entry to the Start menu and an uninstaller in Settings → Apps.
 
 ### CLI / TUI (`apic`)
 

@@ -1,6 +1,6 @@
 [package]
 name = "apic-gui"
-version = "0.3.5"
+version = "0.3.6"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Rizki Rakasiwi"]
@@ -13,7 +13,7 @@ name = "apic-gui"
 path = "src/main.rs"
 
 [dependencies]
-apic-core = { path = "../apic-core", version = "0.3.5" }
+apic-core = { path = "../apic-core", version = "0.3.6" }
 eframe = "0.33.3"
 rfd = "0.17.2"
 dirs = "6"
@@ -23,3 +23,10 @@ pollster = "0.4"
 # the .exe via build.rs. Other hosts skip it entirely.
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+# On Windows, also compile eframe's wgpu (DirectX) renderer. With both `glow`
+# (eframe default) and `wgpu` enabled, eframe's `Renderer::default()` selects
+# wgpu, which works in driverless environments (VMs / RDP / winget's validation
+# sandbox) where OpenGL is unavailable. Linux/macOS keep the glow default.
+[target.'cfg(windows)'.dependencies]
+eframe = { version = "0.33.3", features = ["wgpu"] }
