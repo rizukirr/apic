@@ -102,26 +102,24 @@
                             KeyPath='yes'/>
                     </Component>
                     
-                    <Directory Id='Bin' Name='bin'>
-                        <Component Id='Path' Guid='42A13B6A-D871-41B3-AEF3-8E09D8174F30' KeyPath='yes'>
-                            <Environment
-                                Id='PATH'
-                                Name='PATH'
-                                Value='[Bin]'
-                                Permanent='no'
-                                Part='last'
-                                Action='set'
-                                System='yes'/>
-                        </Component>
-                        <Component Id='binary0' Guid='*'>
-                            <File
-                                Id='exe0'
-                                Name='apic-gui.exe'
-                                DiskId='1'
-                                Source='$(var.CargoTargetBinDir)\apic-gui.exe'
-                                KeyPath='yes'/>
-                        </Component>
-                    </Directory>
+                    <Component Id='Path' Guid='42A13B6A-D871-41B3-AEF3-8E09D8174F30' KeyPath='yes'>
+                        <Environment
+                            Id='PATH'
+                            Name='PATH'
+                            Value='[APPLICATIONFOLDER]'
+                            Permanent='no'
+                            Part='last'
+                            Action='set'
+                            System='yes'/>
+                    </Component>
+                    <Component Id='binary0' Guid='*'>
+                        <File
+                            Id='exe0'
+                            Name='apic-gui.exe'
+                            DiskId='1'
+                            Source='$(var.CargoTargetBinDir)\apic-gui.exe'
+                            KeyPath='yes'/>
+                    </Component>
                 </Directory>
             </Directory>
 
