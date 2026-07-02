@@ -1,0 +1,7 @@
+# Statically link the MSVC C runtime on Windows so the executables do not depend
+# on the Visual C++ Redistributable (vcruntime140.dll / msvcp140.dll). This makes
+# the Windows binaries self-contained: they run on a clean Windows install — and
+# pass winget's clean-VM validation — without the VCRedist being present. Scoped
+# to the Windows MSVC target only; Linux and macOS builds are unaffected.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
