@@ -24,7 +24,7 @@ fn seed_value(overlay: Option<&str>) -> Result<Value, String> {
 }
 
 /// Prepares the builtin template as a create seed: keeps scalar default values
-/// (name, description, method, protocol, host, types) but EMPTIES every array so
+/// (name, description, method, url, types) but EMPTIES every array so
 /// a new contract starts with no leftover items, and clears every `example`.
 /// The project template overlay then replaces any arrays/values it
 /// defines.
@@ -79,12 +79,9 @@ mod tests {
         let m = seed_model(None).unwrap();
         // The builtin template's scalar defaults are kept.
         assert_eq!(m.name, "endpoint-name");
-        assert_eq!(m.url.protocol, "https");
-        assert_eq!(m.url.host, "api.example.com");
+        assert_eq!(m.url, "https://api.example.com/v1/resource/{id}");
         // Every array starts empty.
-        assert!(m.url.path.is_empty());
-        assert!(m.url.query.is_empty());
-        assert!(m.url.variable.is_empty());
+        assert!(m.query.is_empty());
         assert!(m.headers.is_empty());
         assert!(m.responses.is_empty());
         // The trimmed builtin default has no request section.
@@ -94,13 +91,13 @@ mod tests {
     #[test]
     fn overlay_values_are_kept() {
         let overlay = r#"{ "name": "real-endpoint",
-            "url": { "host": "api.real.com" } }"#;
+            "url": "https://api.real.com/v2" }"#;
         let m = seed_model(Some(overlay)).unwrap();
         assert_eq!(m.name, "real-endpoint");
-        assert_eq!(m.url.host, "api.real.com");
-        // A scalar only the builtin defines (protocol) is kept, NOT blanked.
-        assert_eq!(m.url.protocol, "https");
-        assert!(m.url.path.is_empty());
+        // The overlay's url string replaces the builtin default.
+        assert_eq!(m.url, "https://api.real.com/v2");
+        // A scalar only the builtin defines (method) is kept, NOT blanked.
+        assert_eq!(apic_core::json::method_str(&m.method), "POST");
     }
 
     #[test]

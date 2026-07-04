@@ -2,13 +2,13 @@
 //!
 //! `flatten` emits a `Vec<Section>` that mirrors exactly what `apic read`
 //! prints (see `crate::render::Printer`): a bespoke header block followed by the
-//! `VARIABLE`/`QUERY`/`HEADERS`/`REQUEST`/`RESPONSE` sections, each carrying an
+//! `QUERY`/`HEADERS`/`REQUEST`/`RESPONSE` sections, each carrying an
 //! `add: Option<Field>` so the `a` key knows what to append. Every editable
 //! `Cell` carries a `Field` address that the handlers in `state.rs` use to
 //! locate the target in the model (including the path through nested schema
 //! `properties`).
 
-use crate::tui::model::{EditModel, EditSchema, EditUrl};
+use crate::tui::model::{EditModel, EditSchema};
 // The cell-address enums are UI-agnostic and live in core so a GUI can reuse
 // them; re-exported here under the path the TUI already uses.
 pub(crate) use apic_core::edit::{BodyLoc, Field};
@@ -156,23 +156,6 @@ fn example_row(loc: BodyLoc, raw: String) -> TableRow {
     }
 }
 
-/// Inverse-free display URL, matching `render::build_url`'s rules over EditUrl.
-fn built_url(u: &EditUrl) -> String {
-    let path = u.path.join("/");
-    let authority = if u.host.is_empty() {
-        String::new()
-    } else if u.protocol.is_empty() {
-        u.host.clone()
-    } else {
-        format!("{}://{}", u.protocol, u.host)
-    };
-    match (authority.is_empty(), path.is_empty()) {
-        (true, _) => format!("/{path}"),
-        (false, true) => authority,
-        (false, false) => format!("{}/{path}", authority.trim_end_matches('/')),
-    }
-}
-
 /// True if any field at any depth declares `accept`.
 fn any_accept(fields: &[EditSchema]) -> bool {
     fields
@@ -274,27 +257,16 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
             prefix: String::new(),
         },
     ];
-    let mut head_add = None;
+    let head_add: Option<Field> = None;
     if url_expanded {
         head_rows.push(field_row(vec![
             label("method"),
             enum_cell(Field::Method, method_s.clone()),
         ]));
         head_rows.push(field_row(vec![
-            label("protocol"),
-            text(Field::Protocol, m.url.protocol.clone()),
+            label("url"),
+            text(Field::Url, m.url.clone()),
         ]));
-        head_rows.push(field_row(vec![
-            label("host"),
-            text(Field::Host, m.url.host.clone()),
-        ]));
-        for (i, seg) in m.url.path.iter().enumerate() {
-            head_rows.push(field_row(vec![
-                label("path"),
-                text(Field::PathSeg(i), seg.clone()),
-            ]));
-        }
-        head_add = Some(Field::PathAdd);
     } else {
         head_rows.push(TableRow {
             kind: RowKind::UrlLine,
@@ -302,9 +274,9 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
             cells: vec![
                 enum_cell(Field::Method, method_s),
                 Cell {
-                    field: Field::Protocol,
+                    field: Field::Url,
                     kind: CellKind::Label,
-                    value: built_url(&m.url),
+                    value: m.url.clone(),
                 },
             ],
             raw: String::new(),
@@ -320,39 +292,19 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
         expand: Some(Expand::Url),
     });
 
-    // VARIABLE
-    let mut v_rows = vec![title_row("VARIABLE".to_string())];
-    for (i, v) in m.url.variable.iter().enumerate() {
-        v_rows.push(field_row(vec![
-            text(Field::VarName(i), v.name.clone()),
-            text(Field::VarType(i), v.dtype.clone()),
-            bool_cell(Field::VarRequired(i), v.required),
-            text(Field::VarDesc(i), v.description.clone()),
-        ]));
-    }
-    out.push(Section {
-        title: "VARIABLE".into(),
-        kind: SectionKind::Table,
-        headers: Some(vec!["NAME", "TYPE", "REQ", "DESCRIPTION"]),
-        rows: v_rows,
-        add: Some(Field::VarAdd),
-        expand: None,
-    });
-
     // QUERY
     let mut q_rows = vec![title_row("QUERY".to_string())];
-    for (i, q) in m.url.query.iter().enumerate() {
+    for (i, q) in m.query.iter().enumerate() {
         q_rows.push(field_row(vec![
             text(Field::QueryName(i), q.name.clone()),
-            text(Field::QueryType(i), q.dtype.clone()),
-            bool_cell(Field::QueryRequired(i), q.required),
+            text(Field::QueryValue(i), q.value.clone()),
             text(Field::QueryDesc(i), q.description.clone()),
         ]));
     }
     out.push(Section {
         title: "QUERY".into(),
         kind: SectionKind::Table,
-        headers: Some(vec!["NAME", "TYPE", "REQ", "DESCRIPTION"]),
+        headers: Some(vec!["NAME", "VALUE", "DESCRIPTION"]),
         rows: q_rows,
         add: Some(Field::QueryAdd),
         expand: None,
@@ -469,8 +421,8 @@ mod tests {
     fn model() -> EditModel {
         let c = json_get(
             r#"{ "name":"user","description":"User management","method":"GET",
-                 "url":{"protocol":"https","host":"api.example.com","path":["user"],
-                        "variable":[{"name":"id","type":"int","description":"User ID","required":false}]},
+                 "url":"https://api.example.com/user",
+                 "query":[{"name":"id","value":"1","description":"User ID"}],
                  "headers":[{"name":"Content-Type","value":"application/json"}],
                  "responses":[{"code":200,"description":"ok","schema":[
                     {"name":"data","type":"object","default":null,"description":"d","required":false,
@@ -513,28 +465,22 @@ mod tests {
     }
 
     #[test]
-    fn url_expands_to_editable_parts() {
+    fn url_expands_to_editable_url_row() {
         let secs = flatten(&model(), Some(Expand::Url));
         let head = &secs[0];
         assert!(head.rows.iter().all(|r| r.kind != RowKind::UrlLine));
         assert!(
             head.rows
                 .iter()
-                .any(|r| matches!(r.cells.last().map(|c| &c.field), Some(Field::Protocol)))
+                .any(|r| matches!(r.cells.last().map(|c| &c.field), Some(Field::Url)))
         );
-        assert!(
-            head.rows
-                .iter()
-                .any(|r| matches!(r.cells.last().map(|c| &c.field), Some(Field::Host)))
-        );
-        assert_eq!(head.add, Some(Field::PathAdd));
+        assert_eq!(head.add, None);
     }
 
     #[test]
     fn section_titles_match_read() {
         let secs = flatten(&model(), None);
         let titles: Vec<String> = secs.iter().map(shown_title).collect();
-        assert!(titles.iter().any(|t| t == "VARIABLE"));
         assert!(titles.iter().any(|t| t == "QUERY"));
         assert!(titles.iter().any(|t| t == "HEADERS"));
         assert!(titles.iter().any(|t| t == "REQUEST"));
@@ -592,7 +538,7 @@ mod tests {
     #[test]
     fn table_sections_have_selectable_title_rows() {
         let secs = flatten(&model(), None);
-        for t in ["VARIABLE", "QUERY", "HEADERS"] {
+        for t in ["QUERY", "HEADERS"] {
             let s = secs.iter().find(|s| s.title == t).unwrap();
             assert!(
                 s.rows

@@ -770,8 +770,7 @@ mod tests {
     fn renders_like_apic_read() {
         let c = json_get(
             r#"{ "name":"user","description":"User management","method":"GET",
-                 "url":{"protocol":"https","host":"api.example.com","path":["user"],
-                        "variable":[{"name":"id","type":"int","description":"User ID","required":false}]},
+                 "url":"https://api.example.com/user",
                  "headers":[{"name":"Content-Type","value":"application/json"}],
                  "responses":[{"code":200,"description":"ok","schema":[
                     {"name":"data","type":"object","default":null,"description":"d","required":false,
@@ -789,8 +788,7 @@ mod tests {
         let text: String = buf.content().iter().map(|c| c.symbol()).collect();
         assert!(text.contains("USER")); // uppercased name
         assert!(text.contains("User management")); // description
-        assert!(text.contains("https://api.example.com/user")); // built URL
-        assert!(text.contains("VARIABLE"));
+        assert!(text.contains("https://api.example.com/user")); // url string
         assert!(text.contains("HEADERS"));
         assert!(text.contains("RESPONSE 200 — ok"));
         assert!(text.contains("Example:"));
@@ -810,7 +808,7 @@ mod tests {
     fn empty_request_body_renders_editable_example_row() {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
-                 "url":{"protocol":"https","host":"h","path":["x"]},
+                 "url":"https://h/x",
                  "headers":[],
                  "request":{"type":"object","schema":[]},
                  "responses":[] }"#,
@@ -838,8 +836,8 @@ mod tests {
     fn cell_edit_highlights_only_focused_cell() {
         let c = json_get(
             r#"{ "name":"t","method":"GET",
-                 "url":{"protocol":"https","host":"h","path":["x"],
-                        "query":[{"name":"page","type":"1","description":"d","required":false}]},
+                 "url":"https://h/x",
+                 "query":[{"name":"page","value":"1","description":"d"}],
                  "headers":[],"responses":[] }"#,
             None,
         )
@@ -889,7 +887,7 @@ mod tests {
         }
         let json = format!(
             r#"{{ "name":"t","method":"GET",
-                 "url":{{"protocol":"https","host":"h","path":["x"]}},
+                 "url":"https://h/x",
                  "headers":[{headers}],
                  "responses":[{{"code":200,"description":"ok",
                     "schema":[{{"name":"f","type":"int","default":null,"description":"d","required":false}}],
