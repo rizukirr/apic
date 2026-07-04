@@ -135,7 +135,7 @@ fn create_uses_customized_template() {
     let custom = r#"{
         "name": "custom",
         "method": "GET",
-        "url": { "protocol": "https", "host": "api.example.com", "path": ["x"] },
+        "url": "https://api.example.com/x",
         "headers": [ { "name": "device-id", "value": "{device_id}" } ],
         "responses": []
     }"#;
@@ -346,7 +346,7 @@ fn read_renders_accept_column_for_multipart_file_fields() {
     let contract = r#"{
         "name": "upload-avatar",
         "method": "POST",
-        "url": { "protocol": "https", "host": "api.example.com", "path": ["user", "avatar"] },
+        "url": "https://api.example.com/user/avatar",
         "headers": [
             { "name": "Content-Type", "value": "multipart/form-data" }
         ],
@@ -388,7 +388,7 @@ fn read_example_shows_raw_json_payloads() {
     let contract = r#"{
         "name": "login",
         "method": "POST",
-        "url": { "protocol": "https", "host": "api.example.com", "path": ["auth", "login"] },
+        "url": "https://api.example.com/auth/login",
         "headers": [],
         "request": {
             "schema": [
@@ -437,7 +437,7 @@ fn read_example_only_contract_shows_none_by_default() {
     let contract = r#"{
         "name": "ping",
         "method": "GET",
-        "url": { "protocol": "https", "host": "api.example.com", "path": ["ping"] },
+        "url": "https://api.example.com/ping",
         "headers": [],
         "request": { "example": { "probe": true } },
         "responses": [
@@ -673,7 +673,7 @@ fn create_contract_uses_named_template() {
     let graphql = r#"{
         "name": "gql",
         "method": "POST",
-        "url": { "protocol": "https", "host": "api.example.com", "path": ["graphql"] },
+        "url": "https://api.example.com/graphql",
         "headers": [ { "name": "x-gql", "value": "1" } ],
         "responses": []
     }"#;
@@ -706,7 +706,7 @@ fn create_template_seeds_from_existing() {
     let custom = r#"{
         "name": "custom",
         "method": "GET",
-        "url": { "protocol": "https", "host": "api.example.com", "path": ["x"] },
+        "url": "https://api.example.com/x",
         "headers": [ { "name": "device-id", "value": "{device_id}" } ],
         "responses": []
     }"#;
@@ -764,7 +764,7 @@ fn create_contract_falls_back_to_convention_when_ambiguous_non_tty() {
     let conv = r#"{
         "name": "conv",
         "method": "GET",
-        "url": { "protocol": "https", "host": "api.example.com", "path": ["c"] },
+        "url": "https://api.example.com/c",
         "headers": [ { "name": "x-conv", "value": "1" } ],
         "responses": []
     }"#;
