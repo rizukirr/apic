@@ -190,9 +190,9 @@ pub fn resolve_contract_from(path: &Path) -> Result<(String, Vec<String>), Strin
 ///
 /// The template is treated as a *partial*: only the sections it actually
 /// declares are enforced, so an empty template (or none at all) enforces
-/// nothing. The checks compare structure — header/field/segment **names** — and,
-/// for `url.protocol`/`url.host`, exact **values**; placeholder values elsewhere
-/// (descriptions, examples, types) are ignored.
+/// nothing. The checks compare structure — header/field/segment/query **names**;
+/// placeholder values elsewhere (descriptions, examples, types) are ignored. The
+/// per-endpoint `url` is a free-form string and is not pinned.
 pub struct TemplateRules {
     /// The parsed template, or `None` when there is nothing to enforce
     /// (outside a project, or no template file present).
@@ -237,7 +237,7 @@ impl TemplateRules {
 
         let mut issues = Vec::new();
         check_headers(template, &contract, &mut issues);
-        check_url(template, &contract, &mut issues);
+        check_query(template, &contract, &mut issues);
         check_schema(
             template.pointer("/request/schema"),
             contract.pointer("/request/schema"),
@@ -261,44 +261,15 @@ fn check_headers(template: &Value, contract: &Value, issues: &mut Vec<String>) {
     }
 }
 
-/// `url.protocol`/`url.host` must match the template's values exactly; each
-/// `path` segment and each `query`/`variable` name the template declares must be
-/// present in the contract (extras are allowed).
-fn check_url(template: &Value, contract: &Value, issues: &mut Vec<String>) {
-    let (Some(t_url), c_url) = (template.get("url"), contract.get("url")) else {
-        return;
-    };
-    let c_url = c_url.unwrap_or(&Value::Null);
-
-    for field in ["protocol", "host"] {
-        if let Some(want) = t_url.get(field).and_then(Value::as_str) {
-            let got = c_url.get(field).and_then(Value::as_str).unwrap_or("");
-            if got != want {
-                issues.push(format!("url.{field} must be `{want}` (found `{got}`)"));
-            }
-        }
-    }
-
-    // Path segments are plain strings, not named objects.
-    if let Some(Value::Array(segments)) = t_url.get("path") {
-        let present: Vec<&str> = match c_url.get("path") {
-            Some(Value::Array(items)) => items.iter().filter_map(Value::as_str).collect(),
-            _ => Vec::new(),
-        };
-        for seg in segments.iter().filter_map(Value::as_str) {
-            if !present.contains(&seg) {
-                issues.push(format!("url.path missing segment `{seg}`"));
-            }
-        }
-    }
-
-    for section in ["query", "variable"] {
-        let required = object_names(t_url.get(section));
-        let present = object_names(c_url.get(section));
-        for name in required {
-            if !present.contains(&name) {
-                issues.push(format!("url.{section} missing `{name}`"));
-            }
+/// Every top-level `query` name the template declares must appear in the
+/// contract's top-level `query` (extras are allowed). The per-endpoint `url` is a
+/// free-form string and is not pinned.
+fn check_query(template: &Value, contract: &Value, issues: &mut Vec<String>) {
+    let required = object_names(template.get("query"));
+    let present = object_names(contract.get("query"));
+    for name in required {
+        if !present.contains(&name) {
+            issues.push(format!("query missing `{name}`"));
         }
     }
 }
@@ -575,16 +546,9 @@ mod tests {
 
     #[test]
     fn merge_deep_merges_nested_objects() {
-        let mut base = serde_json::json!({
-            "url": { "protocol": "https", "host": "old", "path": ["a"] }
-        });
-        merge(&mut base, serde_json::json!({ "url": { "host": "new" } }));
-        assert_eq!(
-            base,
-            serde_json::json!({
-                "url": { "protocol": "https", "host": "new", "path": ["a"] }
-            })
-        );
+        let mut base = serde_json::json!({ "url": "https://old/a" });
+        merge(&mut base, serde_json::json!({ "url": "https://new/a" }));
+        assert_eq!(base, serde_json::json!({ "url": "https://new/a" }));
     }
 
     #[test]
@@ -765,41 +729,22 @@ mod tests {
     }
 
     #[test]
-    fn url_protocol_and_host_must_match_exactly() {
-        let template = r#"{ "url": { "protocol": "https", "host": "api.example.com" } }"#;
-        let bad = r#"{ "url": { "protocol": "http", "host": "other.com" } }"#;
+    fn query_names_must_be_present() {
+        let template = r#"{ "query": [ { "name": "page" } ] }"#;
+        let bad = r#"{ "query": [] }"#;
         let found = issues(template, bad);
-        assert!(
-            found
-                .iter()
-                .any(|i| i == "url.protocol must be `https` (found `http`)")
-        );
-        assert!(
-            found
-                .iter()
-                .any(|i| i == "url.host must be `api.example.com` (found `other.com`)")
-        );
+        assert!(found.contains(&"query missing `page`".to_string()));
     }
 
     #[test]
-    fn url_path_query_variable_must_be_present() {
-        let template = r#"{ "url": {
-            "path": ["resource", "{id}"],
-            "query": [ { "name": "page" } ],
-            "variable": [ { "name": "id" } ]
-        } }"#;
-        let bad = r#"{ "url": { "path": ["resource"], "query": [], "variable": [] } }"#;
-        let found = issues(template, bad);
-        assert!(found.contains(&"url.path missing segment `{id}`".to_string()));
-        assert!(found.contains(&"url.query missing `page`".to_string()));
-        assert!(found.contains(&"url.variable missing `id`".to_string()));
-    }
-
-    #[test]
-    fn url_extras_in_contract_are_allowed() {
-        let template = r#"{ "url": { "query": [ { "name": "page" } ] } }"#;
-        let ok = r#"{ "url": { "query": [ { "name": "page" }, { "name": "limit" } ] } }"#;
-        assert!(issues(template, ok).is_empty());
+    fn query_extras_in_contract_are_allowed() {
+        let template = r#"{ "query": [ { "name": "page" } ] }"#;
+        let ok = r#"{ "query": [ { "name": "page" }, { "name": "limit" } ] }"#;
+        assert!(
+            !issues(template, ok)
+                .iter()
+                .any(|i| i.contains("query missing"))
+        );
     }
 
     #[test]
@@ -841,7 +786,7 @@ mod tests {
         // Only headers declared -> url/request/response are not enforced.
         let template = r#"{ "headers": [ { "name": "Authorization", "value": "" } ] }"#;
         let contract = r#"{ "headers": [ { "name": "Authorization", "value": "x" } ],
-            "url": { "protocol": "ftp", "host": "anything" } }"#;
+            "url": "https://api.example.com/x" }"#;
         assert!(issues(template, contract).is_empty());
     }
 
