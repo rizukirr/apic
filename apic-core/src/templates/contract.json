@@ -2,19 +2,11 @@
   "name": "endpoint-name",
   "description": "Short description of what this endpoint does",
   "method": "POST",
-  "url": {
-    "protocol": "https",
-    "host": "api.example.com"
-  },
+  "url": "https://api.example.com/v1/resource/{id}",
+  "query": [],
   "headers": [
-    {
-      "name": "Content-Type",
-      "value": "application/json"
-    },
-    {
-      "name": "Authorization",
-      "value": "Bearer {token}"
-    }
+    { "name": "Content-Type", "value": "application/json" },
+    { "name": "Authorization", "value": "Bearer {token}" }
   ],
   "responses": []
 }
