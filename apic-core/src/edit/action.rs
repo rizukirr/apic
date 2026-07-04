@@ -11,8 +11,8 @@
 
 use super::address::{BodyLoc, Field};
 use super::model::{
-    EditBody, EditHeader, EditModel, EditQuery, EditResponse, EditSchema, EditVariable,
-    example_from_schema, schema_from_example,
+    EditBody, EditHeader, EditModel, EditQuery, EditResponse, EditSchema, example_from_schema,
+    schema_from_example,
 };
 
 /// A single edit to apply to an [`EditModel`].
@@ -68,19 +68,28 @@ fn set_field(model: &mut EditModel, field: &Field, value: String) -> bool {
     match field {
         Field::Name => model.name = value,
         Field::Description => model.description = value,
-        Field::Protocol => model.url.protocol = value,
-        Field::Host => model.url.host = value,
-        Field::PathSeg(i) => {
-            if let Some(s) = model.url.path.get_mut(*i) {
-                *s = value;
+        Field::Url => model.url = value,
+        Field::QueryName(i) => set_query(model, *i, |q| q.name = value.clone()),
+        Field::QueryValue(i) => set_query(model, *i, |q| q.value = value.clone()),
+        Field::QueryDesc(i) => set_query(model, *i, |q| q.description = value.clone()),
+        Field::ResponseHeaderName(r, i) => {
+            if let Some(h) = model
+                .responses
+                .get_mut(*r)
+                .and_then(|resp| resp.headers.get_mut(*i))
+            {
+                h.name = value;
             }
         }
-        Field::QueryName(i) => set_query(model, *i, |q| q.name = value.clone()),
-        Field::QueryType(i) => set_query(model, *i, |q| q.dtype = value.clone()),
-        Field::QueryDesc(i) => set_query(model, *i, |q| q.description = value.clone()),
-        Field::VarName(i) => set_var(model, *i, |v| v.name = value.clone()),
-        Field::VarType(i) => set_var(model, *i, |v| v.dtype = value.clone()),
-        Field::VarDesc(i) => set_var(model, *i, |v| v.description = value.clone()),
+        Field::ResponseHeaderValue(r, i) => {
+            if let Some(h) = model
+                .responses
+                .get_mut(*r)
+                .and_then(|resp| resp.headers.get_mut(*i))
+            {
+                h.value = value;
+            }
+        }
         Field::HeaderName(i) => {
             if let Some(h) = model.headers.get_mut(*i) {
                 h.name = value;
@@ -121,14 +130,8 @@ fn set_field(model: &mut EditModel, field: &Field, value: String) -> bool {
 }
 
 fn set_query(model: &mut EditModel, i: usize, f: impl FnOnce(&mut EditQuery)) {
-    if let Some(q) = model.url.query.get_mut(i) {
+    if let Some(q) = model.query.get_mut(i) {
         f(q);
-    }
-}
-
-fn set_var(model: &mut EditModel, i: usize, f: impl FnOnce(&mut EditVariable)) {
-    if let Some(v) = model.url.variable.get_mut(i) {
-        f(v);
     }
 }
 
@@ -150,16 +153,6 @@ fn set_schema(
 /// Flips a boolean field. Returns `false` for a non-boolean target.
 fn toggle_bool(model: &mut EditModel, field: &Field) -> bool {
     match field {
-        Field::QueryRequired(i) => {
-            if let Some(q) = model.url.query.get_mut(*i) {
-                q.required = !q.required;
-            }
-        }
-        Field::VarRequired(i) => {
-            if let Some(v) = model.url.variable.get_mut(*i) {
-                v.required = !v.required;
-            }
-        }
         Field::SchemaRequired(BodyLoc::Request, path) => {
             if let Some(n) = model.schema_at_mut_request(path) {
                 n.required = !n.required;
@@ -179,19 +172,19 @@ fn toggle_bool(model: &mut EditModel, field: &Field) -> bool {
 /// for [`Field::RequestToggle`]. Returns `false` for a non-add field.
 fn add(model: &mut EditModel, field: &Field) -> bool {
     match field {
-        Field::PathAdd => model.url.path.push(String::new()),
-        Field::QueryAdd => model.url.query.push(EditQuery {
+        Field::QueryAdd => model.query.push(EditQuery {
             name: String::new(),
-            dtype: String::new(),
+            value: String::new(),
             description: String::new(),
-            required: false,
         }),
-        Field::VarAdd => model.url.variable.push(EditVariable {
-            name: String::new(),
-            dtype: "string".to_string(),
-            description: String::new(),
-            required: false,
-        }),
+        Field::ResponseHeaderAdd(r) => {
+            if let Some(resp) = model.responses.get_mut(*r) {
+                resp.headers.push(EditHeader {
+                    name: String::new(),
+                    value: String::new(),
+                });
+            }
+        }
         Field::HeaderAdd => model.headers.push(EditHeader {
             name: String::new(),
             value: String::new(),
@@ -223,13 +216,13 @@ fn add(model: &mut EditModel, field: &Field) -> bool {
 /// that addresses nothing deletable.
 fn delete(model: &mut EditModel, field: &Field) -> bool {
     match field {
-        Field::PathSeg(i) => drop_at(&mut model.url.path, *i),
-        Field::QueryName(i)
-        | Field::QueryType(i)
-        | Field::QueryDesc(i)
-        | Field::QueryRequired(i) => drop_at(&mut model.url.query, *i),
-        Field::VarName(i) | Field::VarType(i) | Field::VarDesc(i) | Field::VarRequired(i) => {
-            drop_at(&mut model.url.variable, *i)
+        Field::QueryName(i) | Field::QueryValue(i) | Field::QueryDesc(i) => {
+            drop_at(&mut model.query, *i)
+        }
+        Field::ResponseHeaderName(r, i) | Field::ResponseHeaderValue(r, i) => {
+            if let Some(resp) = model.responses.get_mut(*r) {
+                drop_at(&mut resp.headers, *i);
+            }
         }
         Field::HeaderName(i) | Field::HeaderValue(i) => drop_at(&mut model.headers, *i),
         Field::ResponseCode(i) | Field::ResponseDesc(i) => drop_at(&mut model.responses, *i),
@@ -372,9 +365,8 @@ mod tests {
     fn model() -> EditModel {
         let c = json_get(
             r#"{ "name":"t","description":"d","method":"GET",
-                 "url":{"protocol":"https","host":"h","path":["x"],
-                        "query":[{"name":"page","type":"1","description":"d","required":false}],
-                        "variable":[{"name":"id","type":"string","description":"d","required":false}]},
+                 "url":"/x",
+                 "query":[{"name":"page","value":"1","description":"d"}],
                  "headers":[{"name":"A","value":"B"}],
                  "request":{"type":"object","schema":[
                     {"name":"status","type":"int","default":null,"description":"d","required":true}
@@ -400,16 +392,35 @@ mod tests {
     }
 
     #[test]
-    fn toggle_bool_flips_required() {
+    fn set_query_value_writes() {
         let mut m = model();
-        assert!(!m.url.query[0].required);
         apply(
             &mut m,
-            &EditAction::ToggleBool {
-                field: Field::QueryRequired(0),
+            &EditAction::SetText {
+                field: Field::QueryValue(0),
+                value: "42".into(),
             },
         );
-        assert!(m.url.query[0].required);
+        assert_eq!(m.query[0].value, "42");
+    }
+
+    #[test]
+    fn add_and_delete_response_header() {
+        let mut m = model();
+        apply(
+            &mut m,
+            &EditAction::Add {
+                field: Field::ResponseHeaderAdd(0),
+            },
+        );
+        assert_eq!(m.responses[0].headers.len(), 1);
+        apply(
+            &mut m,
+            &EditAction::Delete {
+                field: Field::ResponseHeaderName(0, 0),
+            },
+        );
+        assert!(m.responses[0].headers.is_empty());
     }
 
     #[test]
