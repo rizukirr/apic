@@ -45,7 +45,8 @@ mod tests {
     }
 
     // A minimal contract that passes `json::validate`.
-    const VALID: &str = r#"{"name":"x","method":"GET","url":"https://h","headers":[],"responses":[]}"#;
+    const VALID: &str =
+        r#"{"name":"x","method":"GET","url":"https://h","headers":[],"responses":[]}"#;
 
     #[test]
     fn all_valid_yields_no_failures() {
