@@ -604,3 +604,38 @@ pub(crate) fn responses(
     }
     ui.add_space(SPACE_MEDIUM);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apic_core::json::json_get;
+
+    fn model() -> EditModel {
+        let c = json_get(
+            r#"{ "name":"t","method":"GET","url":"https://h/v1/{id}",
+                 "query":[{"name":"page","value":"2","description":"d"}],
+                 "headers":[{"name":"A","value":"B"}],
+                 "responses":[{"code":200,"description":"ok",
+                    "headers":[{"name":"X","value":"1"}]}] }"#,
+            None,
+        )
+        .unwrap();
+        EditModel::from_contract(c)
+    }
+
+    #[test]
+    fn every_section_renders_without_panicking() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut m = model();
+            let mut resp = 0usize;
+            endpoint_header(ui, &mut m, true);
+            method_url_row(ui, &mut m, true);
+            headers(ui, &mut m, true);
+            query_section(ui, &mut m, true);
+            request_body(ui, &mut m, true);
+            response_code_selector(ui, &mut m, &mut resp, true);
+            responses(ui, &mut m, &mut resp, true);
+            response_headers(ui, &mut m, 0, true);
+        });
+    }
+}
