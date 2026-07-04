@@ -439,7 +439,10 @@ pub(crate) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bo
     ui.add_space(SPACE_MEDIUM);
 }
 
-pub(crate) fn responses(
+/// The `[ 200 ] [ 404 ]` selectable response-code row, plus the `+ response`
+/// button in edit mode. Clicking a code sets `resp_tab`; the add-response edit
+/// is applied here so both `responses()` and the RespHeader tab can share it.
+pub(crate) fn response_code_selector(
     ui: &mut egui::Ui,
     model: &mut EditModel,
     resp_tab: &mut usize,
@@ -471,6 +474,19 @@ pub(crate) fn responses(
             }
         });
     }
+    for a in &actions {
+        apply(model, a);
+    }
+}
+
+pub(crate) fn responses(
+    ui: &mut egui::Ui,
+    model: &mut EditModel,
+    resp_tab: &mut usize,
+    editing: bool,
+) {
+    let mut actions: Vec<EditAction> = Vec::new();
+    response_code_selector(ui, model, resp_tab, editing);
 
     ui.spacing_mut().item_spacing.y = SPACE_SMALL;
 
