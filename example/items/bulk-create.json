@@ -2,11 +2,7 @@
     "name": "bulk-create-items",
     "description": "Create several items in one request; the body is an array of items and the response is an array of created records.",
     "method": "POST",
-    "url": {
-        "protocol": "https",
-        "host": "api.example.com",
-        "path": ["items", "bulk"]
-    },
+    "url": "https://api.example.com/items/bulk",
     "headers": [
         {
             "name": "Content-Type",

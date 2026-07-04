@@ -2,29 +2,19 @@
     "name": "endpoint-name",
     "description": "Short description of what this endpoint does",
     "method": "POST",
-    "url": {
-        "protocol": "https",
-        "host": "api.example.com",
-        "query": [
-            {
-                "name": "id",
-                "type": "string",
-                "required": true
-            },
-            {
-                "name": "name",
-                "type": "string",
-                "required": false
-            }
-        ],
-        "variable": [
-            {
-                "name": "uuid",
-                "type": "string",
-                "required": true
-            }
-        ]
-    },
+    "url": "https://api.example.com/{uuid}",
+    "query": [
+        {
+            "name": "id",
+            "value": "",
+            "description": ""
+        },
+        {
+            "name": "name",
+            "value": "",
+            "description": ""
+        }
+    ],
     "headers": [
         {
             "name": "Content-Type",
