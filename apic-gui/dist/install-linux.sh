@@ -18,6 +18,31 @@ refresh() {
     command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -f -t "$DATA_HOME/icons/hicolor" 2>/dev/null || true
 }
 
+# Warn if another `apic` launcher entry already exists (e.g. from a distro
+# package such as the AUR `apic-bin`, or a Flatpak install). Those carry
+# `Name=apic`, so a launcher that does not de-dup by desktop-file-id shows two
+# "apic" apps side by side. We check both the package filename (`apic-gui.desktop`,
+# used by the AUR/COPR builds) and the Flatpak app-id filename.
+DESKTOP_NAMES=("$APP.desktop" "io.github.rizukirr.apic.desktop")
+warn_duplicate() {
+    local dir name other
+    local IFS=:
+    for dir in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
+        for name in "${DESKTOP_NAMES[@]}"; do
+            other="$dir/applications/$name"
+            [[ "$other" == "$DESKTOP_FILE" ]] && continue
+            if [[ -f "$other" ]]; then
+                echo "warning: another 'apic' launcher entry already exists:" >&2
+                echo "           $other" >&2
+                echo "         You may see two 'apic' entries in your launcher. Remove that" >&2
+                echo "         install (e.g. 'sudo pacman -R apic-bin', or 'flatpak uninstall" >&2
+                echo "         io.github.rizukirr.apic') to de-duplicate." >&2
+                return
+            fi
+        done
+    done
+}
+
 if [[ "${1:-}" == "--uninstall" ]]; then
     rm -fv "$BIN_DIR/$APP" "$ICON_DIR/$APP.png" "$DESKTOP_FILE"
     refresh
@@ -78,6 +103,7 @@ EOF
 chmod 644 "$DESKTOP_FILE"
 
 refresh
+warn_duplicate
 
 echo "Installed:"
 echo "  binary  -> $BIN_DIR/$APP"
