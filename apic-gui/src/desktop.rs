@@ -49,6 +49,35 @@ fn install_to(data_dir: &Path, exec: &str) -> Result<String, String> {
     ))
 }
 
+/// Filenames of other `apic` launcher entries we might collide with: the
+/// package builds (AUR/COPR) ship `apic-gui.desktop`; the Flatpak build ships
+/// one named after its app id. All carry `Name=apic`.
+#[cfg(target_os = "linux")]
+const OTHER_DESKTOP_NAMES: [&str; 2] = ["apic-gui.desktop", "io.github.rizukirr.apic.desktop"];
+
+/// Scans the XDG data dirs (`data_dirs`, colon-separated) for another `apic`
+/// launcher entry — e.g. one dropped by a distro package like the AUR `apic-bin`
+/// or a Flatpak install. They share `Name=apic`, so a launcher that does not
+/// de-dup by desktop-file-id shows two "apic" apps. Skips only the exact file we
+/// write (so a user-scoped Flatpak entry under the same data root still counts).
+/// Returns the first such path found, so the caller can warn.
+#[cfg(target_os = "linux")]
+fn find_system_entry(data_dirs: &str, own_data_dir: &Path) -> Option<std::path::PathBuf> {
+    let own = own_data_dir.join("applications/apic-gui.desktop");
+    for dir in data_dirs.split(':').filter(|s| !s.is_empty()) {
+        for name in OTHER_DESKTOP_NAMES {
+            let candidate = Path::new(dir).join("applications").join(name);
+            if candidate == own {
+                continue;
+            }
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 /// Refreshes the desktop/icon caches. Best-effort: failures are ignored because
 /// the entry already works without them.
 #[cfg(target_os = "linux")]
@@ -69,8 +98,19 @@ pub fn install_desktop_entry() -> Result<String, String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot resolve the running binary path: {e}"))?;
     let data_dir = dirs::data_dir().ok_or("cannot resolve the XDG data directory")?;
-    let summary = install_to(&data_dir, &exe.to_string_lossy())?;
+    let mut summary = install_to(&data_dir, &exe.to_string_lossy())?;
     refresh_caches(&data_dir);
+
+    let data_dirs = std::env::var("XDG_DATA_DIRS")
+        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
+    if let Some(other) = find_system_entry(&data_dirs, &data_dir) {
+        summary.push_str(&format!(
+            "\n\nNote: a system-wide launcher entry already exists at\n  {}\n\
+             You may see two \"apic\" entries. Remove the system package (e.g.\n\
+             `sudo pacman -R apic-bin`) or that file to de-duplicate.",
+            other.display(),
+        ));
+    }
     Ok(summary)
 }
 
@@ -107,5 +147,42 @@ mod tests {
         assert!(body.contains("Exec=/fake/apic-gui\n"));
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn find_system_entry_detects_and_skips_own_dir() {
+        let base = std::env::temp_dir().join(format!("apic-sysentry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let sys = base.join("usr/share");
+        let own = base.join("home/.local/share");
+        // A user-scoped Flatpak export lives *under* the same data root as our
+        // own entry, so the skip must be the exact file, not the whole subtree.
+        let flatpak = own.join("flatpak/exports/share");
+        std::fs::create_dir_all(sys.join("applications")).unwrap();
+        std::fs::create_dir_all(own.join("applications")).unwrap();
+        std::fs::create_dir_all(flatpak.join("applications")).unwrap();
+
+        let dirs = format!("{}:{}:{}", own.display(), flatpak.display(), sys.display());
+
+        // Nothing installed elsewhere yet -> no warning.
+        assert!(find_system_entry(&dirs, &own).is_none());
+
+        // Our own per-user entry must never count as a duplicate.
+        std::fs::write(own.join("applications/apic-gui.desktop"), "x").unwrap();
+        assert!(find_system_entry(&dirs, &own).is_none());
+
+        // A user-scoped Flatpak entry (Name=apic, different filename, under our
+        // own data root) is still reported.
+        let fp_desktop = flatpak.join("applications/io.github.rizukirr.apic.desktop");
+        std::fs::write(&fp_desktop, "x").unwrap();
+        assert_eq!(find_system_entry(&dirs, &own), Some(fp_desktop));
+
+        // A genuine system package entry is reported too.
+        std::fs::remove_file(flatpak.join("applications/io.github.rizukirr.apic.desktop")).unwrap();
+        let sys_desktop = sys.join("applications/apic-gui.desktop");
+        std::fs::write(&sys_desktop, "x").unwrap();
+        assert_eq!(find_system_entry(&dirs, &own), Some(sys_desktop));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
