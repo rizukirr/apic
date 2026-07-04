@@ -8,12 +8,7 @@
 use eframe::egui::{self, TextBuffer};
 use egui::{Color32, RichText, Stroke};
 
-use super::theme::{
-    BORDER, CYAN, DIM, GREEN, PANEL_BG, RED, SPACE_EXTRA_SMALL, SPACE_MEDIUM, TEXT,
-};
-
-/// Scalar types for query params and path variables (no objects/arrays).
-pub(crate) const PARAM_TYPES: &[&str] = &["string", "int", "float", "boolean"];
+use super::theme::{BORDER, CYAN, DIM, GREEN, RED, SPACE_EXTRA_SMALL, TEXT};
 
 /// Schema field types: scalars plus their array variants and `object`.
 pub(crate) const SCHEMA_TYPES: &[&str] = &[
@@ -64,37 +59,6 @@ pub(crate) fn bordered_input_colored(
                     .text_color(if error { RED } else { TEXT })
                     .desired_width(if fill { f32::INFINITY } else { width }),
             )
-        })
-        .inner
-}
-
-/// A labeled bordered panel, the `┌─ TITLE ─┐` box from the mockup. Pass
-/// `min_height > 0.0` to force a minimum content height (used to equalize the
-/// side-by-side row); returns the content height so callers can measure it.
-pub(crate) fn panel(
-    ui: &mut egui::Ui,
-    title: &str,
-    min_height: f32,
-    add: impl FnOnce(&mut egui::Ui),
-) -> f32 {
-    egui::Frame::group(ui.style())
-        .fill(PANEL_BG)
-        .stroke(Stroke::new(1.0, BORDER))
-        .inner_margin(egui::Margin::same(10))
-        .show(ui, |ui| {
-            // Fill the full width the frame was given. The edge spacing comes
-            // from the editor's global margin, so no extra right padding here
-            // (that used to leave a lopsided gap on the right edge).
-            let w = ui.available_width();
-            ui.set_min_width(w);
-            ui.set_max_width(w);
-            if min_height > 0.0 {
-                ui.set_min_height(min_height);
-            }
-            ui.label(RichText::new(title).color(DIM).size(11.0));
-            ui.add_space(SPACE_MEDIUM);
-            add(ui);
-            ui.min_rect().height()
         })
         .inner
 }
