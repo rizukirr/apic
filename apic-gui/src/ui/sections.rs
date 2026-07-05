@@ -558,31 +558,12 @@ pub(crate) fn response_code_selector(
     }
 }
 
-pub(crate) fn responses(
-    ui: &mut egui::Ui,
-    model: &mut EditModel,
-    resp_tab: &mut usize,
-    editing: bool,
-) {
+/// Renders the selected response's description, schema, and example. The caller
+/// (the Response tab) has already drawn the code-tab strip and guarantees `idx`
+/// is a valid response index.
+pub(crate) fn response_body(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editing: bool) {
     let mut actions: Vec<EditAction> = Vec::new();
-    response_code_selector(ui, model, resp_tab, editing);
-
     ui.spacing_mut().item_spacing.y = SPACE_SMALL;
-
-    if model.responses.is_empty() {
-        ui.label(RichText::new("(no responses)").color(DIM));
-        for a in &actions {
-            apply(model, a);
-        }
-        ui.add_space(SPACE_MEDIUM);
-        return;
-    }
-    if *resp_tab >= model.responses.len() {
-        *resp_tab = 0;
-    }
-    ui.separator();
-
-    let idx = *resp_tab;
     let r = &mut model.responses[idx];
     // Description: inline, frameless in edit mode; plain text otherwise.
     if editing {
@@ -720,7 +701,7 @@ mod tests {
             query_section(ui, &mut m, true);
             request_body(ui, &mut m, true);
             response_code_selector(ui, &mut m, &mut resp, true);
-            responses(ui, &mut m, &mut resp, true);
+            response_body(ui, &mut m, 0, true);
             response_headers(ui, &mut m, 0, true);
         });
     }
