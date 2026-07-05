@@ -163,6 +163,16 @@ fn toggle_bool(model: &mut EditModel, field: &Field) -> bool {
                 n.required = !n.required;
             }
         }
+        Field::HeaderRequired(i) => {
+            if let Some(h) = model.headers.get_mut(*i) {
+                h.required = !h.required;
+            }
+        }
+        Field::QueryRequired(i) => {
+            if let Some(q) = model.query.get_mut(*i) {
+                q.required = !q.required;
+            }
+        }
         _ => return false,
     }
     true
@@ -176,18 +186,21 @@ fn add(model: &mut EditModel, field: &Field) -> bool {
             name: String::new(),
             value: String::new(),
             description: String::new(),
+            required: false,
         }),
         Field::ResponseHeaderAdd(r) => {
             if let Some(resp) = model.responses.get_mut(*r) {
                 resp.headers.push(EditHeader {
                     name: String::new(),
                     value: String::new(),
+                    required: false,
                 });
             }
         }
         Field::HeaderAdd => model.headers.push(EditHeader {
             name: String::new(),
             value: String::new(),
+            required: false,
         }),
         Field::ResponseAdd => model.responses.push(EditResponse::blank()),
         Field::RequestToggle => {
@@ -216,15 +229,18 @@ fn add(model: &mut EditModel, field: &Field) -> bool {
 /// that addresses nothing deletable.
 fn delete(model: &mut EditModel, field: &Field) -> bool {
     match field {
-        Field::QueryName(i) | Field::QueryValue(i) | Field::QueryDesc(i) => {
-            drop_at(&mut model.query, *i)
-        }
+        Field::QueryName(i)
+        | Field::QueryValue(i)
+        | Field::QueryDesc(i)
+        | Field::QueryRequired(i) => drop_at(&mut model.query, *i),
         Field::ResponseHeaderName(r, i) | Field::ResponseHeaderValue(r, i) => {
             if let Some(resp) = model.responses.get_mut(*r) {
                 drop_at(&mut resp.headers, *i);
             }
         }
-        Field::HeaderName(i) | Field::HeaderValue(i) => drop_at(&mut model.headers, *i),
+        Field::HeaderName(i) | Field::HeaderValue(i) | Field::HeaderRequired(i) => {
+            drop_at(&mut model.headers, *i)
+        }
         Field::ResponseCode(i) | Field::ResponseDesc(i) => drop_at(&mut model.responses, *i),
         Field::SchemaName(loc, path)
         | Field::SchemaType(loc, path)
@@ -440,6 +456,25 @@ mod tests {
             },
         );
         assert_eq!(m.headers.len(), 1);
+    }
+
+    #[test]
+    fn toggle_header_and_query_required() {
+        let mut m = model();
+        apply(
+            &mut m,
+            &EditAction::ToggleBool {
+                field: Field::HeaderRequired(0),
+            },
+        );
+        assert!(m.headers[0].required);
+        apply(
+            &mut m,
+            &EditAction::ToggleBool {
+                field: Field::QueryRequired(0),
+            },
+        );
+        assert!(m.query[0].required);
     }
 
     #[test]

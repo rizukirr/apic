@@ -5,8 +5,8 @@
   "url": "https://api.example.com/v1/resource/{id}",
   "query": [],
   "headers": [
-    { "name": "Content-Type", "value": "application/json" },
-    { "name": "Authorization", "value": "Bearer {token}" }
+    { "name": "Content-Type", "value": "application/json", "required": true },
+    { "name": "Authorization", "value": "Bearer {token}", "required": false }
   ],
   "responses": []
 }
