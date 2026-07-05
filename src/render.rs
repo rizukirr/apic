@@ -1,6 +1,6 @@
 //! Plain-text rendering of a parsed contract to stdout.
 //!
-//! Output is column-aligned text with one section per contract part (variable,
+//! Output is column-aligned text with one section per contract part (url,
 //! query, headers, request, responses). Colors are applied only when stdout is
 //! a terminal, so piped or redirected output stays clean.
 

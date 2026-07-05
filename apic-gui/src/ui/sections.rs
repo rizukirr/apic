@@ -203,9 +203,9 @@ pub(crate) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     ui.add_space(SPACE_MEDIUM);
 }
 
-/// Renders a single view-mode field as `name: type [REQUIRED]/[OPTIONAL] desc`.
-/// Shared by the schema viewer and the query/path-variable viewers so query
-/// params and path variables read identically to request/response fields.
+/// Renders a single view-mode schema field as
+/// `name: type [REQUIRED]/[OPTIONAL] desc`, used by the request/response schema
+/// viewer (query params render as `name → value` rows via `kv_row`).
 pub(crate) fn field_view_row(
     ui: &mut egui::Ui,
     name: &str,
@@ -365,28 +365,38 @@ pub(crate) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bo
         }
         ui.add_space(SPACE_LARGE);
         section_label(ui, "SCHEMA DEFINITION");
-        if editing {
-            let mut path = Vec::new();
-            edit_schema_fields(
-                ui,
-                &BodyLoc::Request,
-                &mut req.schema,
-                &mut path,
-                &mut actions,
-            );
-            schema_add_button(
-                ui,
-                "+ field",
-                &BodyLoc::Request,
-                &[],
-                req.schema.len(),
-                &mut actions,
-            );
-        } else if req.schema.is_empty() {
-            ui.label(RichText::new("(none)").color(DIM));
-        } else {
-            schema_fields(ui, &req.schema, 0);
-        }
+        // Cap the schema list at half the remaining height so a large schema
+        // scrolls internally instead of pushing the stretched example off the
+        // bottom of the (unscrolled) tab.
+        let schema_cap = (ui.available_height() * 0.5).max(120.0);
+        egui::ScrollArea::vertical()
+            .id_salt("req_schema_scroll")
+            .max_height(schema_cap)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                if editing {
+                    let mut path = Vec::new();
+                    edit_schema_fields(
+                        ui,
+                        &BodyLoc::Request,
+                        &mut req.schema,
+                        &mut path,
+                        &mut actions,
+                    );
+                    schema_add_button(
+                        ui,
+                        "+ field",
+                        &BodyLoc::Request,
+                        &[],
+                        req.schema.len(),
+                        &mut actions,
+                    );
+                } else if req.schema.is_empty() {
+                    ui.label(RichText::new("(none)").color(DIM));
+                } else {
+                    schema_fields(ui, &req.schema, 0);
+                }
+            });
         ui.add_space(SPACE_LARGE);
         ui.horizontal(|ui| {
             section_label(ui, "EXAMPLE");
@@ -537,28 +547,37 @@ pub(crate) fn responses(
         });
     }
     section_label(ui, "RESPONSE SCHEMA");
-    if editing {
-        let mut path = Vec::new();
-        edit_schema_fields(
-            ui,
-            &BodyLoc::Response(idx),
-            &mut r.schema,
-            &mut path,
-            &mut actions,
-        );
-        schema_add_button(
-            ui,
-            "+ field",
-            &BodyLoc::Response(idx),
-            &[],
-            r.schema.len(),
-            &mut actions,
-        );
-    } else if r.schema.is_empty() {
-        ui.label(RichText::new("(none)").color(DIM));
-    } else {
-        schema_fields(ui, &r.schema, 0);
-    }
+    // Cap the schema list at half the remaining height so a large schema scrolls
+    // internally instead of pushing the stretched example off the bottom.
+    let schema_cap = (ui.available_height() * 0.5).max(120.0);
+    egui::ScrollArea::vertical()
+        .id_salt("resp_schema_scroll")
+        .max_height(schema_cap)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            if editing {
+                let mut path = Vec::new();
+                edit_schema_fields(
+                    ui,
+                    &BodyLoc::Response(idx),
+                    &mut r.schema,
+                    &mut path,
+                    &mut actions,
+                );
+                schema_add_button(
+                    ui,
+                    "+ field",
+                    &BodyLoc::Response(idx),
+                    &[],
+                    r.schema.len(),
+                    &mut actions,
+                );
+            } else if r.schema.is_empty() {
+                ui.label(RichText::new("(none)").color(DIM));
+            } else {
+                schema_fields(ui, &r.schema, 0);
+            }
+        });
     ui.add_space(SPACE_LARGE);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
