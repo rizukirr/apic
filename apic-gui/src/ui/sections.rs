@@ -16,9 +16,9 @@ use super::theme::{
     CYAN, DIM, GREEN, RED, SPACE_MEDIUM, SPACE_SMALL, TEXT, method_badge, method_color,
 };
 use super::widgets::{
-    SCHEMA_TYPES, add_button, bordered_input, bordered_input_colored, cell_edit, cell_key,
-    cell_text, chip_cell, delete_button, json_editor, request_new_row_focus, section_label,
-    table_frame, table_header, take_pending_focus, type_dropdown,
+    SCHEMA_TYPES, add_button, cell_edit, cell_key, cell_text, chip_cell, delete_button,
+    json_editor, request_new_row_focus, section_label, table_frame, table_header,
+    take_pending_focus, type_dropdown,
 };
 
 // egui temp-data keys for the "focus the new row's name field" markers, one per
@@ -498,10 +498,10 @@ pub(crate) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bo
     ui.add_space(SPACE_MEDIUM);
 }
 
-/// A compact response-code dropdown plus a colored `code reason` status label,
-/// and the `+ response` button in edit mode. Selecting a code sets `resp_tab`;
-/// the add-response edit is applied here so both `responses()` and the
-/// RespHeader tab can share it.
+/// The response-code tab strip: one selectable tab per response code plus a
+/// `+ new response` button. In edit mode the active tab's code is edited inline
+/// (frameless) and carries an `x` to delete that response. Selecting a tab sets
+/// `resp_tab`, so both `responses()` and the RespHeader tab share it.
 pub(crate) fn response_code_selector(
     ui: &mut egui::Ui,
     model: &mut EditModel,
@@ -509,35 +509,45 @@ pub(crate) fn response_code_selector(
     editing: bool,
 ) {
     let mut actions: Vec<EditAction> = Vec::new();
-    ui.horizontal(|ui| {
-        let current = model
-            .responses
-            .get(*resp_tab)
-            .map(|r| r.code.clone())
-            .unwrap_or_default();
-        egui::ComboBox::from_id_salt("resp_code")
-            .selected_text(
-                RichText::new(if current.is_empty() {
-                    "—".into()
-                } else {
-                    current.clone()
-                })
-                .color(GREEN),
-            )
-            .show_ui(ui, |ui| {
-                for (i, r) in model.responses.iter().enumerate() {
-                    ui.selectable_value(resp_tab, i, r.code.clone());
+    ui.horizontal_wrapped(|ui| {
+        for i in 0..model.responses.len() {
+            let selected = i == *resp_tab;
+            let code_ok = model.responses[i].code.trim().parse::<u16>().is_ok();
+            let color = if !code_ok {
+                RED
+            } else if selected {
+                GREEN
+            } else {
+                DIM
+            };
+            if editing && selected {
+                // The active tab's code is edited in place, no bordered box.
+                ui.add(
+                    egui::TextEdit::singleline(&mut model.responses[i].code)
+                        .frame(false)
+                        .desired_width(46.0)
+                        .text_color(color),
+                );
+                if delete_button(ui) {
+                    actions.push(EditAction::Delete {
+                        field: Field::ResponseCode(i),
+                    });
                 }
-            });
-        if let Some(r) = model.responses.get(*resp_tab) {
-            let ok = r.code.trim().parse::<u16>().is_ok();
-            ui.label(
-                RichText::new(format!("{} {}", r.code, status_text(&r.code)))
-                    .color(if ok { GREEN } else { RED })
-                    .strong(),
-            );
+            } else {
+                let label = if model.responses[i].code.is_empty() {
+                    "?".to_string()
+                } else {
+                    model.responses[i].code.clone()
+                };
+                if ui
+                    .selectable_label(selected, RichText::new(label).color(color).strong())
+                    .clicked()
+                {
+                    *resp_tab = i;
+                }
+            }
         }
-        if editing && add_button(ui, "+ response") {
+        if editing && add_button(ui, "+ new response") {
             actions.push(EditAction::Add {
                 field: Field::ResponseAdd,
             });
@@ -545,21 +555,6 @@ pub(crate) fn response_code_selector(
     });
     for a in &actions {
         apply(model, a);
-    }
-}
-
-/// A short reason phrase for common status codes; empty for the rest.
-fn status_text(code: &str) -> &'static str {
-    match code.trim() {
-        "200" => "OK",
-        "201" => "Created",
-        "204" => "No Content",
-        "400" => "Bad Request",
-        "401" => "Unauthorized",
-        "403" => "Forbidden",
-        "404" => "Not Found",
-        "500" => "Server Error",
-        _ => "",
     }
 }
 
@@ -589,36 +584,17 @@ pub(crate) fn responses(
 
     let idx = *resp_tab;
     let r = &mut model.responses[idx];
+    // Description: inline, frameless in edit mode; plain text otherwise.
     if editing {
-        ui.horizontal(|ui| {
-            let code_ok = r.code.trim().parse::<u16>().is_ok();
-            let box_h = ui.text_style_height(&egui::TextStyle::Body) + 10.0;
-            ui.add_sized(
-                [34.0, box_h],
-                egui::Label::new(RichText::new("code").color(if code_ok { DIM } else { RED })),
-            );
-            bordered_input_colored(ui, &mut r.code, 60.0, "", !code_ok);
-            ui.label(RichText::new("desc").color(DIM));
-            bordered_input(ui, &mut r.description, f32::INFINITY, "description");
-        });
-        ui.horizontal(|ui| {
-            if ui
-                .button(RichText::new(format!("type: {}", r.dtype)).color(CYAN))
-                .clicked()
-            {
-                actions.push(EditAction::ToggleBodyType {
-                    loc: BodyLoc::Response(idx),
-                });
-            }
-            if ui
-                .button(RichText::new("delete response").color(RED))
-                .clicked()
-            {
-                actions.push(EditAction::Delete {
-                    field: Field::ResponseCode(idx),
-                });
-            }
-        });
+        ui.add(
+            egui::TextEdit::singleline(&mut r.description)
+                .frame(false)
+                .hint_text("description")
+                .text_color(DIM)
+                .desired_width(f32::INFINITY),
+        );
+    } else if !r.description.is_empty() {
+        ui.label(RichText::new(&r.description).color(DIM));
     }
     egui::CollapsingHeader::new(RichText::new("Schema").color(DIM))
         .default_open(false)
@@ -673,6 +649,14 @@ pub(crate) fn responses(
         section_label(ui, "EXAMPLE");
         ui.add_space(SPACE_MEDIUM);
         if editing {
+            if ui
+                .button(RichText::new(format!("type: {}", r.dtype)).color(CYAN))
+                .clicked()
+            {
+                actions.push(EditAction::ToggleBodyType {
+                    loc: BodyLoc::Response(idx),
+                });
+            }
             if ui
                 .button(RichText::new("generate from schema").color(GREEN))
                 .clicked()
