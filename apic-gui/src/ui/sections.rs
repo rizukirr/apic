@@ -28,17 +28,27 @@ const FOCUS_QUERY: &str = "apic.focus.query";
 const FOCUS_HEADER: &str = "apic.focus.header";
 const FOCUS_SCHEMA: &str = "apic.focus.schema";
 
-/// Compact editable name + description line, shown above the method/url row.
-pub(crate) fn endpoint_header(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+/// The endpoint name, rendered inline on the toolbar row (left of EDIT/SAVE).
+/// Editable frameless heading in edit mode; a heading label otherwise.
+pub(crate) fn endpoint_name(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     if editing {
         ui.add(
             egui::TextEdit::singleline(&mut model.name)
                 .frame(false)
-                .hint_text("name")
+                .hint_text("endpoint name")
                 .font(egui::TextStyle::Heading)
                 .text_color(TEXT)
                 .desired_width(f32::INFINITY),
         );
+    } else {
+        ui.label(RichText::new(&model.name).color(TEXT).heading());
+    }
+}
+
+/// The endpoint description, shown under the name/url row. Frameless multiline in
+/// edit mode; dim text otherwise (hidden when empty in view mode).
+pub(crate) fn endpoint_description(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+    if editing {
         ui.add(
             egui::TextEdit::multiline(&mut model.description)
                 .frame(false)
@@ -47,11 +57,8 @@ pub(crate) fn endpoint_header(ui: &mut egui::Ui, model: &mut EditModel, editing:
                 .desired_rows(2)
                 .desired_width(f32::INFINITY),
         );
-    } else {
-        ui.label(RichText::new(&model.name).color(TEXT).heading());
-        if !model.description.is_empty() {
-            ui.label(RichText::new(&model.description).color(DIM));
-        }
+    } else if !model.description.is_empty() {
+        ui.label(RichText::new(&model.description).color(DIM));
     }
 }
 
@@ -694,7 +701,8 @@ mod tests {
             .unwrap();
             let mut m = EditModel::from_contract(c);
             let mut resp = 0usize;
-            endpoint_header(ui, &mut m, true);
+            endpoint_name(ui, &mut m, true);
+            endpoint_description(ui, &mut m, true);
             method_url_row(ui, &mut m, true);
             headers(ui, &mut m, true);
             headers(ui, &mut m, false);

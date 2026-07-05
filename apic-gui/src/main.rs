@@ -20,8 +20,8 @@ mod settings;
 mod ui;
 use settings::Settings;
 use ui::sections::{
-    endpoint_header, headers, method_url_row, query_section, request_body, response_body,
-    response_code_selector, response_headers,
+    endpoint_description, endpoint_name, headers, method_url_row, query_section, request_body,
+    response_body, response_code_selector, response_headers,
 };
 use ui::theme::*;
 use ui::widgets::{bordered_input, take_pending_focus};
@@ -1311,8 +1311,9 @@ impl App {
                 return;
             };
 
+            // Toolbar row: endpoint name on the left, EDIT/SAVE on the right.
             ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(RichText::new("[ SAVE ]").color(GREEN)).clicked() {
                         match path.as_deref() {
                             Some(p) => match model.save(p) {
@@ -1332,15 +1333,19 @@ impl App {
                         // so the snapshot is taken/restored on `self`.
                         toggle_edit = true;
                     }
+                    // The name fills the space to the left of the buttons.
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        endpoint_name(ui, model, *editing);
+                    });
                 });
             });
-            ui.add_space(SPACE_MEDIUM);
+            ui.add_space(SPACE_SMALL);
 
             egui::Frame::NONE
                 .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
-                    endpoint_header(ui, model, *editing);
+                    endpoint_description(ui, model, *editing);
                     method_url_row(ui, model, *editing);
                     ui.add_space(SPACE_SMALL);
 
