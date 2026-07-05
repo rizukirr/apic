@@ -59,13 +59,18 @@ pub struct Query {
     pub name: String,
     #[serde(default)]
     pub value: String,
+    #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub required: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Header {
     pub name: String,
     pub value: String,
+    #[serde(default)]
+    pub required: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -344,6 +349,23 @@ mod tests {
         let b = json_get(bare, None).unwrap();
         assert!(b.query.is_empty());
         assert!(b.responses[0].headers.is_empty());
+    }
+
+    #[test]
+    fn header_and_query_required_parse_and_default() {
+        let json = r#"{
+            "name": "u", "method": "GET", "url": "https://h/x",
+            "query": [{ "name": "page", "value": "1", "required": true }],
+            "headers": [
+                { "name": "Content-Type", "value": "application/json", "required": true },
+                { "name": "X-Optional", "value": "y" }
+            ],
+            "responses": []
+        }"#;
+        let c = json_get(json, None).unwrap();
+        assert!(c.headers[0].required);
+        assert!(!c.headers[1].required); // defaults false when absent
+        assert!(c.query[0].required);
     }
 
     #[test]
