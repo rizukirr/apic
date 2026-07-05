@@ -8,7 +8,9 @@
 use eframe::egui::{self, TextBuffer};
 use egui::{Color32, RichText, Stroke};
 
-use super::theme::{BORDER, CYAN, DIM, GREEN, RED, SPACE_EXTRA_SMALL, TEXT};
+use super::theme::{
+    BORDER, CHIP_BG, CHIP_REQUIRED_BG, CYAN, DIM, GREEN, RED, SPACE_EXTRA_SMALL, SPACE_MEDIUM, TEXT,
+};
 
 /// Schema field types: scalars plus their array variants and `object`.
 pub(crate) const SCHEMA_TYPES: &[&str] = &[
@@ -297,6 +299,90 @@ pub(crate) fn code_block(ui: &mut egui::Ui, raw: &mut String, height: f32) {
         });
 }
 
+/// The `Required` / `Optional` pill for the REQUIREMENT column. In edit mode it
+/// is a button that returns `Some(new_value)` when clicked; in view mode it is a
+/// static label returning `None`.
+pub(crate) fn required_chip(ui: &mut egui::Ui, required: bool, editing: bool) -> Option<bool> {
+    let (label, fg, bg) = if required {
+        ("Required", TEXT, CHIP_REQUIRED_BG)
+    } else {
+        ("Optional", DIM, CHIP_BG)
+    };
+    let text = RichText::new(format!(" {label} "))
+        .color(fg)
+        .size(11.0)
+        .background_color(bg);
+    if editing {
+        if ui.add(egui::Button::new(text).frame(false)).clicked() {
+            return Some(!required);
+        }
+        None
+    } else {
+        ui.label(text);
+        None
+    }
+}
+
+/// Uppercase dim column-header row for a metadata table.
+pub(crate) fn table_header(ui: &mut egui::Ui, labels: &[&str]) {
+    ui.horizontal(|ui| {
+        for l in labels {
+            ui.label(
+                RichText::new(l.to_uppercase())
+                    .color(DIM)
+                    .size(10.0)
+                    .strong(),
+            );
+            ui.add_space(SPACE_MEDIUM);
+        }
+    });
+    ui.add_space(SPACE_EXTRA_SMALL);
+}
+
+/// A frameless inline-editable table cell of a given width.
+pub(crate) fn cell_edit(
+    ui: &mut egui::Ui,
+    buf: &mut String,
+    width: f32,
+    hint: &str,
+) -> egui::Response {
+    ui.add_sized(
+        [width, ui.text_style_height(&egui::TextStyle::Body) + 6.0],
+        egui::TextEdit::singleline(buf)
+            .frame(false)
+            .hint_text(hint)
+            .text_color(TEXT),
+    )
+}
+
+/// A view-mode key cell (accent color).
+pub(crate) fn cell_key(ui: &mut egui::Ui, text: &str, width: f32) {
+    ui.add_sized(
+        [width, ui.text_style_height(&egui::TextStyle::Body) + 6.0],
+        egui::Label::new(RichText::new(text).color(CYAN)),
+    );
+}
+
+/// A view-mode plain-text cell.
+pub(crate) fn cell_text(ui: &mut egui::Ui, text: &str, width: f32) {
+    ui.add_sized(
+        [width, ui.text_style_height(&egui::TextStyle::Body) + 6.0],
+        egui::Label::new(RichText::new(text).color(TEXT)),
+    );
+}
+
+/// The bordered container that wraps a metadata table's header + rows.
+pub(crate) fn table_frame<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::group(ui.style())
+        .stroke(Stroke::new(1.0, BORDER))
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            add(ui)
+        })
+        .inner
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,6 +407,21 @@ mod tests {
             let mut bad = "not json".to_string();
             code_block(ui, &mut good, 0.0);
             code_block(ui, &mut bad, 0.0);
+        });
+    }
+
+    #[test]
+    fn table_primitives_render_without_panicking() {
+        egui::__run_test_ui(|ui| {
+            let mut buf = "x".to_string();
+            table_frame(ui, |ui| {
+                table_header(ui, &["header", "requirement", "value"]);
+                cell_key(ui, "Content-Type", 120.0);
+                required_chip(ui, true, false);
+                required_chip(ui, false, true);
+                cell_edit(ui, &mut buf, 120.0, "value");
+                cell_text(ui, "application/json", 160.0);
+            });
         });
     }
 }
