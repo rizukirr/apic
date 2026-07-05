@@ -1315,6 +1315,7 @@ impl App {
             // Toolbar row: endpoint name on the left, EDIT/SAVE on the right.
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(SPACE_SMALL); // end padding, right of [ SAVE ]
                     if ui.button(RichText::new("[ SAVE ]").color(GREEN)).clicked() {
                         match path.as_deref() {
                             Some(p) => match model.save(p) {
@@ -1336,6 +1337,7 @@ impl App {
                     }
                     // The name fills the space to the left of the buttons.
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add_space(SPACE_SMALL); // start padding, left of the name
                         endpoint_name(ui, model, *editing);
                     });
                 });
