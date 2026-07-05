@@ -136,9 +136,13 @@ struct App {
     search: String,
     resp_tab: usize,
 
-    /// The active tab in the single request/response tab bar; reset to
-    /// [`MainTab::ReqHeader`] on load.
-    main_tab: MainTab,
+    /// The active sub-tab in the left request pane; reset to
+    /// [`ReqTab::Headers`] on load.
+    req_tab: ReqTab,
+
+    /// The active sub-tab in the right response pane; reset to
+    /// [`RespTab::Body`] on load.
+    resp_tab_view: RespTab,
 
     /// The `.apic` directory, for locating templates.
     apic_dir: Option<PathBuf>,
@@ -195,14 +199,19 @@ enum DialogKind {
     ImportPostman,
 }
 
-/// The single active tab across the request/response tab bar.
+/// The active sub-tab in the left (request) pane.
 #[derive(Clone, Copy, PartialEq)]
-enum MainTab {
-    ReqHeader,
-    ReqQuery,
-    ReqBody,
-    RespBody,
-    RespHeader,
+enum ReqTab {
+    Headers,
+    Query,
+    Body,
+}
+
+/// The active sub-tab in the right (response) pane.
+#[derive(Clone, Copy, PartialEq)]
+enum RespTab {
+    Body,
+    Headers,
 }
 
 impl App {
@@ -217,7 +226,8 @@ impl App {
             editing: false,
             search: String::new(),
             resp_tab: 0,
-            main_tab: MainTab::ReqHeader,
+            req_tab: ReqTab::Headers,
+            resp_tab_view: RespTab::Body,
             apic_dir: None,
             project_root: None,
             open_blocked: None,
@@ -374,7 +384,8 @@ impl App {
                 self.selected = Some(i);
                 self.selected_template = None;
                 self.resp_tab = 0;
-                self.main_tab = MainTab::ReqHeader;
+                self.req_tab = ReqTab::Headers;
+                self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
                 self.status = self
@@ -405,7 +416,8 @@ impl App {
                 self.selected = None;
                 self.selected_template = Some(i);
                 self.resp_tab = 0;
-                self.main_tab = MainTab::ReqHeader;
+                self.req_tab = ReqTab::Headers;
+                self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
                 self.status = format!("template '{name}'");
@@ -1225,7 +1237,8 @@ impl App {
             status,
             editing,
             resp_tab,
-            main_tab,
+            req_tab,
+            resp_tab_view,
             repair,
             entries,
             original_model,
@@ -1325,59 +1338,87 @@ impl App {
             ui.add_space(SPACE_MEDIUM);
 
             egui::Frame::NONE
-                .inner_margin(egui::Margin::same(8))
+                .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
                     endpoint_header(ui, model, *editing);
                     method_url_row(ui, model, *editing);
                     ui.add_space(SPACE_SMALL);
 
-                    // Single tab bar with a divider between request and response groups.
-                    ui.horizontal(|ui| {
-                        let mut tab = |ui: &mut egui::Ui, label: &str, which: MainTab| {
-                            if ui
-                                .selectable_label(
-                                    *main_tab == which,
-                                    RichText::new(label).color(if *main_tab == which {
-                                        GREEN
-                                    } else {
-                                        DIM
-                                    }),
-                                )
-                                .clicked()
-                            {
-                                *main_tab = which;
+                    // Fixed 50/50 two-pane split: request on the left, response on
+                    // the right, each with its own sub-tab bar.
+                    ui.columns(2, |cols| {
+                        // LEFT — Request
+                        cols[0].horizontal(|ui| {
+                            let mut t = |ui: &mut egui::Ui, label: &str, which: ReqTab| {
+                                if ui
+                                    .selectable_label(
+                                        *req_tab == which,
+                                        RichText::new(label).color(if *req_tab == which {
+                                            GREEN
+                                        } else {
+                                            DIM
+                                        }),
+                                    )
+                                    .clicked()
+                                {
+                                    *req_tab = which;
+                                }
+                            };
+                            t(ui, "Headers", ReqTab::Headers);
+                            t(ui, "Query", ReqTab::Query);
+                            t(ui, "Body", ReqTab::Body);
+                        });
+                        cols[0].separator();
+                        match *req_tab {
+                            ReqTab::Headers => {
+                                egui::ScrollArea::vertical()
+                                    .id_salt("req_h")
+                                    .auto_shrink([false, false])
+                                    .show(&mut cols[0], |ui| headers(ui, model, *editing));
                             }
-                        };
-                        tab(ui, "Header", MainTab::ReqHeader);
-                        tab(ui, "Query", MainTab::ReqQuery);
-                        tab(ui, "Request", MainTab::ReqBody);
-                        ui.label(RichText::new("‖").color(DIM));
-                        tab(ui, "Response", MainTab::RespBody);
-                        tab(ui, "Header", MainTab::RespHeader);
-                    });
-                    ui.separator();
+                            ReqTab::Query => {
+                                egui::ScrollArea::vertical()
+                                    .id_salt("req_q")
+                                    .auto_shrink([false, false])
+                                    .show(&mut cols[0], |ui| query_section(ui, model, *editing));
+                            }
+                            ReqTab::Body => request_body(&mut cols[0], model, *editing),
+                        }
 
-                    // Content of the active tab, filling the rest of the panel.
-                    match *main_tab {
-                        MainTab::ReqHeader => {
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| headers(ui, model, *editing));
+                        // RIGHT — Response. The sub-tab bar sits above the match;
+                        // each arm renders the response-code selector exactly once
+                        // (the Body arm via `responses`, the Headers arm via a
+                        // direct `response_code_selector` call), so the selector
+                        // never appears twice in a frame.
+                        cols[1].horizontal(|ui| {
+                            let mut t =
+                                |ui: &mut egui::Ui, label: &str, which: RespTab| {
+                                    if ui
+                                        .selectable_label(
+                                            *resp_tab_view == which,
+                                            RichText::new(label).color(
+                                                if *resp_tab_view == which { GREEN } else { DIM },
+                                            ),
+                                        )
+                                        .clicked()
+                                    {
+                                        *resp_tab_view = which;
+                                    }
+                                };
+                            t(ui, "Body", RespTab::Body);
+                            t(ui, "Headers", RespTab::Headers);
+                        });
+                        cols[1].separator();
+                        match *resp_tab_view {
+                            RespTab::Body => responses(&mut cols[1], model, resp_tab, *editing),
+                            RespTab::Headers => {
+                                response_code_selector(&mut cols[1], model, resp_tab, *editing);
+                                let idx = *resp_tab;
+                                response_headers(&mut cols[1], model, idx, *editing);
+                            }
                         }
-                        MainTab::ReqQuery => {
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| query_section(ui, model, *editing));
-                        }
-                        MainTab::ReqBody => request_body(ui, model, *editing),
-                        MainTab::RespBody => responses(ui, model, resp_tab, *editing),
-                        MainTab::RespHeader => {
-                            response_code_selector(ui, model, resp_tab, *editing);
-                            let idx = *resp_tab;
-                            response_headers(ui, model, idx, *editing);
-                        }
-                    }
+                    });
                 });
         });
         if toggle_edit {
