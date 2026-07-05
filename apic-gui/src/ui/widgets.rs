@@ -66,32 +66,6 @@ pub(crate) fn bordered_input_colored(
         .inner
 }
 
-/// A multi-line bordered text input, `rows` tall and filling the available
-/// width. The editor grows with content past `rows` lines. Used for free-text
-/// fields (e.g. the endpoint description) that read better on several lines.
-pub(crate) fn bordered_multiline(
-    ui: &mut egui::Ui,
-    buf: &mut String,
-    rows: usize,
-    hint: &str,
-) -> egui::Response {
-    egui::Frame::new()
-        .stroke(Stroke::new(1.0, BORDER))
-        .inner_margin(egui::Margin::symmetric(8, 4))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.add(
-                egui::TextEdit::multiline(buf)
-                    .frame(false)
-                    .hint_text(hint)
-                    .text_color(TEXT)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(rows),
-            )
-        })
-        .inner
-}
-
 /// A two-column split with an explicit width ratio. `ui.columns(2, …)` only
 /// ever splits 50/50; this gives the left column `left_frac` of the available
 /// width and the right column the rest (minus the inter-column spacing), so a
@@ -180,17 +154,6 @@ pub(crate) fn take_pending_focus(
     }
 }
 
-/// A read-mode `name → value` row: `name` in body text on the left, `value`
-/// right-aligned in `value_color`. Shared by the query/variable/header viewers.
-pub(crate) fn kv_row(ui: &mut egui::Ui, name: &str, value: &str, value_color: Color32) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(name).color(TEXT));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(RichText::new(value).color(value_color));
-        });
-    });
-}
-
 /// Type-picker dropdown bound to `dtype`. `id_salt` disambiguates the combo
 /// across rows; `types` is the option list (scalars only for params, scalars
 /// plus array variants for schema fields).
@@ -218,8 +181,8 @@ pub(crate) fn type_dropdown(
         });
 }
 
-/// `TextEdit` layouter shared by the read-only `json_block` and the editable
-/// `code_block`, so both color JSON identically. The highlight is memoized per
+/// `TextEdit` layouter used by `json_editor`, so its editable and read-only
+/// variants color JSON identically. The highlight is memoized per
 /// `(text, font)`, so re-rendering unchanged JSON every frame is cheap.
 fn json_layouter(
     ui: &egui::Ui,
@@ -233,77 +196,10 @@ fn json_layouter(
     ui.fonts_mut(|f| f.layout_job(job))
 }
 
-/// A read-only, indentation-preserving JSON block (pretty-printed via the
-/// shared core formatter so it matches `apic read`/TUI exactly).
-pub(crate) fn json_block(ui: &mut egui::Ui, raw: &str, height: f32) {
-    let mut text = if raw.trim().is_empty() {
-        "(no example)".to_string()
-    } else {
-        apic_core::json::pretty_json(raw)
-    };
-    let mut layouter = json_layouter;
-    egui::Frame::new()
-        .fill(Color32::from_rgb(4, 6, 5))
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            // A read-only code editor preserves the indentation (a plain Label
-            // collapses leading whitespace, flattening the JSON). The layouter
-            // adds JSON syntax colors on top of that.
-            let edit = egui::TextEdit::multiline(&mut text)
-                .code_editor()
-                .interactive(false)
-                .frame(false)
-                .layouter(&mut layouter)
-                .desired_width(f32::INFINITY);
-            // A multiline TextEdit has no scrollbar of its own, so a long
-            // example is only reachable inside an enclosing ScrollArea capped
-            // at the stretched height.
-            if height > 0.0 {
-                egui::ScrollArea::vertical()
-                    .id_salt("json_block_scroll")
-                    .max_height(height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.add(edit);
-                    });
-            } else {
-                ui.add(edit);
-            }
-        });
-}
-
-pub(crate) fn code_block(ui: &mut egui::Ui, raw: &mut String, height: f32) {
-    let mut layouter = json_layouter;
-    egui::Frame::group(ui.style())
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            let edit = egui::TextEdit::multiline(raw)
-                .frame(false)
-                .lock_focus(true)
-                .code_editor()
-                .interactive(true)
-                .layouter(&mut layouter)
-                .desired_width(f32::INFINITY);
-            // Editable examples can grow past the stretched box; keep them
-            // reachable by scrolling inside an enclosing ScrollArea.
-            if height > 0.0 {
-                egui::ScrollArea::vertical()
-                    .id_salt("code_block_scroll")
-                    .max_height(height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.add(edit.desired_rows(10));
-                    });
-            } else {
-                ui.add(edit.desired_rows(10));
-            }
-        });
-}
-
 /// A line-numbered JSON editor. `editing` picks editable vs read-only; `height`
 /// is the stretched box height. A dim gutter of logical line numbers sits left
 /// of the syntax-highlighted text; soft-wrap is off so numbers stay 1:1 and long
-/// lines scroll horizontally. Replaces the old `code_block`/`json_block`.
+/// lines scroll horizontally. This is the single JSON block used everywhere.
 pub(crate) fn json_editor(ui: &mut egui::Ui, buf: &mut String, editing: bool, height: f32) {
     // Read-only preview pretty-prints and shows a placeholder when empty.
     let mut owned;
@@ -435,29 +331,6 @@ pub(crate) fn table_frame<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn json_block_renders_without_panicking() {
-        // Exercises the TextEdit `.layouter` path (which the highlighter unit
-        // tests don't reach) across real JSON, the empty placeholder, and
-        // malformed input.
-        egui::__run_test_ui(|ui| {
-            json_block(ui, "{\n  \"a\": 1,\n  \"ok\": true\n}", 0.0);
-            json_block(ui, "", 0.0);
-            json_block(ui, "not json", 0.0);
-        });
-    }
-
-    #[test]
-    fn code_block_renders_without_panicking() {
-        // Drives the editable layouter path across valid and malformed JSON.
-        egui::__run_test_ui(|ui| {
-            let mut good = "{\n  \"a\": 1,\n  \"ok\": true\n}".to_string();
-            let mut bad = "not json".to_string();
-            code_block(ui, &mut good, 0.0);
-            code_block(ui, &mut bad, 0.0);
-        });
-    }
 
     #[test]
     fn json_editor_renders_edit_and_preview() {

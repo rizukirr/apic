@@ -231,7 +231,7 @@ pub(crate) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
 
 /// Renders a single view-mode schema field as
 /// `name: type [REQUIRED]/[OPTIONAL] desc`, used by the request/response schema
-/// viewer (query params render as `name → value` rows via `kv_row`).
+/// viewer.
 pub(crate) fn field_view_row(
     ui: &mut egui::Ui,
     name: &str,
@@ -674,29 +674,27 @@ pub(crate) fn responses(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apic_core::json::json_get;
-
-    fn model() -> EditModel {
-        let c = json_get(
-            r#"{ "name":"t","method":"GET","url":"https://h/v1/{id}",
-                 "query":[{"name":"page","value":"2","description":"d"}],
-                 "headers":[{"name":"A","value":"B"}],
-                 "responses":[{"code":200,"description":"ok",
-                    "headers":[{"name":"X","value":"1"}]}] }"#,
-            None,
-        )
-        .unwrap();
-        EditModel::from_contract(c)
-    }
 
     #[test]
     fn every_section_renders_without_panicking() {
+        // `__run_test_ui` takes `impl Fn`, so build the model and tab index
+        // fresh inside the closure rather than capturing them mutably.
         eframe::egui::__run_test_ui(|ui| {
-            let mut m = model();
+            let c = apic_core::json::json_get(
+                r#"{ "name":"t","description":"d","method":"GET","url":"https://h/v1/{id}",
+                     "query":[{"name":"page","value":"2","description":"d","required":true}],
+                     "headers":[{"name":"Content-Type","value":"application/json","required":true}],
+                     "responses":[{"code":200,"description":"ok",
+                        "headers":[{"name":"X","value":"1","required":false}]}] }"#,
+                None,
+            )
+            .unwrap();
+            let mut m = EditModel::from_contract(c);
             let mut resp = 0usize;
             endpoint_header(ui, &mut m, true);
             method_url_row(ui, &mut m, true);
             headers(ui, &mut m, true);
+            headers(ui, &mut m, false);
             query_section(ui, &mut m, true);
             request_body(ui, &mut m, true);
             response_code_selector(ui, &mut m, &mut resp, true);
