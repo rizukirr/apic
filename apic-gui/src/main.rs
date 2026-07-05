@@ -136,7 +136,7 @@ struct App {
     search: String,
     resp_tab: usize,
 
-    /// The active top-level editor tab; reset to [`MainTab::Headers`] on load.
+    /// The active top-level editor tab; reset to [`MainTab::Overview`] on load.
     main_tab: MainTab,
 
     /// The active sub-tab inside the Response tab; reset to [`RespTab::Body`].
@@ -200,6 +200,7 @@ enum DialogKind {
 /// The active top-level editor tab (single full-width pane).
 #[derive(Clone, Copy, PartialEq)]
 enum MainTab {
+    Overview,
     Headers,
     Query,
     Request,
@@ -225,7 +226,7 @@ impl App {
             editing: false,
             search: String::new(),
             resp_tab: 0,
-            main_tab: MainTab::Headers,
+            main_tab: MainTab::Overview,
             resp_tab_view: RespTab::Body,
             apic_dir: None,
             project_root: None,
@@ -383,7 +384,7 @@ impl App {
                 self.selected = Some(i);
                 self.selected_template = None;
                 self.resp_tab = 0;
-                self.main_tab = MainTab::Headers;
+                self.main_tab = MainTab::Overview;
                 self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
@@ -415,7 +416,7 @@ impl App {
                 self.selected = None;
                 self.selected_template = Some(i);
                 self.resp_tab = 0;
-                self.main_tab = MainTab::Headers;
+                self.main_tab = MainTab::Overview;
                 self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
@@ -1345,7 +1346,6 @@ impl App {
                 .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
-                    endpoint_description(ui, model, *editing);
                     method_url_row(ui, model, *editing);
                     ui.add_space(SPACE_SMALL);
 
@@ -1366,6 +1366,7 @@ impl App {
                                 *main_tab = which;
                             }
                         };
+                        t(ui, "Overview", MainTab::Overview);
                         t(ui, "Headers", MainTab::Headers);
                         t(ui, "Query", MainTab::Query);
                         t(ui, "Request", MainTab::Request);
@@ -1374,6 +1375,12 @@ impl App {
                     ui.separator();
 
                     match *main_tab {
+                        MainTab::Overview => {
+                            egui::ScrollArea::vertical()
+                                .id_salt("tab_overview")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| endpoint_description(ui, model, *editing));
+                        }
                         MainTab::Headers => {
                             egui::ScrollArea::vertical()
                                 .id_salt("tab_headers")
