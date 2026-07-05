@@ -16,8 +16,9 @@ use super::theme::{
     BG, CYAN, DIM, GREEN, RED, SPACE_MEDIUM, SPACE_SMALL, TEXT, method_badge, method_color,
 };
 use super::widgets::{
-    SCHEMA_TYPES, add_button, bordered_input, bordered_input_colored, code_block, delete_button,
-    json_block, kv_row, request_new_row_focus, section_label, take_pending_focus, type_dropdown,
+    SCHEMA_TYPES, add_button, bordered_input, bordered_input_colored, bordered_multiline,
+    code_block, delete_button, json_block, kv_row, request_new_row_focus, section_label,
+    take_pending_focus, type_dropdown,
 };
 
 // egui temp-data keys for the "focus the new row's name field" markers, one per
@@ -36,7 +37,7 @@ pub(crate) fn endpoint_header(ui: &mut egui::Ui, model: &mut EditModel, editing:
         });
         ui.horizontal(|ui| {
             ui.label(RichText::new("desc").color(DIM));
-            bordered_input(ui, &mut model.description, f32::INFINITY, "description");
+            bordered_multiline(ui, &mut model.description, 3, "description");
         });
     } else {
         ui.label(RichText::new(&model.name).color(TEXT).strong());

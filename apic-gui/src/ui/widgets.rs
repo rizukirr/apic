@@ -63,6 +63,32 @@ pub(crate) fn bordered_input_colored(
         .inner
 }
 
+/// A multi-line bordered text input, `rows` tall and filling the available
+/// width. The editor grows with content past `rows` lines. Used for free-text
+/// fields (e.g. the endpoint description) that read better on several lines.
+pub(crate) fn bordered_multiline(
+    ui: &mut egui::Ui,
+    buf: &mut String,
+    rows: usize,
+    hint: &str,
+) -> egui::Response {
+    egui::Frame::new()
+        .stroke(Stroke::new(1.0, BORDER))
+        .inner_margin(egui::Margin::symmetric(8, 4))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.add(
+                egui::TextEdit::multiline(buf)
+                    .frame(false)
+                    .hint_text(hint)
+                    .text_color(TEXT)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(rows),
+            )
+        })
+        .inner
+}
+
 /// A two-column split with an explicit width ratio. `ui.columns(2, …)` only
 /// ever splits 50/50; this gives the left column `left_frac` of the available
 /// width and the right column the rest (minus the inter-column spacing), so a
@@ -226,8 +252,17 @@ pub(crate) fn json_block(ui: &mut egui::Ui, raw: &str, height: f32) {
                 .frame(false)
                 .layouter(&mut layouter)
                 .desired_width(f32::INFINITY);
+            // A multiline TextEdit has no scrollbar of its own, so a long
+            // example is only reachable inside an enclosing ScrollArea capped
+            // at the stretched height.
             if height > 0.0 {
-                ui.add_sized([ui.available_width(), height], edit);
+                egui::ScrollArea::vertical()
+                    .id_salt("json_block_scroll")
+                    .max_height(height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add(edit);
+                    });
             } else {
                 ui.add(edit);
             }
@@ -246,8 +281,16 @@ pub(crate) fn code_block(ui: &mut egui::Ui, raw: &mut String, height: f32) {
                 .interactive(true)
                 .layouter(&mut layouter)
                 .desired_width(f32::INFINITY);
+            // Editable examples can grow past the stretched box; keep them
+            // reachable by scrolling inside an enclosing ScrollArea.
             if height > 0.0 {
-                ui.add_sized([ui.available_width(), height], edit);
+                egui::ScrollArea::vertical()
+                    .id_salt("code_block_scroll")
+                    .max_height(height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add(edit.desired_rows(10));
+                    });
             } else {
                 ui.add(edit.desired_rows(10));
             }
