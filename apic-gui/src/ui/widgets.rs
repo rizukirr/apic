@@ -8,12 +8,7 @@
 use eframe::egui::{self, TextBuffer};
 use egui::{Color32, RichText, Stroke};
 
-use super::theme::{
-    BORDER, CYAN, DIM, GREEN, PANEL_BG, RED, SPACE_EXTRA_SMALL, SPACE_MEDIUM, TEXT,
-};
-
-/// Scalar types for query params and path variables (no objects/arrays).
-pub(crate) const PARAM_TYPES: &[&str] = &["string", "int", "float", "boolean"];
+use super::theme::{BORDER, CYAN, DIM, GREEN, RED, SPACE_EXTRA_SMALL, TEXT};
 
 /// Schema field types: scalars plus their array variants and `object`.
 pub(crate) const SCHEMA_TYPES: &[&str] = &[
@@ -68,33 +63,28 @@ pub(crate) fn bordered_input_colored(
         .inner
 }
 
-/// A labeled bordered panel, the `┌─ TITLE ─┐` box from the mockup. Pass
-/// `min_height > 0.0` to force a minimum content height (used to equalize the
-/// side-by-side row); returns the content height so callers can measure it.
-pub(crate) fn panel(
+/// A multi-line bordered text input, `rows` tall and filling the available
+/// width. The editor grows with content past `rows` lines. Used for free-text
+/// fields (e.g. the endpoint description) that read better on several lines.
+pub(crate) fn bordered_multiline(
     ui: &mut egui::Ui,
-    title: &str,
-    min_height: f32,
-    add: impl FnOnce(&mut egui::Ui),
-) -> f32 {
-    egui::Frame::group(ui.style())
-        .fill(PANEL_BG)
+    buf: &mut String,
+    rows: usize,
+    hint: &str,
+) -> egui::Response {
+    egui::Frame::new()
         .stroke(Stroke::new(1.0, BORDER))
-        .inner_margin(egui::Margin::same(10))
+        .inner_margin(egui::Margin::symmetric(8, 4))
         .show(ui, |ui| {
-            // Fill the full width the frame was given. The edge spacing comes
-            // from the editor's global margin, so no extra right padding here
-            // (that used to leave a lopsided gap on the right edge).
-            let w = ui.available_width();
-            ui.set_min_width(w);
-            ui.set_max_width(w);
-            if min_height > 0.0 {
-                ui.set_min_height(min_height);
-            }
-            ui.label(RichText::new(title).color(DIM).size(11.0));
-            ui.add_space(SPACE_MEDIUM);
-            add(ui);
-            ui.min_rect().height()
+            ui.set_min_width(ui.available_width());
+            ui.add(
+                egui::TextEdit::multiline(buf)
+                    .frame(false)
+                    .hint_text(hint)
+                    .text_color(TEXT)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(rows),
+            )
         })
         .inner
 }
@@ -242,7 +232,7 @@ fn json_layouter(
 
 /// A read-only, indentation-preserving JSON block (pretty-printed via the
 /// shared core formatter so it matches `apic read`/TUI exactly).
-pub(crate) fn json_block(ui: &mut egui::Ui, raw: &str) {
+pub(crate) fn json_block(ui: &mut egui::Ui, raw: &str, height: f32) {
     let mut text = if raw.trim().is_empty() {
         "(no example)".to_string()
     } else {
@@ -256,32 +246,54 @@ pub(crate) fn json_block(ui: &mut egui::Ui, raw: &str) {
             // A read-only code editor preserves the indentation (a plain Label
             // collapses leading whitespace, flattening the JSON). The layouter
             // adds JSON syntax colors on top of that.
-            ui.add(
-                egui::TextEdit::multiline(&mut text)
-                    .code_editor()
-                    .interactive(false)
-                    .frame(false)
-                    .layouter(&mut layouter)
-                    .desired_width(f32::INFINITY),
-            );
+            let edit = egui::TextEdit::multiline(&mut text)
+                .code_editor()
+                .interactive(false)
+                .frame(false)
+                .layouter(&mut layouter)
+                .desired_width(f32::INFINITY);
+            // A multiline TextEdit has no scrollbar of its own, so a long
+            // example is only reachable inside an enclosing ScrollArea capped
+            // at the stretched height.
+            if height > 0.0 {
+                egui::ScrollArea::vertical()
+                    .id_salt("json_block_scroll")
+                    .max_height(height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add(edit);
+                    });
+            } else {
+                ui.add(edit);
+            }
         });
 }
 
-pub(crate) fn code_block(ui: &mut egui::Ui, raw: &mut String) {
+pub(crate) fn code_block(ui: &mut egui::Ui, raw: &mut String, height: f32) {
     let mut layouter = json_layouter;
     egui::Frame::group(ui.style())
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
-            ui.add(
-                egui::TextEdit::multiline(raw)
-                    .frame(false)
-                    .lock_focus(true)
-                    .code_editor()
-                    .interactive(true)
-                    .layouter(&mut layouter)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(10),
-            );
+            let edit = egui::TextEdit::multiline(raw)
+                .frame(false)
+                .lock_focus(true)
+                .code_editor()
+                .interactive(true)
+                .layouter(&mut layouter)
+                .desired_width(f32::INFINITY);
+            // Editable examples can grow past the stretched box; keep them
+            // reachable by scrolling inside an enclosing ScrollArea.
+            if height > 0.0 {
+                egui::ScrollArea::vertical()
+                    .id_salt("code_block_scroll")
+                    .max_height(height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add(edit.desired_rows(10));
+                    });
+            } else {
+                ui.add(edit.desired_rows(10));
+            }
         });
 }
 
@@ -295,9 +307,9 @@ mod tests {
         // tests don't reach) across real JSON, the empty placeholder, and
         // malformed input.
         egui::__run_test_ui(|ui| {
-            json_block(ui, "{\n  \"a\": 1,\n  \"ok\": true\n}");
-            json_block(ui, "");
-            json_block(ui, "not json");
+            json_block(ui, "{\n  \"a\": 1,\n  \"ok\": true\n}", 0.0);
+            json_block(ui, "", 0.0);
+            json_block(ui, "not json", 0.0);
         });
     }
 
@@ -307,8 +319,8 @@ mod tests {
         egui::__run_test_ui(|ui| {
             let mut good = "{\n  \"a\": 1,\n  \"ok\": true\n}".to_string();
             let mut bad = "not json".to_string();
-            code_block(ui, &mut good);
-            code_block(ui, &mut bad);
+            code_block(ui, &mut good, 0.0);
+            code_block(ui, &mut bad, 0.0);
         });
     }
 }

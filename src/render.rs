@@ -1,12 +1,10 @@
 //! Plain-text rendering of a parsed contract to stdout.
 //!
-//! Output is column-aligned text with one section per contract part (variable,
+//! Output is column-aligned text with one section per contract part (url,
 //! query, headers, request, responses). Colors are applied only when stdout is
 //! a terminal, so piped or redirected output stays clean.
 
-use apic_core::json::{
-    JsonContent, Method, Schema, Url, Variable, any_accept, method_str, parse_type,
-};
+use apic_core::json::{JsonContent, Method, Schema, any_accept, method_str, parse_type};
 use crossterm::style::Stylize;
 use std::io::IsTerminal;
 
@@ -41,38 +39,24 @@ impl Printer {
         if let Some(desc) = &c.description {
             println!(" {}", sanitize(desc));
         }
-        println!(
-            "\n {} {}",
-            self.method(&c.method),
-            sanitize(&build_url(&c.url)),
-        );
-
-        self.section("VARIABLE");
-        match c.url.variable.as_deref() {
-            Some(variable) if !variable.is_empty() => {
-                let (headers, rows) = variable_rows(variable);
-                self.table(Some(&headers), &rows);
-            }
-            _ => self.none(),
-        }
+        println!("\n {} {}", self.method(&c.method), sanitize(&c.url),);
 
         self.section("QUERY");
-        match c.url.query.as_deref() {
-            Some(query) if !query.is_empty() => {
-                let rows: Vec<Vec<String>> = query
-                    .iter()
-                    .map(|q| {
-                        vec![
-                            q.name.clone(),
-                            q.dtype.clone(),
-                            req_mark(q.required),
-                            q.description.clone().unwrap_or_default(),
-                        ]
-                    })
-                    .collect();
-                self.table(Some(&["NAME", "TYPE", "REQ", "DESCRIPTION"]), &rows);
-            }
-            _ => self.none(),
+        if c.query.is_empty() {
+            self.none();
+        } else {
+            let rows: Vec<Vec<String>> = c
+                .query
+                .iter()
+                .map(|q| {
+                    vec![
+                        q.name.clone(),
+                        q.value.clone(),
+                        q.description.clone().unwrap_or_default(),
+                    ]
+                })
+                .collect();
+            self.table(Some(&["name", "value", "description"]), &rows);
         }
 
         self.section("HEADERS");
@@ -277,24 +261,6 @@ impl Printer {
     }
 }
 
-/// Builds the VARIABLE table headers and rows. Kept as a pure helper so the
-/// REQ column is testable without capturing terminal output.
-fn variable_rows(variables: &[Variable]) -> (Vec<&'static str>, Vec<Vec<String>>) {
-    let headers = vec!["NAME", "TYPE", "REQ", "DESCRIPTION"];
-    let rows = variables
-        .iter()
-        .map(|v| {
-            vec![
-                v.name.clone(),
-                v.dtype.clone(),
-                req_mark(v.required),
-                v.description.clone().unwrap_or_default(),
-            ]
-        })
-        .collect();
-    (headers, rows)
-}
-
 /// The ` · <type>` suffix shown on a section title when the body is an array
 /// (e.g. `object[]`), or an empty string for a plain object body. The type is
 /// sanitized for display. Shared by the plain-text and TUI renderers.
@@ -361,12 +327,6 @@ fn req_mark(required: bool) -> String {
     }
 }
 
-/// Assembles the displayable URL for a [`Url`], delegating to the shared
-/// [`apic_core::json::build_url`] so the CLI, TUI, and GUI render it identically.
-pub(crate) fn build_url(url: &Url) -> String {
-    apic_core::json::build_url(&url.protocol, &url.host, url.path.as_deref().unwrap_or(&[]))
-}
-
 /// Strips control characters from a file-derived string before it is printed.
 ///
 /// Contract files are untrusted input; without this, embedded ANSI/OSC escape
@@ -422,30 +382,6 @@ mod tests {
             properties,
             accept: None,
         }
-    }
-
-    #[test]
-    fn variable_rows_includes_req_column_marking_only_required() {
-        let variables = vec![
-            Variable {
-                name: "id".to_string(),
-                dtype: "int".to_string(),
-                description: Some("User ID".to_string()),
-                required: true,
-            },
-            Variable {
-                name: "slug".to_string(),
-                dtype: "string".to_string(),
-                description: None,
-                required: false,
-            },
-        ];
-        let (headers, rows) = variable_rows(&variables);
-        assert_eq!(headers, vec!["NAME", "TYPE", "REQ", "DESCRIPTION"]);
-        assert_eq!(rows[0].len(), 4);
-        // REQ is column index 2; required shows the mark, optional stays blank.
-        assert_eq!(rows[0][2], req_mark(true));
-        assert_eq!(rows[1][2], "");
     }
 
     #[test]

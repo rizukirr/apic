@@ -19,9 +19,12 @@ mod desktop;
 mod settings;
 mod ui;
 use settings::Settings;
-use ui::sections::{endpoint_info, headers, parameters, request_body, responses};
+use ui::sections::{
+    endpoint_header, headers, method_url_row, query_section, request_body, response_code_selector,
+    response_headers, responses,
+};
 use ui::theme::*;
-use ui::widgets::{bordered_input, panel, take_pending_focus};
+use ui::widgets::{bordered_input, take_pending_focus};
 
 // egui temp-data keys for the "focus the input when the dialog opens" markers,
 // claimed once via `take_pending_focus` the first frame each modal renders.
@@ -133,9 +136,9 @@ struct App {
     search: String,
     resp_tab: usize,
 
-    /// Shared height for the side-by-side PARAMETERS/HEADERS row (the taller of
-    /// the two from the previous frame); reset on load / edit-toggle.
-    row_height: f32,
+    /// The active tab in the single request/response tab bar; reset to
+    /// [`MainTab::ReqHeader`] on load.
+    main_tab: MainTab,
 
     /// The `.apic` directory, for locating templates.
     apic_dir: Option<PathBuf>,
@@ -192,6 +195,16 @@ enum DialogKind {
     ImportPostman,
 }
 
+/// The single active tab across the request/response tab bar.
+#[derive(Clone, Copy, PartialEq)]
+enum MainTab {
+    ReqHeader,
+    ReqQuery,
+    ReqBody,
+    RespBody,
+    RespHeader,
+}
+
 impl App {
     fn new() -> Self {
         let mut app = App {
@@ -204,7 +217,7 @@ impl App {
             editing: false,
             search: String::new(),
             resp_tab: 0,
-            row_height: 0.0,
+            main_tab: MainTab::ReqHeader,
             apic_dir: None,
             project_root: None,
             open_blocked: None,
@@ -315,7 +328,6 @@ impl App {
     fn begin_edit(&mut self) {
         self.original_model = self.model.clone();
         self.editing = true;
-        self.row_height = 0.0; // recompute equal-height row for the new mode
     }
 
     /// Leave edit mode, restoring the pre-edit snapshot and discarding any edits
@@ -325,7 +337,6 @@ impl App {
             self.model = Some(original);
         }
         self.editing = false;
-        self.row_height = 0.0; // recompute equal-height row for the new mode
     }
 
     /// Loads an invalid contract's raw text into the repair editor.
@@ -363,9 +374,9 @@ impl App {
                 self.selected = Some(i);
                 self.selected_template = None;
                 self.resp_tab = 0;
+                self.main_tab = MainTab::ReqHeader;
                 self.editing = false;
                 self.original_model = None;
-                self.row_height = 0.0;
                 self.status = self
                     .path
                     .as_deref()
@@ -394,9 +405,9 @@ impl App {
                 self.selected = None;
                 self.selected_template = Some(i);
                 self.resp_tab = 0;
+                self.main_tab = MainTab::ReqHeader;
                 self.editing = false;
                 self.original_model = None;
-                self.row_height = 0.0;
                 self.status = format!("template '{name}'");
             }
             Err(err) => self.status = format!("template error: {err}"),
@@ -1214,7 +1225,7 @@ impl App {
             status,
             editing,
             resp_tab,
-            row_height,
+            main_tab,
             repair,
             entries,
             original_model,
@@ -1253,26 +1264,30 @@ impl App {
                     rep.buffer = apic_core::json::pretty_json(&rep.buffer);
                 }
                 ui.add_space(SPACE_SMALL);
-                let resp = ui.add_sized(
-                    [
-                        ui.available_width(),
-                        (ui.available_height() - 8.0).max(40.0),
-                    ],
-                    egui::TextEdit::multiline(&mut rep.buffer)
-                        .code_editor()
-                        .desired_width(f32::INFINITY),
-                );
-                if resp.changed() || pretty {
-                    rep.error = match apic_core::json::validate(&rep.buffer) {
-                        Ok(()) => String::new(),
-                        Err(e) => e.to_string(),
-                    };
-                    if rep.error.is_empty()
-                        && let Some(entry) = entries.get(rep.index)
-                    {
-                        promote = Some((entry.path.clone(), rep.buffer.clone()));
-                    }
-                }
+                // The multiline TextEdit has no scrollbar of its own; a long
+                // invalid contract is only reachable inside an enclosing
+                // ScrollArea (egui lays the editor out to full content height).
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let resp = ui.add(
+                            egui::TextEdit::multiline(&mut rep.buffer)
+                                .code_editor()
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(24),
+                        );
+                        if resp.changed() || pretty {
+                            rep.error = match apic_core::json::validate(&rep.buffer) {
+                                Ok(()) => String::new(),
+                                Err(e) => e.to_string(),
+                            };
+                            if rep.error.is_empty()
+                                && let Some(entry) = entries.get(rep.index)
+                            {
+                                promote = Some((entry.path.clone(), rep.buffer.clone()));
+                            }
+                        }
+                    });
                 return;
             }
             let Some(model) = model.as_mut() else {
@@ -1293,7 +1308,6 @@ impl App {
                                     *status = format!("saved {}", p.display());
                                     *editing = false; // back to read-only on success
                                     *original_model = None; // commit: drop the snapshot
-                                    *row_height = 0.0; // recompute equal-height row
                                 }
                                 Err(e) => *status = format!("save error: {e}"),
                             },
@@ -1310,29 +1324,60 @@ impl App {
             });
             ui.add_space(SPACE_MEDIUM);
 
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
+            egui::Frame::NONE
+                .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
-                    egui::Frame::NONE
-                        .inner_margin(egui::Margin::same(8))
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = SPACE_LARGE;
-                            endpoint_info(ui, model, *editing);
-                            let target = *row_height;
-                            let mut measured = 0.0_f32;
-                            ui.columns(2, |cols| {
-                                let h0 = panel(&mut cols[0], "PARAMETERS", target, |ui| {
-                                    parameters(ui, model, *editing)
-                                });
-                                let h1 = panel(&mut cols[1], "HEADERS", target, |ui| {
-                                    headers(ui, model, *editing)
-                                });
-                                measured = h0.max(h1);
-                            });
-                            *row_height = measured;
-                            request_body(ui, model, *editing);
-                            responses(ui, model, resp_tab, *editing);
-                        });
+                    ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
+                    endpoint_header(ui, model, *editing);
+                    method_url_row(ui, model, *editing);
+                    ui.add_space(SPACE_SMALL);
+
+                    // Single tab bar with a divider between request and response groups.
+                    ui.horizontal(|ui| {
+                        let mut tab = |ui: &mut egui::Ui, label: &str, which: MainTab| {
+                            if ui
+                                .selectable_label(
+                                    *main_tab == which,
+                                    RichText::new(label).color(if *main_tab == which {
+                                        GREEN
+                                    } else {
+                                        DIM
+                                    }),
+                                )
+                                .clicked()
+                            {
+                                *main_tab = which;
+                            }
+                        };
+                        tab(ui, "Header", MainTab::ReqHeader);
+                        tab(ui, "Query", MainTab::ReqQuery);
+                        tab(ui, "Request", MainTab::ReqBody);
+                        ui.label(RichText::new("‖").color(DIM));
+                        tab(ui, "Response", MainTab::RespBody);
+                        tab(ui, "Header", MainTab::RespHeader);
+                    });
+                    ui.separator();
+
+                    // Content of the active tab, filling the rest of the panel.
+                    match *main_tab {
+                        MainTab::ReqHeader => {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| headers(ui, model, *editing));
+                        }
+                        MainTab::ReqQuery => {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| query_section(ui, model, *editing));
+                        }
+                        MainTab::ReqBody => request_body(ui, model, *editing),
+                        MainTab::RespBody => responses(ui, model, resp_tab, *editing),
+                        MainTab::RespHeader => {
+                            response_code_selector(ui, model, resp_tab, *editing);
+                            let idx = *resp_tab;
+                            response_headers(ui, model, idx, *editing);
+                        }
+                    }
                 });
         });
         if toggle_edit {
@@ -1473,7 +1518,7 @@ mod tests {
         let json = r#"{
             "name": "test",
             "method": "GET",
-            "url": { "protocol": "https", "host": "example.com" },
+            "url": "https://example.com",
             "headers": [],
             "responses": [ { "code": 200, "description": "ok" } ]
         }"#;
@@ -1523,9 +1568,8 @@ mod tests {
         let json = r#"{
             "name": "test",
             "method": "POST",
-            "url": { "protocol": "https", "host": "example.com", "path": ["users"],
-                     "query": [{"name":"page","type":"int","required":false}],
-                     "variable": [{"name":"id","type":"string","required":true}] },
+            "url": "https://example.com/users/{id}",
+            "query": [{"name":"page","value":"","description":""}],
             "headers": [{"name":"Authorization","value":"Bearer x"}],
             "request": { "type": "json", "example": {"name":"a"}, "schema": [
                 {"name":"name","type":"string","default":null,"description":"n","required":true,"properties":null},
@@ -1586,7 +1630,7 @@ mod tests {
         // TextEdit must not pin egui into a permanent repaint.
         {
             let m = app.model.as_mut().unwrap();
-            let new_idx = m.url.query.len();
+            let new_idx = m.query.len();
             apic_core::edit::apply(
                 m,
                 &apic_core::edit::EditAction::Add {

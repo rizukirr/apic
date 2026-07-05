@@ -13,7 +13,8 @@ pub struct EditModel {
     pub name: String,
     pub description: String, // empty => None
     pub method: Method,
-    pub url: EditUrl,
+    pub url: String,
+    pub query: Vec<EditQuery>,
     pub headers: Vec<EditHeader>,
     pub request: Option<EditBody>,
     pub responses: Vec<EditResponse>,
@@ -21,15 +22,6 @@ pub struct EditModel {
     /// inference. Scoped to a `BodyLoc` so it renders only under that body. Not
     /// serialized.
     pub last_error: Option<(BodyLoc, String)>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct EditUrl {
-    pub protocol: String,
-    pub host: String,
-    pub path: Vec<String>,
-    pub query: Vec<EditQuery>,
-    pub variable: Vec<EditVariable>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,17 +33,8 @@ pub struct EditHeader {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EditQuery {
     pub name: String,
-    pub dtype: String,       // data type, e.g. "string", "int"
+    pub value: String,
     pub description: String, // empty => None
-    pub required: bool,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct EditVariable {
-    pub name: String,
-    pub dtype: String,       // defaults to "string" on save when empty
-    pub description: String, // empty => None
-    pub required: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +48,7 @@ pub struct EditBody {
 pub struct EditResponse {
     pub code: String, // numeric text; parsed to u16 on save
     pub description: String,
+    pub headers: Vec<EditHeader>,
     pub dtype: String,
     pub schema: Vec<EditSchema>,
     pub example: String, // raw JSON text; empty => None
@@ -99,6 +83,7 @@ impl EditResponse {
         EditResponse {
             code: "200".to_string(),
             description: String::new(),
+            headers: Vec::new(),
             dtype: "object".to_string(),
             schema: Vec::new(),
             example: String::new(),
@@ -106,7 +91,7 @@ impl EditResponse {
     }
 }
 
-use crate::json::{Header, JsonContent, Query, RequestBody, Response, Schema, Variable};
+use crate::json::{Header, JsonContent, Query, RequestBody, Response, Schema};
 use serde_json::Value;
 
 /// Pretty-prints a JSON example value to raw text (4-space indent), or empty
@@ -146,35 +131,16 @@ impl EditModel {
             name: c.name,
             description: opt_to_string(c.description),
             method: c.method,
-            url: EditUrl {
-                protocol: c.url.protocol,
-                host: c.url.host,
-                path: c.url.path.unwrap_or_default(),
-                query: c
-                    .url
-                    .query
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|q: Query| EditQuery {
-                        name: q.name,
-                        dtype: q.dtype,
-                        description: opt_to_string(q.description),
-                        required: q.required,
-                    })
-                    .collect(),
-                variable: c
-                    .url
-                    .variable
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|v: Variable| EditVariable {
-                        name: v.name,
-                        dtype: v.dtype,
-                        description: opt_to_string(v.description),
-                        required: v.required,
-                    })
-                    .collect(),
-            },
+            url: c.url,
+            query: c
+                .query
+                .into_iter()
+                .map(|q: Query| EditQuery {
+                    name: q.name,
+                    value: q.value,
+                    description: opt_to_string(q.description),
+                })
+                .collect(),
             headers: c
                 .headers
                 .into_iter()
@@ -199,6 +165,14 @@ impl EditModel {
                 .map(|r: Response| EditResponse {
                     code: r.code.to_string(),
                     description: r.description,
+                    headers: r
+                        .headers
+                        .into_iter()
+                        .map(|h: Header| EditHeader {
+                            name: h.name,
+                            value: h.value,
+                        })
+                        .collect(),
                     dtype: r.dtype,
                     schema: r.schema.into_iter().map(schema_to_edit).collect(),
                     example: example_to_text(r.example.as_ref()),
@@ -268,68 +242,27 @@ impl EditModel {
             Value::String(crate::json::method_str(&self.method)),
         );
 
-        let mut url = serde_json::Map::new();
-        url.insert("protocol".into(), Value::String(self.url.protocol.clone()));
-        url.insert("host".into(), Value::String(self.url.host.clone()));
-        if !self.url.path.is_empty() {
-            url.insert(
-                "path".into(),
-                Value::Array(self.url.path.iter().cloned().map(Value::String).collect()),
-            );
-        }
-        if !self.url.query.is_empty() {
-            url.insert(
+        root.insert("url".into(), Value::String(self.url.clone()));
+
+        if !self.query.is_empty() {
+            root.insert(
                 "query".into(),
                 Value::Array(
-                    self.url
-                        .query
+                    self.query
                         .iter()
                         .map(|q| {
                             let mut m = serde_json::Map::new();
                             m.insert("name".into(), Value::String(q.name.clone()));
-                            let dtype = if q.dtype.trim().is_empty() {
-                                "string"
-                            } else {
-                                q.dtype.as_str()
-                            };
-                            m.insert("type".into(), Value::String(dtype.to_string()));
+                            m.insert("value".into(), Value::String(q.value.clone()));
                             if let Some(d) = str_opt(&q.description) {
                                 m.insert("description".into(), Value::String(d.to_string()));
                             }
-                            m.insert("required".into(), Value::Bool(q.required));
                             Value::Object(m)
                         })
                         .collect(),
                 ),
             );
         }
-        if !self.url.variable.is_empty() {
-            url.insert(
-                "variable".into(),
-                Value::Array(
-                    self.url
-                        .variable
-                        .iter()
-                        .map(|v| {
-                            let mut m = serde_json::Map::new();
-                            m.insert("name".into(), Value::String(v.name.clone()));
-                            let dtype = if v.dtype.trim().is_empty() {
-                                "string"
-                            } else {
-                                v.dtype.as_str()
-                            };
-                            m.insert("type".into(), Value::String(dtype.to_string()));
-                            if let Some(d) = str_opt(&v.description) {
-                                m.insert("description".into(), Value::String(d.to_string()));
-                            }
-                            m.insert("required".into(), Value::Bool(v.required));
-                            Value::Object(m)
-                        })
-                        .collect(),
-                ),
-            );
-        }
-        root.insert("url".into(), Value::Object(url));
 
         // headers (always present, possibly empty array)
         root.insert(
@@ -376,6 +309,22 @@ impl EditModel {
             let mut m = serde_json::Map::new();
             m.insert("code".into(), Value::Number(code.into()));
             m.insert("description".into(), Value::String(r.description.clone()));
+            if !r.headers.is_empty() {
+                m.insert(
+                    "headers".into(),
+                    Value::Array(
+                        r.headers
+                            .iter()
+                            .map(|h| {
+                                let mut mm = serde_json::Map::new();
+                                mm.insert("name".into(), Value::String(h.name.clone()));
+                                mm.insert("value".into(), Value::String(h.value.clone()));
+                                Value::Object(mm)
+                            })
+                            .collect(),
+                    ),
+                );
+            }
             m.insert("type".into(), Value::String(r.dtype.clone()));
             if !r.schema.is_empty() {
                 m.insert(
@@ -587,12 +536,8 @@ mod tests {
         "name": "login",
         "description": "Log a user in",
         "method": "POST",
-        "url": {
-            "protocol": "https", "host": "api.example.com",
-            "path": ["auth", "{id}"],
-            "query": [{ "name": "page", "type": "1", "description": "Page", "required": false }],
-            "variable": [{ "name": "id", "type": "int", "description": "User id", "required": true }]
-        },
+        "url": "https://api.example.com/auth/{id}",
+        "query": [{ "name": "page", "value": "1", "description": "Page" }],
         "headers": [{ "name": "Content-Type", "value": "application/json" }],
         "request": {
             "type": "object",
@@ -615,11 +560,9 @@ mod tests {
         assert_eq!(m.name, "login");
         assert_eq!(m.description, "Log a user in");
         assert_eq!(m.method, Method::POST);
-        assert_eq!(m.url.protocol, "https");
-        assert_eq!(m.url.path, vec!["auth", "{id}"]);
-        assert_eq!(m.url.query[0].name, "page");
-        assert_eq!(m.url.variable[0].dtype, "int");
-        assert!(m.url.variable[0].required);
+        assert_eq!(m.url, "https://api.example.com/auth/{id}");
+        assert_eq!(m.query[0].name, "page");
+        assert_eq!(m.query[0].value, "1");
         assert_eq!(m.headers[0].name, "Content-Type");
 
         let req = m.request.as_ref().unwrap();
@@ -642,7 +585,8 @@ mod tests {
         // Re-parse: the produced JSON must be a valid contract with the same shape.
         let back = json_get(&json, None).unwrap();
         assert_eq!(back.name, "login");
-        assert_eq!(back.url.variable.unwrap()[0].dtype, "int");
+        assert_eq!(back.url, "https://api.example.com/auth/{id}");
+        assert_eq!(back.query[0].value, "1");
         assert_eq!(back.responses[0].code, 200);
         assert_eq!(
             back.request.unwrap().example.unwrap()["user"]["email"],
@@ -673,7 +617,7 @@ mod tests {
     fn schema_at_mut_reaches_nested() {
         let c = json_get(
             r#"{ "name":"t","method":"GET",
-                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "url":"/x","headers":[],
                  "request":{"type":"object","schema":[
                    {"name":"wrap","type":"object","default":null,"description":"d","required":true,
                     "properties":[{"name":"leaf","type":"string","default":null,"description":"d","required":false}]}
@@ -694,7 +638,7 @@ mod tests {
         use serde_json::json;
         let c = json_get(
             r#"{ "name":"t","method":"POST",
-                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "url":"/x","headers":[],
                  "request":{"type":"object","schema":[
                     {"name":"status","type":"int","default":null,"description":"d","required":true},
                     {"name":"message","type":"string","default":null,"description":"d","required":true},

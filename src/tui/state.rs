@@ -177,23 +177,19 @@ fn delete_field(state: &UiState) -> Option<Field> {
 }
 
 /// Whether `delete_row` would actually remove a row for this field — matching
-/// exactly the variants it handles (path/query/var/header/response/schema).
+/// exactly the variants it handles (query/header/response/schema).
 fn is_deletable(field: &Field) -> bool {
     matches!(
         field,
-        Field::PathSeg(_)
-            | Field::QueryName(_)
-            | Field::QueryType(_)
+        Field::QueryName(_)
+            | Field::QueryValue(_)
             | Field::QueryDesc(_)
-            | Field::QueryRequired(_)
-            | Field::VarName(_)
-            | Field::VarType(_)
-            | Field::VarDesc(_)
-            | Field::VarRequired(_)
             | Field::HeaderName(_)
             | Field::HeaderValue(_)
             | Field::ResponseCode(_)
             | Field::ResponseDesc(_)
+            | Field::ResponseHeaderName(_, _)
+            | Field::ResponseHeaderValue(_, _)
             | Field::SchemaName(_, _)
             | Field::SchemaType(_, _)
             | Field::SchemaDesc(_, _)
@@ -349,10 +345,8 @@ fn append_here(state: &mut UiState, model: &mut EditModel) {
 /// (no name) or when the add did not produce a row.
 fn new_name_field(model: &EditModel, target: &Field) -> Option<Field> {
     match target {
-        Field::QueryAdd => model.url.query.len().checked_sub(1).map(Field::QueryName),
-        Field::VarAdd => model.url.variable.len().checked_sub(1).map(Field::VarName),
+        Field::QueryAdd => model.query.len().checked_sub(1).map(Field::QueryName),
         Field::HeaderAdd => model.headers.len().checked_sub(1).map(Field::HeaderName),
-        Field::PathAdd => model.url.path.len().checked_sub(1).map(Field::PathSeg),
         Field::ResponseAdd => model
             .responses
             .len()
@@ -721,8 +715,8 @@ mod tests {
     fn model() -> EditModel {
         let c = json_get(
             r#"{ "name":"t","description":"d","method":"GET",
-                 "url":{"protocol":"https","host":"h","path":["x"],
-                        "query":[{"name":"page","type":"1","description":"d","required":false}]},
+                 "url":"https://h/x",
+                 "query":[{"name":"page","value":"1","description":"d"}],
                  "headers":[{"name":"A","value":"B"}],
                  "responses":[{"code":200,"description":"ok","schema":[]}] }"#,
             None,
@@ -900,7 +894,7 @@ mod tests {
         goto(&mut s, |f| matches!(f, Field::QueryName(_)));
         handle_normal(&mut s, &mut m, key(KeyCode::Char('d')));
         handle_confirm_delete(&mut s, &mut m, key(KeyCode::Char('y')));
-        assert_eq!(m.url.query.len(), 0);
+        assert_eq!(m.query.len(), 0);
     }
 
     #[test]
@@ -949,8 +943,8 @@ mod tests {
     fn tab_commits_and_jumps_to_next_text_cell_in_insert() {
         let c = json_get(
             r#"{ "name":"t","method":"GET",
-                 "url":{"protocol":"https","host":"h","path":["x"],
-                        "query":[{"name":"page","type":"1","description":"d","required":false}]},
+                 "url":"https://h/x",
+                 "query":[{"name":"page","value":"1","description":"d"}],
                  "headers":[],"responses":[] }"#,
             None,
         )
@@ -961,8 +955,8 @@ mod tests {
         handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert (prefilled "page")
         assert!(matches!(s.mode, Mode::Insert(_)));
         handle_insert(&mut s, &mut m, key(KeyCode::Tab)); // commit + jump to the value cell
-        assert_eq!(m.url.query[0].name, "page"); // committed unchanged
-        assert!(matches!(s.focused_field_pub(), Some(Field::QueryType(_))));
+        assert_eq!(m.query[0].name, "page"); // committed unchanged
+        assert!(matches!(s.focused_field_pub(), Some(Field::QueryValue(_))));
         assert!(
             matches!(s.mode, Mode::Insert(_)),
             "stays in insert on the next text cell"
@@ -970,7 +964,7 @@ mod tests {
         // typing continues into the value cell (prefilled "1")
         handle_insert(&mut s, &mut m, key(KeyCode::Char('2')));
         handle_insert(&mut s, &mut m, key(KeyCode::Enter));
-        assert_eq!(m.url.query[0].dtype, "12");
+        assert_eq!(m.query[0].value, "12");
     }
 
     #[test]
@@ -1028,7 +1022,7 @@ mod tests {
     fn a_adds_child_under_object_field() {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
-                 "url":{"protocol":"https","host":"h","path":["x"]},"headers":[],
+                 "url":"https://h/x","headers":[],
                  "request":{"type":"object","schema":[
                     {"name":"wrap","type":"object","default":null,"description":"d","required":true,
                      "properties":[{"name":"a","type":"string","default":null,"description":"d","required":false}]}
@@ -1055,7 +1049,7 @@ mod tests {
     fn g_generates_example_for_request_body() {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
-                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "url":"https://h/x","headers":[],
                  "request":{"type":"object","schema":[
                     {"name":"status","type":"int","default":null,"description":"d","required":true}
                  ]},
@@ -1079,7 +1073,7 @@ mod tests {
     fn request_example_state(example: &str) -> (UiState, EditModel) {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
-                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "url":"https://h/x","headers":[],
                  "request":{"type":"object","schema":[
                     {"name":"placeholder","type":"int","default":null,"description":"d","required":true}
                  ]},
@@ -1129,7 +1123,7 @@ mod tests {
     fn cap_g_infers_schema_from_response_example() {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
-                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "url":"https://h/x","headers":[],
                  "responses":[{"code":200,"description":"ok","type":"object","schema":[
                     {"name":"placeholder","type":"int","default":null,"description":"d","required":true}
                  ]}] }"#,
@@ -1160,7 +1154,7 @@ mod tests {
         // `G` resolves no `BodyLoc` and must do nothing.
         let c = json_get(
             r#"{ "name":"t","method":"POST",
-                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "url":"https://h/x","headers":[],
                  "responses":[] }"#,
             None,
         )
@@ -1187,7 +1181,7 @@ mod tests {
         // Default focus is the endpoint section (not a body): `e` does nothing.
         let c = json_get(
             r#"{ "name":"t","method":"POST",
-                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "url":"https://h/x","headers":[],
                  "responses":[] }"#,
             None,
         )
@@ -1202,7 +1196,7 @@ mod tests {
     fn e_key_opens_example_editor_for_response_body() {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
-                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "url":"https://h/x","headers":[],
                  "responses":[{"code":200,"description":"ok","type":"object","schema":[
                     {"name":"placeholder","type":"int","default":null,"description":"d","required":true}
                  ]}] }"#,
@@ -1228,7 +1222,7 @@ mod tests {
     fn g_wraps_array_body_example_in_an_array() {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
-                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "url":"https://h/x","headers":[],
                  "request":{"type":"object[]","schema":[
                     {"name":"id","type":"int","default":null,"description":"d","required":true}
                  ]},
@@ -1256,7 +1250,7 @@ mod tests {
     fn body_type_toggles_between_object_and_array() {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
-                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "url":"https://h/x","headers":[],
                  "request":{"type":"object","schema":[]},
                  "responses":[] }"#,
             None,
@@ -1287,7 +1281,7 @@ mod tests {
         // model() has no query — the QUERY section is empty
         let c = json_get(
             r#"{ "name":"t","method":"GET",
-                 "url":{"protocol":"https","host":"h","path":["x"]},
+                 "url":"https://h/x",
                  "headers":[],"responses":[] }"#,
             None,
         )
@@ -1316,17 +1310,17 @@ mod tests {
         s.cell = None;
         // Enter does nothing on the title
         handle_normal(&mut s, &mut m, key(KeyCode::Enter));
-        assert_eq!(m.url.query.len(), 0);
+        assert_eq!(m.query.len(), 0);
         // a adds the first query
         handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
-        assert_eq!(m.url.query.len(), 1);
+        assert_eq!(m.query.len(), 1);
     }
 
     #[test]
     fn add_response_expands_and_focuses_code() {
         let c = json_get(
             r#"{ "name":"t","method":"GET",
-                 "url":{"protocol":"https","host":"h","path":["x"]},"headers":[],
+                 "url":"https://h/x","headers":[],
                  "responses":[{"code":200,"description":"ok","schema":[]}] }"#,
             None,
         )
@@ -1421,7 +1415,7 @@ mod tests {
     fn a_adds_sibling_for_non_object_field() {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
-                 "url":{"protocol":"https","host":"h","path":["x"]},"headers":[],
+                 "url":"https://h/x","headers":[],
                  "request":{"type":"object","schema":[
                     {"name":"s","type":"string","default":null,"description":"d","required":false}
                  ]},

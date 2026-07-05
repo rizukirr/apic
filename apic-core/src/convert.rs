@@ -7,9 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::converter;
 use crate::converter::{PostmanCollection, v1_0_0, v2_0_0, v2_1_0};
 use crate::file::confine_to_dir;
-use crate::json::{
-    Header, JsonContent, Query, RequestBody, Response, Url, Variable, method_from_str,
-};
+use crate::json::{Header, JsonContent, Query, RequestBody, Response, method_from_str};
 
 /// Convert a human request/folder name into a filesystem-safe slug using
 /// underscores: lowercase, runs of non-alphanumeric characters collapse to a
@@ -52,91 +50,39 @@ fn unique_slug(taken: &mut HashSet<String>, base: &str) -> String {
     }
 }
 
-/// Parse a raw Postman URL string into apic's [`Url`].
-///
-/// Splits `scheme://host/path?query#frag`. The fragment is dropped. Path
-/// segments are kept verbatim (including `:id` / `{id}` placeholders); each
-/// placeholder segment also contributes a [`Variable`] entry documenting it.
-/// Query pairs become [`Query`] entries (`required: false`). A missing scheme
-/// yields an empty `protocol`; a host-only URL yields no path.
-fn split_raw_url(raw: &str) -> Url {
+/// Parse a raw Postman URL into the free-form url string plus documented query
+/// params. Drops `#frag`. `?key=value` pairs become [`Query`] entries. Postman
+/// `:name` path placeholders are rewritten to inline `{name}`.
+fn split_raw_url(raw: &str) -> (String, Vec<Query>) {
     let raw = raw.split('#').next().unwrap_or(raw);
-
-    let (protocol, rest) = match raw.split_once("://") {
-        Some((scheme, rest)) => (scheme.to_string(), rest),
-        None => (String::new(), raw),
+    let (base, query_str) = match raw.split_once('?') {
+        Some((b, q)) => (b, Some(q)),
+        None => (raw, None),
     };
-
-    let (host_path, query_str) = match rest.split_once('?') {
-        Some((hp, q)) => (hp, Some(q)),
-        None => (rest, None),
-    };
-
-    let (host, path_str) = match host_path.split_once('/') {
-        Some((h, p)) => (h.to_string(), p),
-        None => (host_path.to_string(), ""),
-    };
-
-    let segments: Vec<String> = path_str
+    let url = base
         .split('/')
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect();
-
-    let variables: Vec<Variable> = segments
-        .iter()
-        .filter_map(|seg| placeholder_name(seg))
-        .map(|name| Variable {
-            name,
-            dtype: "string".to_string(),
-            description: None,
-            required: true,
+        .map(|seg| match seg.strip_prefix(':') {
+            Some(name) if !name.is_empty() => format!("{{{name}}}"),
+            _ => seg.to_string(),
         })
-        .collect();
-
-    let query: Vec<Query> = match query_str {
+        .collect::<Vec<_>>()
+        .join("/");
+    let query = match query_str {
         Some(q) if !q.is_empty() => q
             .split('&')
             .filter(|pair| !pair.is_empty())
             .map(|pair| {
-                let (k, _) = pair.split_once('=').unwrap_or((pair, ""));
+                let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
                 Query {
                     name: k.to_string(),
-                    dtype: "string".to_string(),
+                    value: v.to_string(),
                     description: None,
-                    required: false,
                 }
             })
             .collect(),
         _ => Vec::new(),
     };
-
-    Url {
-        protocol,
-        host,
-        path: if segments.is_empty() {
-            None
-        } else {
-            Some(segments)
-        },
-        query: if query.is_empty() { None } else { Some(query) },
-        variable: if variables.is_empty() {
-            None
-        } else {
-            Some(variables)
-        },
-    }
-}
-
-/// If a path segment is a placeholder (`:id` or `{id}`), return its bare name.
-fn placeholder_name(segment: &str) -> Option<String> {
-    if let Some(name) = segment.strip_prefix(':') {
-        return (!name.is_empty()).then(|| name.to_string());
-    }
-    if let Some(inner) = segment.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-        return (!inner.is_empty()).then(|| inner.to_string());
-    }
-    None
+    (url, query)
 }
 
 /// Version-agnostic shape extracted from one Postman request, ready to build
@@ -190,17 +136,20 @@ fn build_contract(raw: RawRequest) -> JsonContent {
         .map(|(code, status, body)| Response {
             code,
             description: status,
+            headers: Vec::new(),
             dtype: "object".to_string(),
             schema: Vec::new(),
             example: body_example(body.as_deref()),
         })
         .collect();
 
+    let (url, query) = split_raw_url(&raw.raw_url);
     JsonContent {
         name: raw.name,
         description: raw.description,
         method: method_from_str(&raw.method),
-        url: split_raw_url(&raw.raw_url),
+        url,
+        query,
         headers,
         request,
         responses,
@@ -579,38 +528,35 @@ mod tests {
     }
 
     #[test]
+    fn split_raw_url_makes_string_and_query() {
+        let (url, query) = split_raw_url("https://api.example.com/v1/users/:id?page=2&q=x#frag");
+        assert_eq!(url, "https://api.example.com/v1/users/{id}");
+        assert_eq!(query.len(), 2);
+        assert_eq!(query[0].name, "page");
+        assert_eq!(query[0].value, "2");
+    }
+
+    #[test]
     fn url_full() {
-        let u = split_raw_url("https://api.example.com/v1/users/:id?limit=10&page=2");
-        assert_eq!(u.protocol, "https");
-        assert_eq!(u.host, "api.example.com");
-        assert_eq!(
-            u.path,
-            Some(vec!["v1".into(), "users".into(), ":id".into()])
-        );
-        let q = u.query.unwrap();
-        assert_eq!(q.len(), 2);
-        assert_eq!(q[0].name, "limit");
-        assert_eq!(q[0].dtype, "string");
-        let vars = u.variable.unwrap();
-        assert_eq!(vars.len(), 1);
-        assert_eq!(vars[0].name, "id");
+        let (url, query) = split_raw_url("https://api.example.com/v1/users/:id?limit=10&page=2");
+        assert_eq!(url, "https://api.example.com/v1/users/{id}");
+        assert_eq!(query.len(), 2);
+        assert_eq!(query[0].name, "limit");
+        assert_eq!(query[0].value, "10");
     }
 
     #[test]
     fn url_template_host_no_scheme() {
-        let u = split_raw_url("{{baseUrl}}/auth/login");
-        assert_eq!(u.protocol, "");
-        assert_eq!(u.host, "{{baseUrl}}");
-        assert_eq!(u.path, Some(vec!["auth".into(), "login".into()]));
-        assert!(u.query.is_none());
-        assert!(u.variable.is_none());
+        let (url, query) = split_raw_url("{{baseUrl}}/auth/login");
+        assert_eq!(url, "{{baseUrl}}/auth/login");
+        assert!(query.is_empty());
     }
 
     #[test]
     fn url_host_only() {
-        let u = split_raw_url("https://example.com");
-        assert_eq!(u.host, "example.com");
-        assert!(u.path.is_none());
+        let (url, query) = split_raw_url("https://example.com");
+        assert_eq!(url, "https://example.com");
+        assert!(query.is_empty());
     }
 
     #[test]
@@ -795,20 +741,17 @@ mod tests {
 
     #[test]
     fn url_with_port_and_tricky_query() {
-        let u = split_raw_url("https://api.example.com:8080/v1/items?filter=a=b&q=x%20y");
-        assert_eq!(u.protocol, "https");
-        // The port travels with the host (apic stores host as one string).
-        assert_eq!(u.host, "api.example.com:8080");
-        assert_eq!(u.path, Some(vec!["v1".into(), "items".into()]));
-        let q = u.query.unwrap();
-        assert_eq!(q.len(), 2);
-        // Only the first '=' splits key from value; the value is dropped and the
-        // query type defaults to "string".
-        assert_eq!(q[0].name, "filter");
-        assert_eq!(q[0].dtype, "string");
-        // Percent-encoding in the (dropped) value does not affect the parsed name.
-        assert_eq!(q[1].name, "q");
-        assert_eq!(q[1].dtype, "string");
+        let (url, query) =
+            split_raw_url("https://api.example.com:8080/v1/items?filter=a=b&q=x%20y");
+        // The port travels with the host as part of the free-form url string.
+        assert_eq!(url, "https://api.example.com:8080/v1/items");
+        assert_eq!(query.len(), 2);
+        // Only the first '=' splits key from value; the rest stays in the value.
+        assert_eq!(query[0].name, "filter");
+        assert_eq!(query[0].value, "a=b");
+        // Percent-encoding in the value is preserved verbatim.
+        assert_eq!(query[1].name, "q");
+        assert_eq!(query[1].value, "x%20y");
     }
 
     #[test]

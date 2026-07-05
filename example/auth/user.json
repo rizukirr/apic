@@ -2,11 +2,7 @@
     "name": "current-user",
     "description": "Current authenticated user",
     "method": "GET",
-    "url": {
-        "protocol": "https",
-        "host": "api.example.com",
-        "path": ["auth", "user"]
-    },
+    "url": "https://api.example.com/auth/user",
     "headers": [
         {
             "name": "Content-Type",

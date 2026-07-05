@@ -2,18 +2,7 @@
     "name": "user",
     "description": "User management",
     "method": "GET",
-    "url": {
-        "protocol": "https",
-        "host": "api.example.com",
-        "path": ["user"],
-        "variable": [
-            {
-                "name": "id",
-                "type": "int",
-                "description": "User ID"
-            }
-        ]
-    },
+    "url": "https://api.example.com/user/{id}",
     "headers": [
         {
             "name": "Content-Type",

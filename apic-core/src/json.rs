@@ -22,7 +22,12 @@ pub struct JsonContent {
     pub name: String,
     pub description: Option<String>,
     pub method: Method,
-    pub url: Url,
+    /// Free-form request URL, e.g. `https://api.example.com/v1/users/{id}`.
+    /// Path params are inline `{name}` tokens; no structured URL parts.
+    pub url: String,
+    /// Documented query parameters (`?key=value`), kept alongside the url.
+    #[serde(default)]
+    pub query: Vec<Query>,
     pub headers: Vec<Header>,
     pub request: Option<RequestBody>,
     pub responses: Vec<Response>,
@@ -42,50 +47,19 @@ pub struct RequestBody {
     pub example: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Url {
-    pub protocol: String,
-    pub host: String,
-    pub path: Option<Vec<String>>,
-    pub query: Option<Vec<Query>>,
-    pub variable: Option<Vec<Variable>>,
-}
-
-/// A path variable, e.g. `id` in `/resource/{id}`. The path segment carries the
-/// `{id}` placeholder; this documents what it means. `type` defaults to
-/// `string` when omitted, and `required` defaults to `false` when omitted.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Variable {
-    pub name: String,
-    #[serde(rename = "type", default = "default_variable_type")]
-    pub dtype: String,
-    pub description: Option<String>,
-    #[serde(default)]
-    pub required: bool,
-}
-
-/// Path variables default to `string` when `type` is omitted.
-fn default_variable_type() -> String {
-    "string".to_string()
-}
-
-/// Query parameters default to `string` when `type` is omitted.
-fn default_query_type() -> String {
-    "string".to_string()
-}
-
 /// Request/response bodies default to a single `object` when `type` is omitted.
 fn default_body_type() -> String {
     "object".to_string()
 }
 
+/// A documented query parameter: `name` is the key, `value` an example value,
+/// `description` optional prose. Serializes with all three keys.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Query {
     pub name: String,
-    #[serde(rename = "type", default = "default_query_type")]
-    pub dtype: String,
+    #[serde(default)]
+    pub value: String,
     pub description: Option<String>,
-    pub required: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -98,6 +72,9 @@ pub struct Header {
 pub struct Response {
     pub code: u16,
     pub description: String,
+
+    #[serde(default)]
+    pub headers: Vec<Header>,
 
     /// Body shape: `"object"` (default) or an array form like `"object[]"`.
     #[serde(rename = "type", default = "default_body_type")]
@@ -160,27 +137,6 @@ pub fn parse_type(dtype: &str) -> (&str, bool) {
     match dtype.strip_suffix("[]") {
         Some(base) => (base, true),
         None => (dtype, false),
-    }
-}
-
-/// Assembles the displayable URL from its parts: `protocol://host` followed by
-/// the `/`-joined path segments. Each part is optional: an empty `host` yields a
-/// leading-slash path, an empty `protocol` drops the scheme, and an empty `path`
-/// yields the authority alone. Shared by every front-end so the URL renders the
-/// same in `apic read`, the TUI, and the GUI.
-pub fn build_url(protocol: &str, host: &str, path: &[String]) -> String {
-    let path = path.join("/");
-    let authority = if host.is_empty() {
-        String::new()
-    } else if protocol.is_empty() {
-        host.to_string()
-    } else {
-        format!("{protocol}://{host}")
-    };
-    match (authority.is_empty(), path.is_empty()) {
-        (true, _) => format!("/{path}"),
-        (false, true) => authority,
-        (false, false) => format!("{}/{path}", authority.trim_end_matches('/')),
     }
 }
 
@@ -332,42 +288,6 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn segs(parts: &[&str]) -> Vec<String> {
-        parts.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn build_url_joins_protocol_host_and_path() {
-        assert_eq!(
-            build_url("https", "api.example.com", &segs(&["auth", "login"])),
-            "https://api.example.com/auth/login"
-        );
-    }
-
-    #[test]
-    fn build_url_drops_scheme_when_protocol_empty() {
-        assert_eq!(
-            build_url("", "api.example.com", &segs(&["user"])),
-            "api.example.com/user"
-        );
-    }
-
-    #[test]
-    fn build_url_falls_back_to_leading_slash_path_without_host() {
-        assert_eq!(
-            build_url("https", "", &segs(&["auth", "login"])),
-            "/auth/login"
-        );
-    }
-
-    #[test]
-    fn build_url_renders_authority_alone_without_path() {
-        assert_eq!(
-            build_url("https", "api.example.com", &[]),
-            "https://api.example.com"
-        );
-    }
-
     #[test]
     fn pretty_json_indents_with_four_spaces() {
         assert_eq!(pretty_json(r#"{"a":1}"#), "{\n    \"a\": 1\n}");
@@ -393,7 +313,7 @@ mod tests {
     const CONTRACT: &str = r#"{
         "name": "t",
         "method": "GET",
-        "url": { "protocol": "https", "host": "api.example.com", "path": ["t"] },
+        "url": "https://api.example.com/t",
         "headers": [],
         "responses": [
             { "code": 200, "description": "ok", "schema": [] },
@@ -402,52 +322,28 @@ mod tests {
     }"#;
 
     #[test]
-    fn query_reads_type_field() {
-        let q: Query =
-            serde_json::from_str(r#"{ "name": "page", "type": "int", "required": false }"#)
-                .unwrap();
-        assert_eq!(q.dtype, "int");
-    }
-
-    #[test]
-    fn query_type_defaults_to_string_when_absent() {
-        let q: Query = serde_json::from_str(r#"{ "name": "page", "required": false }"#).unwrap();
-        assert_eq!(q.dtype, "string");
-    }
-
-    #[test]
-    fn query_legacy_value_key_is_ignored() {
-        // Old contracts carried an example `value`; it is dropped, type defaults.
-        let q: Query =
-            serde_json::from_str(r#"{ "name": "page", "value": "1", "required": false }"#).unwrap();
-        assert_eq!(q.dtype, "string");
-    }
-
-    #[test]
-    fn query_serializes_type_key() {
-        let q = Query {
-            name: "page".into(),
-            dtype: "int".into(),
-            description: None,
-            required: false,
-        };
-        let json = serde_json::to_string(&q).unwrap();
-        assert!(json.contains("\"type\":\"int\""), "got: {json}");
-        assert!(!json.contains("\"dtype\""), "got: {json}");
-    }
-
-    #[test]
-    fn variable_serializes_type_key() {
-        // Derived Serialize (used by `apic convert`) must emit `type`, not `dtype`.
-        let v = Variable {
-            name: "id".into(),
-            dtype: "int".into(),
-            description: None,
-            required: true,
-        };
-        let json = serde_json::to_string(&v).unwrap();
-        assert!(json.contains("\"type\":\"int\""), "got: {json}");
-        assert!(!json.contains("\"dtype\""), "got: {json}");
+    fn url_is_a_string_and_query_headers_round_trip() {
+        let json = r#"{
+            "name": "u", "method": "GET",
+            "url": "https://api.example.com/v1/users/{id}",
+            "query": [{ "name": "page", "value": "2", "description": "page number" }],
+            "headers": [],
+            "responses": [
+                { "code": 200, "description": "ok",
+                  "headers": [{ "name": "X-Req", "value": "abc" }] }
+            ]
+        }"#;
+        let c = json_get(json, None).unwrap();
+        assert_eq!(c.url, "https://api.example.com/v1/users/{id}");
+        assert_eq!(c.query[0].name, "page");
+        assert_eq!(c.query[0].value, "2");
+        assert_eq!(c.responses[0].headers[0].name, "X-Req");
+        // query + response headers default to empty when absent
+        let bare = r#"{ "name":"b","method":"GET","url":"/x","headers":[],
+            "responses":[{ "code":200,"description":"ok" }] }"#;
+        let b = json_get(bare, None).unwrap();
+        assert!(b.query.is_empty());
+        assert!(b.responses[0].headers.is_empty());
     }
 
     #[test]
@@ -463,7 +359,7 @@ mod tests {
         // No field declares `accept`.
         let plain = json_get(
             r#"{ "name":"t","method":"GET",
-                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "url":"/x","headers":[],
                  "responses":[{"code":200,"description":"ok","schema":[
                    {"name":"f","type":"string","default":null,"description":"d","required":true}
                  ]}] }"#,
@@ -475,7 +371,7 @@ mod tests {
         // A nested `file` field declares `accept`.
         let nested = json_get(
             r#"{ "name":"t","method":"GET",
-                 "url":{"protocol":"h","host":"h","path":["x"]},"headers":[],
+                 "url":"/x","headers":[],
                  "responses":[{"code":200,"description":"ok","schema":[
                    {"name":"wrap","type":"object","default":null,"description":"d","required":true,
                     "properties":[
@@ -517,7 +413,7 @@ mod tests {
     fn request_field_parses_optional_accept_for_multipart() {
         let json = r#"{
             "name": "upload", "method": "POST",
-            "url": { "protocol": "https", "host": "api.example.com", "path": ["u"] },
+            "url": "https://api.example.com/u",
             "headers": [],
             "request": {
                 "schema": [
@@ -540,7 +436,7 @@ mod tests {
     fn request_parses_example_only_without_schema() {
         let json = r#"{
             "name": "login", "method": "POST",
-            "url": { "protocol": "https", "host": "api.example.com", "path": ["l"] },
+            "url": "https://api.example.com/l",
             "headers": [],
             "request": {
                 "example": { "username": "rizukirr", "password": "123qweA@" }
@@ -560,32 +456,10 @@ mod tests {
     }
 
     #[test]
-    fn variable_type_defaults_to_string_when_omitted() {
-        let json = r#"{
-            "name": "t", "method": "GET",
-            "url": {
-                "protocol": "https", "host": "api.example.com", "path": ["u", "{id}"],
-                "variable": [
-                    { "name": "id", "description": "User ID" },
-                    { "name": "slug", "type": "int", "description": "Slug", "required": true }
-                ]
-            },
-            "headers": [], "responses": []
-        }"#;
-        let c = json_get(json, None).unwrap();
-        let variable = c.url.variable.unwrap();
-        assert_eq!(variable[0].dtype, "string");
-        assert_eq!(variable[1].dtype, "int");
-        // `required` defaults to false when omitted, and parses an explicit true.
-        assert!(!variable[0].required);
-        assert!(variable[1].required);
-    }
-
-    #[test]
     fn body_type_parses_array_and_defaults_to_object() {
         let json = r#"{
             "name": "t", "method": "POST",
-            "url": { "protocol": "https", "host": "h", "path": ["x"] },
+            "url": "/x",
             "headers": [],
             "request": { "type": "object[]", "schema": [
                 { "name": "id", "type": "string", "default": null, "description": "d", "required": true }
@@ -602,7 +476,7 @@ mod tests {
     fn schema_properties_default_to_none_and_array_type_parses() {
         let json = r#"{
             "name": "t", "method": "GET",
-            "url": { "protocol": "https", "host": "h", "path": ["x"] },
+            "url": "/x",
             "headers": [],
             "responses": [ { "code": 200, "description": "ok", "schema": [
                 { "name": "f", "type": "string[]", "default": null, "description": "d", "required": true }
@@ -618,7 +492,7 @@ mod tests {
     fn schema_accept_defaults_to_none_when_omitted() {
         let json = r#"{
             "name": "t", "method": "GET",
-            "url": { "protocol": "https", "host": "h", "path": ["x"] },
+            "url": "/x",
             "headers": [],
             "responses": [ { "code": 200, "description": "ok", "schema": [
                 { "name": "f", "type": "string", "default": null, "description": "d", "required": true }
