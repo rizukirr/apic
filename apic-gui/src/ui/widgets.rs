@@ -9,8 +9,7 @@ use eframe::egui::{self, TextBuffer};
 use egui::{Color32, RichText, Stroke};
 
 use super::theme::{
-    BORDER, CHIP_BG, CHIP_REQUIRED_BG, CYAN, DIM, GREEN, RED, SPACE_EXTRA_SMALL, SPACE_MEDIUM,
-    SPACE_SMALL, TEXT,
+    BORDER, CHIP_BG, CHIP_REQUIRED_BG, CYAN, DIM, GREEN, RED, SPACE_EXTRA_SMALL, SPACE_SMALL, TEXT,
 };
 
 /// Schema field types: scalars plus their array variants and `object`.
@@ -269,19 +268,44 @@ pub(crate) fn required_chip(ui: &mut egui::Ui, required: bool, editing: bool) ->
 }
 
 /// Uppercase dim column-header row for a metadata table.
-pub(crate) fn table_header(ui: &mut egui::Ui, labels: &[&str]) {
+/// Column-header row. Each `(label, width)` renders in a fixed-width cell so the
+/// header sits directly above the same-width data cells below it. A non-finite
+/// width (the last, fill column) left-aligns the label in the remaining space.
+pub(crate) fn table_header(ui: &mut egui::Ui, cols: &[(&str, f32)]) {
     ui.horizontal(|ui| {
-        for l in labels {
-            ui.label(
-                RichText::new(l.to_uppercase())
-                    .color(DIM)
-                    .size(10.0)
-                    .strong(),
-            );
-            ui.add_space(SPACE_MEDIUM);
+        for (label, w) in cols {
+            let text = RichText::new(label.to_uppercase())
+                .color(DIM)
+                .size(10.0)
+                .strong();
+            if w.is_finite() {
+                ui.add_sized([*w, 14.0], egui::Label::new(text));
+            } else {
+                ui.label(text);
+            }
         }
     });
     ui.add_space(SPACE_EXTRA_SMALL);
+}
+
+/// The requirement chip in a fixed-width cell so it lines up under the
+/// REQUIREMENT column header regardless of the `Required`/`Optional` text width.
+/// Returns the chip's toggle result (`Some(new)` when clicked in edit mode).
+pub(crate) fn chip_cell(
+    ui: &mut egui::Ui,
+    required: bool,
+    editing: bool,
+    width: f32,
+) -> Option<bool> {
+    let mut out = None;
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, ui.text_style_height(&egui::TextStyle::Body) + 6.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            out = required_chip(ui, required, editing);
+        },
+    );
+    out
 }
 
 /// A frameless inline-editable table cell of a given width.
@@ -322,7 +346,11 @@ pub(crate) fn table_frame<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) 
         .stroke(Stroke::new(1.0, BORDER))
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
+            // Pin the content to exactly the available width so the frame can
+            // never grow past its (e.g. 50%) column and bleed into a sibling pane.
+            let w = ui.available_width();
+            ui.set_min_width(w);
+            ui.set_max_width(w);
             add(ui)
         })
         .inner
@@ -348,7 +376,15 @@ mod tests {
         egui::__run_test_ui(|ui| {
             let mut buf = "x".to_string();
             table_frame(ui, |ui| {
-                table_header(ui, &["header", "requirement", "value"]);
+                table_header(
+                    ui,
+                    &[
+                        ("header", 120.0),
+                        ("requirement", 90.0),
+                        ("value", f32::INFINITY),
+                    ],
+                );
+                chip_cell(ui, true, true, 90.0);
                 cell_key(ui, "Content-Type", 120.0);
                 required_chip(ui, true, false);
                 required_chip(ui, false, true);

@@ -17,7 +17,7 @@ use super::theme::{
 };
 use super::widgets::{
     SCHEMA_TYPES, add_button, bordered_input, bordered_input_colored, cell_edit, cell_key,
-    cell_text, delete_button, json_editor, request_new_row_focus, required_chip, section_label,
+    cell_text, chip_cell, delete_button, json_editor, request_new_row_focus, section_label,
     table_frame, table_header, take_pending_focus, type_dropdown,
 };
 
@@ -98,13 +98,21 @@ pub(crate) fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: 
 pub(crate) fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     let mut actions: Vec<EditAction> = Vec::new();
     table_frame(ui, |ui| {
-        table_header(ui, &["key", "requirement", "value", "description"]);
+        table_header(
+            ui,
+            &[
+                ("key", 130.0),
+                ("requirement", 90.0),
+                ("value", 130.0),
+                ("description", f32::INFINITY),
+            ],
+        );
         for i in 0..model.query.len() {
             ui.horizontal(|ui| {
                 if editing {
                     let name = cell_edit(ui, &mut model.query[i].name, 130.0, "name");
                     take_pending_focus(ui, FOCUS_QUERY, i, &name);
-                    if required_chip(ui, model.query[i].required, true).is_some() {
+                    if chip_cell(ui, model.query[i].required, true, 90.0).is_some() {
                         actions.push(EditAction::ToggleBool {
                             field: Field::QueryRequired(i),
                         });
@@ -119,7 +127,7 @@ pub(crate) fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: b
                     }
                 } else {
                     cell_key(ui, &model.query[i].name, 130.0);
-                    required_chip(ui, model.query[i].required, false);
+                    chip_cell(ui, model.query[i].required, false, 90.0);
                     cell_text(ui, &model.query[i].value, 130.0);
                     cell_text(ui, &model.query[i].description, ui.available_width());
                 }
@@ -149,14 +157,21 @@ pub(crate) fn response_headers(
     };
     let mut actions: Vec<EditAction> = Vec::new();
     table_frame(ui, |ui| {
-        table_header(ui, &["header", "requirement", "value"]);
+        table_header(
+            ui,
+            &[
+                ("header", 150.0),
+                ("requirement", 90.0),
+                ("value", f32::INFINITY),
+            ],
+        );
         let len = model.responses[idx].headers.len();
         for i in 0..len {
             ui.horizontal(|ui| {
                 if editing {
                     cell_edit(ui, &mut model.responses[idx].headers[i].name, 150.0, "name");
                     if let Some(new) =
-                        required_chip(ui, model.responses[idx].headers[i].required, true)
+                        chip_cell(ui, model.responses[idx].headers[i].required, true, 90.0)
                     {
                         model.responses[idx].headers[i].required = new;
                     }
@@ -169,7 +184,7 @@ pub(crate) fn response_headers(
                     }
                 } else {
                     cell_key(ui, &model.responses[idx].headers[i].name, 150.0);
-                    required_chip(ui, model.responses[idx].headers[i].required, false);
+                    chip_cell(ui, model.responses[idx].headers[i].required, false, 90.0);
                     cell_text(
                         ui,
                         &model.responses[idx].headers[i].value,
@@ -192,13 +207,20 @@ pub(crate) fn response_headers(
 pub(crate) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     let mut actions: Vec<EditAction> = Vec::new();
     table_frame(ui, |ui| {
-        table_header(ui, &["header", "requirement", "value"]);
+        table_header(
+            ui,
+            &[
+                ("header", 150.0),
+                ("requirement", 90.0),
+                ("value", f32::INFINITY),
+            ],
+        );
         for i in 0..model.headers.len() {
             ui.horizontal(|ui| {
                 if editing {
                     let name = cell_edit(ui, &mut model.headers[i].name, 150.0, "name");
                     take_pending_focus(ui, FOCUS_HEADER, i, &name);
-                    if required_chip(ui, model.headers[i].required, true).is_some() {
+                    if chip_cell(ui, model.headers[i].required, true, 90.0).is_some() {
                         actions.push(EditAction::ToggleBool {
                             field: Field::HeaderRequired(i),
                         });
@@ -212,7 +234,7 @@ pub(crate) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
                     }
                 } else {
                     cell_key(ui, &model.headers[i].name, 150.0);
-                    required_chip(ui, model.headers[i].required, false);
+                    chip_cell(ui, model.headers[i].required, false, 90.0);
                     cell_text(ui, &model.headers[i].value, ui.available_width());
                 }
             });
@@ -245,7 +267,7 @@ pub(crate) fn field_view_row(
         ui.add_space(indent);
         cell_key(ui, name, (150.0 - indent).max(60.0));
         cell_text(ui, dtype, 90.0);
-        required_chip(ui, required, false);
+        chip_cell(ui, required, false, 90.0);
         cell_text(ui, description, ui.available_width());
     });
 }
@@ -328,7 +350,7 @@ pub(crate) fn edit_schema_fields(
                 &mut f.dtype,
                 SCHEMA_TYPES,
             );
-            if let Some(new) = required_chip(ui, f.required, true) {
+            if let Some(new) = chip_cell(ui, f.required, true, 90.0) {
                 f.required = new;
             }
             let width = (ui.available_width() - 24.0).max(60.0);
@@ -394,7 +416,15 @@ pub(crate) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bo
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         table_frame(ui, |ui| {
-                            table_header(ui, &["name", "type", "requirement", "description"]);
+                            table_header(
+                                ui,
+                                &[
+                                    ("name", 150.0),
+                                    ("type", 90.0),
+                                    ("requirement", 90.0),
+                                    ("description", f32::INFINITY),
+                                ],
+                            );
                             if editing {
                                 let mut path = Vec::new();
                                 edit_schema_fields(
@@ -603,7 +633,15 @@ pub(crate) fn responses(
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
                     table_frame(ui, |ui| {
-                        table_header(ui, &["name", "type", "requirement", "description"]);
+                        table_header(
+                            ui,
+                            &[
+                                ("name", 150.0),
+                                ("type", 90.0),
+                                ("requirement", 90.0),
+                                ("description", f32::INFINITY),
+                            ],
+                        );
                         if editing {
                             let mut path = Vec::new();
                             edit_schema_fields(
