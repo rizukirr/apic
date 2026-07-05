@@ -9,7 +9,8 @@ use eframe::egui::{self, TextBuffer};
 use egui::{Color32, RichText, Stroke};
 
 use super::theme::{
-    BORDER, CHIP_BG, CHIP_REQUIRED_BG, CYAN, DIM, GREEN, RED, SPACE_EXTRA_SMALL, SPACE_MEDIUM, TEXT,
+    BORDER, CHIP_BG, CHIP_REQUIRED_BG, CYAN, DIM, GREEN, RED, SPACE_EXTRA_SMALL, SPACE_MEDIUM,
+    SPACE_SMALL, TEXT,
 };
 
 /// Schema field types: scalars plus their array variants and `object`.
@@ -299,6 +300,54 @@ pub(crate) fn code_block(ui: &mut egui::Ui, raw: &mut String, height: f32) {
         });
 }
 
+/// A line-numbered JSON editor. `editing` picks editable vs read-only; `height`
+/// is the stretched box height. A dim gutter of logical line numbers sits left
+/// of the syntax-highlighted text; soft-wrap is off so numbers stay 1:1 and long
+/// lines scroll horizontally. Replaces the old `code_block`/`json_block`.
+pub(crate) fn json_editor(ui: &mut egui::Ui, buf: &mut String, editing: bool, height: f32) {
+    // Read-only preview pretty-prints and shows a placeholder when empty.
+    let mut owned;
+    let text: &mut String = if editing {
+        buf
+    } else {
+        owned = if buf.trim().is_empty() {
+            "(no example)".to_string()
+        } else {
+            apic_core::json::pretty_json(buf)
+        };
+        &mut owned
+    };
+    let line_count = text.lines().count().max(1);
+    let mut layouter = json_layouter;
+    egui::Frame::new()
+        .fill(Color32::from_rgb(11, 15, 13))
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            egui::ScrollArea::both()
+                .id_salt("json_editor_scroll")
+                .max_height(if height > 0.0 { height } else { 220.0 })
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        let gutter: String = (1..=line_count).map(|n| format!("{n}\n")).collect();
+                        ui.add(egui::Label::new(
+                            RichText::new(gutter).color(DIM).monospace(),
+                        ));
+                        ui.add_space(SPACE_SMALL);
+                        ui.add(
+                            egui::TextEdit::multiline(text)
+                                .code_editor()
+                                .frame(false)
+                                .interactive(editing)
+                                .lock_focus(editing)
+                                .layouter(&mut layouter)
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+                });
+        });
+}
+
 /// The `Required` / `Optional` pill for the REQUIREMENT column. In edit mode it
 /// is a button that returns `Some(new_value)` when clicked; in view mode it is a
 /// static label returning `None`.
@@ -407,6 +456,17 @@ mod tests {
             let mut bad = "not json".to_string();
             code_block(ui, &mut good, 0.0);
             code_block(ui, &mut bad, 0.0);
+        });
+    }
+
+    #[test]
+    fn json_editor_renders_edit_and_preview() {
+        egui::__run_test_ui(|ui| {
+            let mut good = "{\n  \"a\": 1\n}".to_string();
+            let mut empty = String::new();
+            json_editor(ui, &mut good, true, 200.0);
+            json_editor(ui, &mut good, false, 200.0);
+            json_editor(ui, &mut empty, false, 200.0);
         });
     }
 
