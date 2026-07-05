@@ -13,12 +13,12 @@ use apic_core::json::method_str;
 use crate::ui::theme::{AMBER, SPACE_LARGE};
 
 use super::theme::{
-    BG, CYAN, DIM, GREEN, RED, SPACE_MEDIUM, SPACE_SMALL, TEXT, method_badge, method_color,
+    CYAN, DIM, GREEN, RED, SPACE_MEDIUM, SPACE_SMALL, TEXT, method_badge, method_color,
 };
 use super::widgets::{
-    SCHEMA_TYPES, add_button, bordered_input, bordered_input_colored, bordered_multiline,
-    code_block, delete_button, json_block, kv_row, request_new_row_focus, section_label,
-    take_pending_focus, type_dropdown,
+    SCHEMA_TYPES, add_button, bordered_input, bordered_input_colored, cell_edit, cell_key,
+    cell_text, code_block, delete_button, json_block, request_new_row_focus, required_chip,
+    section_label, table_frame, table_header, take_pending_focus, type_dropdown,
 };
 
 // egui temp-data keys for the "focus the new row's name field" markers, one per
@@ -31,16 +31,24 @@ const FOCUS_SCHEMA: &str = "apic.focus.schema";
 /// Compact editable name + description line, shown above the method/url row.
 pub(crate) fn endpoint_header(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     if editing {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("name").color(DIM));
-            bordered_input(ui, &mut model.name, f32::INFINITY, "name");
-        });
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("desc").color(DIM));
-            bordered_multiline(ui, &mut model.description, 3, "description");
-        });
+        ui.add(
+            egui::TextEdit::singleline(&mut model.name)
+                .frame(false)
+                .hint_text("name")
+                .font(egui::TextStyle::Heading)
+                .text_color(TEXT)
+                .desired_width(f32::INFINITY),
+        );
+        ui.add(
+            egui::TextEdit::multiline(&mut model.description)
+                .frame(false)
+                .hint_text("description")
+                .text_color(DIM)
+                .desired_rows(2)
+                .desired_width(f32::INFINITY),
+        );
     } else {
-        ui.label(RichText::new(&model.name).color(TEXT).strong());
+        ui.label(RichText::new(&model.name).color(TEXT).heading());
         if !model.description.is_empty() {
             ui.label(RichText::new(&model.description).color(DIM));
         }
@@ -49,24 +57,39 @@ pub(crate) fn endpoint_header(ui: &mut egui::Ui, model: &mut EditModel, editing:
 
 /// The `[ METHOD ] [ url................ ]` top row.
 pub(crate) fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
-    ui.horizontal(|ui| {
-        let method = method_str(&model.method);
-        if editing {
-            if ui
-                .button(RichText::new(&method).color(method_color(&method)))
-                .clicked()
-            {
-                apply(model, &EditAction::CycleMethod { forward: true });
+    table_frame(ui, |ui| {
+        ui.horizontal(|ui| {
+            let method = method_str(&model.method);
+            if editing {
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new(format!(" {method} "))
+                                .color(method_color(&method))
+                                .strong(),
+                        )
+                        .frame(false),
+                    )
+                    .clicked()
+                {
+                    apply(model, &EditAction::CycleMethod { forward: true });
+                }
+            } else {
+                method_badge(ui, &method);
             }
-        } else {
-            method_badge(ui, &method);
-        }
-        ui.add_space(SPACE_MEDIUM);
-        if editing {
-            bordered_input(ui, &mut model.url, f32::INFINITY, "https://host/path/{id}");
-        } else {
-            ui.label(RichText::new(&model.url).color(CYAN).strong());
-        }
+            ui.add_space(SPACE_MEDIUM);
+            if editing {
+                ui.add(
+                    egui::TextEdit::singleline(&mut model.url)
+                        .frame(false)
+                        .hint_text("https://host/path/{id}")
+                        .text_color(CYAN)
+                        .desired_width(f32::INFINITY),
+                );
+            } else {
+                ui.label(RichText::new(&model.url).color(CYAN).strong());
+            }
+        });
     });
 }
 
@@ -74,42 +97,41 @@ pub(crate) fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: 
 /// query model; path variables now live inline in the URL string.
 pub(crate) fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     let mut actions: Vec<EditAction> = Vec::new();
-    ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
-    section_label(ui, "QUERY PARAMS");
-    if model.query.is_empty() && !editing {
-        ui.label(RichText::new("(none)").color(DIM));
-    }
-    for i in 0..model.query.len() {
-        if editing {
+    table_frame(ui, |ui| {
+        table_header(ui, &["key", "requirement", "value", "description"]);
+        for i in 0..model.query.len() {
             ui.horizontal(|ui| {
-                let q = &mut model.query[i];
-                let name = bordered_input(ui, &mut q.name, 130.0, "name");
-                take_pending_focus(ui, FOCUS_QUERY, i, &name);
-                bordered_input(ui, &mut q.value, 130.0, "value");
-                let gap = ui.spacing().item_spacing.x;
-                let reserve = 18.0 + gap;
-                let desc_w = (ui.available_width() - reserve).max(40.0);
-                bordered_input(ui, &mut q.description, desc_w, "description");
-                if delete_button(ui) {
-                    actions.push(EditAction::Delete {
-                        field: Field::QueryName(i),
-                    });
+                if editing {
+                    let name = cell_edit(ui, &mut model.query[i].name, 130.0, "name");
+                    take_pending_focus(ui, FOCUS_QUERY, i, &name);
+                    if required_chip(ui, model.query[i].required, true).is_some() {
+                        actions.push(EditAction::ToggleBool {
+                            field: Field::QueryRequired(i),
+                        });
+                    }
+                    cell_edit(ui, &mut model.query[i].value, 130.0, "value");
+                    let w = (ui.available_width() - 24.0).max(60.0);
+                    cell_edit(ui, &mut model.query[i].description, w, "description");
+                    if delete_button(ui) {
+                        actions.push(EditAction::Delete {
+                            field: Field::QueryName(i),
+                        });
+                    }
+                } else {
+                    cell_key(ui, &model.query[i].name, 130.0);
+                    required_chip(ui, model.query[i].required, false);
+                    cell_text(ui, &model.query[i].value, 130.0);
+                    cell_text(ui, &model.query[i].description, ui.available_width());
                 }
             });
-        } else {
-            let q = &model.query[i];
-            kv_row(ui, &q.name, &q.value, GREEN);
-            if !q.description.is_empty() {
-                ui.label(RichText::new(&q.description).color(DIM).size(11.0));
-            }
         }
-    }
-    if editing && add_button(ui, "+ query") {
-        request_new_row_focus(ui, FOCUS_QUERY, model.query.len());
-        actions.push(EditAction::Add {
-            field: Field::QueryAdd,
-        });
-    }
+        if editing && add_button(ui, "+ query") {
+            request_new_row_focus(ui, FOCUS_QUERY, model.query.len());
+            actions.push(EditAction::Add {
+                field: Field::QueryAdd,
+            });
+        }
+    });
     for a in &actions {
         apply(model, a);
     }
@@ -125,83 +147,86 @@ pub(crate) fn response_headers(
     let Some(_) = model.responses.get(idx) else {
         return;
     };
-    ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
-    section_label(ui, "RESPONSE HEADERS");
-    if model.responses[idx].headers.is_empty() && !editing {
-        ui.label(RichText::new("(none)").color(DIM));
-    }
     let mut actions: Vec<EditAction> = Vec::new();
-    let len = model.responses[idx].headers.len();
-    for i in 0..len {
-        if editing {
+    table_frame(ui, |ui| {
+        table_header(ui, &["header", "requirement", "value"]);
+        let len = model.responses[idx].headers.len();
+        for i in 0..len {
             ui.horizontal(|ui| {
-                let h = &mut model.responses[idx].headers[i];
-                bordered_input(ui, &mut h.name, 160.0, "name");
-                let gap = ui.spacing().item_spacing.x;
-                let reserve = 18.0 + gap;
-                let value_w = (ui.available_width() - reserve).max(40.0);
-                bordered_input(ui, &mut h.value, value_w, "value");
-                if delete_button(ui) {
-                    actions.push(EditAction::Delete {
-                        field: Field::ResponseHeaderName(idx, i),
-                    });
+                if editing {
+                    cell_edit(ui, &mut model.responses[idx].headers[i].name, 150.0, "name");
+                    if let Some(new) =
+                        required_chip(ui, model.responses[idx].headers[i].required, true)
+                    {
+                        model.responses[idx].headers[i].required = new;
+                    }
+                    let w = (ui.available_width() - 24.0).max(60.0);
+                    cell_edit(ui, &mut model.responses[idx].headers[i].value, w, "value");
+                    if delete_button(ui) {
+                        actions.push(EditAction::Delete {
+                            field: Field::ResponseHeaderName(idx, i),
+                        });
+                    }
+                } else {
+                    cell_key(ui, &model.responses[idx].headers[i].name, 150.0);
+                    required_chip(ui, model.responses[idx].headers[i].required, false);
+                    cell_text(
+                        ui,
+                        &model.responses[idx].headers[i].value,
+                        ui.available_width(),
+                    );
                 }
             });
-        } else {
-            let h = &model.responses[idx].headers[i];
-            kv_row(ui, &h.name, &h.value, GREEN);
         }
-    }
-    if editing && add_button(ui, "+ header") {
-        actions.push(EditAction::Add {
-            field: Field::ResponseHeaderAdd(idx),
-        });
-    }
+        if editing && add_button(ui, "+ header") {
+            actions.push(EditAction::Add {
+                field: Field::ResponseHeaderAdd(idx),
+            });
+        }
+    });
     for a in &actions {
         apply(model, a);
     }
 }
 
 pub(crate) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
-    let space = ui.spacing().item_spacing.y;
-    ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
-
-    if model.headers.is_empty() {
-        ui.label(RichText::new("(none)").color(DIM));
-    }
-    let mut delete = None;
-    for i in 0..model.headers.len() {
-        if editing {
+    let mut actions: Vec<EditAction> = Vec::new();
+    table_frame(ui, |ui| {
+        table_header(ui, &["header", "requirement", "value"]);
+        for i in 0..model.headers.len() {
             ui.horizontal(|ui| {
-                let name = bordered_input(ui, &mut model.headers[i].name, 130.0, "name");
-                take_pending_focus(ui, FOCUS_HEADER, i, &name);
-                let gap = ui.spacing().item_spacing.x;
-                let reserve = 18.0 + 24.0 + gap;
-                let value_w = (ui.available_width() - reserve).max(40.0);
-                bordered_input(ui, &mut model.headers[i].value, value_w, "value");
-                if delete_button(ui) {
-                    delete = Some(Field::HeaderName(i));
+                if editing {
+                    let name = cell_edit(ui, &mut model.headers[i].name, 150.0, "name");
+                    take_pending_focus(ui, FOCUS_HEADER, i, &name);
+                    if required_chip(ui, model.headers[i].required, true).is_some() {
+                        actions.push(EditAction::ToggleBool {
+                            field: Field::HeaderRequired(i),
+                        });
+                    }
+                    let w = (ui.available_width() - 24.0).max(60.0);
+                    cell_edit(ui, &mut model.headers[i].value, w, "value");
+                    if delete_button(ui) {
+                        actions.push(EditAction::Delete {
+                            field: Field::HeaderName(i),
+                        });
+                    }
+                } else {
+                    cell_key(ui, &model.headers[i].name, 150.0);
+                    required_chip(ui, model.headers[i].required, false);
+                    cell_text(ui, &model.headers[i].value, ui.available_width());
                 }
             });
-        } else {
-            kv_row(ui, &model.headers[i].name, &model.headers[i].value, GREEN);
         }
-    }
-    if let Some(field) = delete {
-        apply(model, &EditAction::Delete { field });
-    }
-    if editing && add_button(ui, "+ header") {
-        request_new_row_focus(ui, FOCUS_HEADER, model.headers.len());
-        apply(
-            model,
-            &EditAction::Add {
+        if editing && add_button(ui, "+ header") {
+            request_new_row_focus(ui, FOCUS_HEADER, model.headers.len());
+            actions.push(EditAction::Add {
                 field: Field::HeaderAdd,
-            },
-        );
+            });
+        }
+    });
+    for a in &actions {
+        apply(model, a);
     }
-
-    ui.spacing_mut().item_spacing.y = space;
-    ui.add_space(SPACE_MEDIUM);
 }
 
 /// Renders a single view-mode schema field as
@@ -216,22 +241,12 @@ pub(crate) fn field_view_row(
     depth: usize,
 ) {
     ui.horizontal(|ui| {
-        ui.add_space(depth as f32 * 14.0);
-        ui.label(RichText::new(format!("{name}:")).color(TEXT));
-        ui.label(RichText::new(dtype).color(CYAN));
-        if required {
-            ui.label(
-                RichText::new(" REQUIRED ")
-                    .color(BG)
-                    .background_color(RED)
-                    .size(10.0),
-            );
-        } else {
-            ui.label(RichText::new("[OPTIONAL]").color(DIM).size(10.0));
-        }
-        if !description.is_empty() {
-            ui.label(RichText::new(description).color(DIM).size(11.0));
-        }
+        let indent = depth as f32 * 14.0;
+        ui.add_space(indent);
+        cell_key(ui, name, (150.0 - indent).max(60.0));
+        cell_text(ui, dtype, 90.0);
+        required_chip(ui, required, false);
+        cell_text(ui, description, ui.available_width());
     });
 }
 
@@ -299,8 +314,9 @@ pub(crate) fn edit_schema_fields(
     for (i, f) in fields.iter_mut().enumerate() {
         path.push(i);
         ui.horizontal(|ui| {
-            ui.add_space((path.len() as f32 - 1.0) * 14.0);
-            let name = bordered_input(ui, &mut f.name, 110.0, "name");
+            let indent = (path.len() as f32 - 1.0) * 14.0;
+            ui.add_space(indent);
+            let name = cell_edit(ui, &mut f.name, (150.0 - indent).max(60.0), "name");
             take_pending_focus(ui, &schema_focus_key(loc), schema_path_id(path), &name);
             let loc_tag = match loc {
                 BodyLoc::Request => "req".to_string(),
@@ -312,16 +328,16 @@ pub(crate) fn edit_schema_fields(
                 &mut f.dtype,
                 SCHEMA_TYPES,
             );
-            ui.checkbox(&mut f.required, RichText::new("req").color(DIM));
-            ui.horizontal(|ui| {
-                let width = ui.available_width();
-                bordered_input(ui, &mut f.description, width - 48.0, "description");
-                if delete_button(ui) {
-                    actions.push(EditAction::Delete {
-                        field: Field::SchemaName(loc.clone(), path.clone()),
-                    });
-                }
-            });
+            if let Some(new) = required_chip(ui, f.required, true) {
+                f.required = new;
+            }
+            let width = (ui.available_width() - 24.0).max(60.0);
+            cell_edit(ui, &mut f.description, width, "description");
+            if delete_button(ui) {
+                actions.push(EditAction::Delete {
+                    field: Field::SchemaName(loc.clone(), path.clone()),
+                });
+            }
         });
         if !f.properties.is_empty() {
             edit_schema_fields(ui, loc, &mut f.properties, path, actions);
@@ -375,28 +391,31 @@ pub(crate) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bo
             .max_height(schema_cap)
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                if editing {
-                    let mut path = Vec::new();
-                    edit_schema_fields(
-                        ui,
-                        &BodyLoc::Request,
-                        &mut req.schema,
-                        &mut path,
-                        &mut actions,
-                    );
-                    schema_add_button(
-                        ui,
-                        "+ field",
-                        &BodyLoc::Request,
-                        &[],
-                        req.schema.len(),
-                        &mut actions,
-                    );
-                } else if req.schema.is_empty() {
-                    ui.label(RichText::new("(none)").color(DIM));
-                } else {
-                    schema_fields(ui, &req.schema, 0);
-                }
+                table_frame(ui, |ui| {
+                    table_header(ui, &["name", "type", "requirement", "description"]);
+                    if editing {
+                        let mut path = Vec::new();
+                        edit_schema_fields(
+                            ui,
+                            &BodyLoc::Request,
+                            &mut req.schema,
+                            &mut path,
+                            &mut actions,
+                        );
+                        schema_add_button(
+                            ui,
+                            "+ field",
+                            &BodyLoc::Request,
+                            &[],
+                            req.schema.len(),
+                            &mut actions,
+                        );
+                    } else if req.schema.is_empty() {
+                        ui.label(RichText::new("(none)").color(DIM));
+                    } else {
+                        schema_fields(ui, &req.schema, 0);
+                    }
+                });
             });
         ui.add_space(SPACE_LARGE);
         ui.horizontal(|ui| {
@@ -556,28 +575,31 @@ pub(crate) fn responses(
         .max_height(schema_cap)
         .auto_shrink([false, true])
         .show(ui, |ui| {
-            if editing {
-                let mut path = Vec::new();
-                edit_schema_fields(
-                    ui,
-                    &BodyLoc::Response(idx),
-                    &mut r.schema,
-                    &mut path,
-                    &mut actions,
-                );
-                schema_add_button(
-                    ui,
-                    "+ field",
-                    &BodyLoc::Response(idx),
-                    &[],
-                    r.schema.len(),
-                    &mut actions,
-                );
-            } else if r.schema.is_empty() {
-                ui.label(RichText::new("(none)").color(DIM));
-            } else {
-                schema_fields(ui, &r.schema, 0);
-            }
+            table_frame(ui, |ui| {
+                table_header(ui, &["name", "type", "requirement", "description"]);
+                if editing {
+                    let mut path = Vec::new();
+                    edit_schema_fields(
+                        ui,
+                        &BodyLoc::Response(idx),
+                        &mut r.schema,
+                        &mut path,
+                        &mut actions,
+                    );
+                    schema_add_button(
+                        ui,
+                        "+ field",
+                        &BodyLoc::Response(idx),
+                        &[],
+                        r.schema.len(),
+                        &mut actions,
+                    );
+                } else if r.schema.is_empty() {
+                    ui.label(RichText::new("(none)").color(DIM));
+                } else {
+                    schema_fields(ui, &r.schema, 0);
+                }
+            });
         });
     ui.add_space(SPACE_LARGE);
     ui.horizontal(|ui| {
