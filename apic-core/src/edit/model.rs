@@ -28,6 +28,7 @@ pub struct EditModel {
 pub struct EditHeader {
     pub name: String,
     pub value: String,
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +36,7 @@ pub struct EditQuery {
     pub name: String,
     pub value: String,
     pub description: String, // empty => None
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -139,6 +141,7 @@ impl EditModel {
                     name: q.name,
                     value: q.value,
                     description: opt_to_string(q.description),
+                    required: q.required,
                 })
                 .collect(),
             headers: c
@@ -147,6 +150,7 @@ impl EditModel {
                 .map(|h: Header| EditHeader {
                     name: h.name,
                     value: h.value,
+                    required: h.required,
                 })
                 .collect(),
             request: c.request.map(|r: RequestBody| EditBody {
@@ -171,6 +175,7 @@ impl EditModel {
                         .map(|h: Header| EditHeader {
                             name: h.name,
                             value: h.value,
+                            required: h.required,
                         })
                         .collect(),
                     dtype: r.dtype,
@@ -254,6 +259,7 @@ impl EditModel {
                             let mut m = serde_json::Map::new();
                             m.insert("name".into(), Value::String(q.name.clone()));
                             m.insert("value".into(), Value::String(q.value.clone()));
+                            m.insert("required".into(), Value::Bool(q.required));
                             if let Some(d) = str_opt(&q.description) {
                                 m.insert("description".into(), Value::String(d.to_string()));
                             }
@@ -274,6 +280,7 @@ impl EditModel {
                         let mut m = serde_json::Map::new();
                         m.insert("name".into(), Value::String(h.name.clone()));
                         m.insert("value".into(), Value::String(h.value.clone()));
+                        m.insert("required".into(), Value::Bool(h.required));
                         Value::Object(m)
                     })
                     .collect(),
@@ -319,6 +326,7 @@ impl EditModel {
                                 let mut mm = serde_json::Map::new();
                                 mm.insert("name".into(), Value::String(h.name.clone()));
                                 mm.insert("value".into(), Value::String(h.value.clone()));
+                                mm.insert("required".into(), Value::Bool(h.required));
                                 Value::Object(mm)
                             })
                             .collect(),
@@ -537,8 +545,8 @@ mod tests {
         "description": "Log a user in",
         "method": "POST",
         "url": "https://api.example.com/auth/{id}",
-        "query": [{ "name": "page", "value": "1", "description": "Page" }],
-        "headers": [{ "name": "Content-Type", "value": "application/json" }],
+        "query": [{ "name": "page", "value": "1", "description": "Page", "required": true }],
+        "headers": [{ "name": "Content-Type", "value": "application/json", "required": true }],
         "request": {
             "type": "object",
             "schema": [{ "name": "user", "type": "object", "default": null,
@@ -587,6 +595,8 @@ mod tests {
         assert_eq!(back.name, "login");
         assert_eq!(back.url, "https://api.example.com/auth/{id}");
         assert_eq!(back.query[0].value, "1");
+        assert!(back.headers[0].required);
+        assert!(back.query[0].required);
         assert_eq!(back.responses[0].code, 200);
         assert_eq!(
             back.request.unwrap().example.unwrap()["user"]["email"],
