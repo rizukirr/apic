@@ -17,8 +17,8 @@ use super::theme::{
 };
 use super::widgets::{
     SCHEMA_TYPES, add_button, bordered_input, bordered_input_colored, cell_edit, cell_key,
-    cell_text, code_block, delete_button, json_block, request_new_row_focus, required_chip,
-    section_label, table_frame, table_header, take_pending_focus, type_dropdown,
+    cell_text, delete_button, json_editor, request_new_row_focus, required_chip, section_label,
+    table_frame, table_header, take_pending_focus, type_dropdown,
 };
 
 // egui temp-data keys for the "focus the new row's name field" markers, one per
@@ -381,41 +381,44 @@ pub(crate) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bo
             });
         }
         ui.add_space(SPACE_LARGE);
-        section_label(ui, "SCHEMA DEFINITION");
-        // Cap the schema list at half the remaining height so a large schema
-        // scrolls internally instead of pushing the stretched example off the
-        // bottom of the (unscrolled) tab.
-        let schema_cap = (ui.available_height() * 0.5).max(120.0);
-        egui::ScrollArea::vertical()
-            .id_salt("req_schema_scroll")
-            .max_height(schema_cap)
-            .auto_shrink([false, true])
+        egui::CollapsingHeader::new(RichText::new("Schema").color(DIM))
+            .default_open(false)
             .show(ui, |ui| {
-                table_frame(ui, |ui| {
-                    table_header(ui, &["name", "type", "requirement", "description"]);
-                    if editing {
-                        let mut path = Vec::new();
-                        edit_schema_fields(
-                            ui,
-                            &BodyLoc::Request,
-                            &mut req.schema,
-                            &mut path,
-                            &mut actions,
-                        );
-                        schema_add_button(
-                            ui,
-                            "+ field",
-                            &BodyLoc::Request,
-                            &[],
-                            req.schema.len(),
-                            &mut actions,
-                        );
-                    } else if req.schema.is_empty() {
-                        ui.label(RichText::new("(none)").color(DIM));
-                    } else {
-                        schema_fields(ui, &req.schema, 0);
-                    }
-                });
+                // Cap the schema list at half the remaining height so a large
+                // schema scrolls internally instead of pushing the stretched
+                // example off the bottom of the (unscrolled) tab.
+                let schema_cap = (ui.available_height() * 0.5).max(120.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("req_schema_scroll")
+                    .max_height(schema_cap)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        table_frame(ui, |ui| {
+                            table_header(ui, &["name", "type", "requirement", "description"]);
+                            if editing {
+                                let mut path = Vec::new();
+                                edit_schema_fields(
+                                    ui,
+                                    &BodyLoc::Request,
+                                    &mut req.schema,
+                                    &mut path,
+                                    &mut actions,
+                                );
+                                schema_add_button(
+                                    ui,
+                                    "+ field",
+                                    &BodyLoc::Request,
+                                    &[],
+                                    req.schema.len(),
+                                    &mut actions,
+                                );
+                            } else if req.schema.is_empty() {
+                                ui.label(RichText::new("(none)").color(DIM));
+                            } else {
+                                schema_fields(ui, &req.schema, 0);
+                            }
+                        });
+                    });
             });
         ui.add_space(SPACE_LARGE);
         ui.horizontal(|ui| {
@@ -447,11 +450,7 @@ pub(crate) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bo
             }
         });
         let h = ui.available_height().max(160.0);
-        if editing {
-            code_block(ui, &mut req.example, h);
-        } else {
-            json_block(ui, &req.example, h);
-        }
+        json_editor(ui, &mut req.example, editing, h);
     } else {
         ui.label(RichText::new("(no request body)").color(DIM));
         if editing && add_button(ui, "+ request body") {
@@ -469,9 +468,10 @@ pub(crate) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bo
     ui.add_space(SPACE_MEDIUM);
 }
 
-/// The `[ 200 ] [ 404 ]` selectable response-code row, plus the `+ response`
-/// button in edit mode. Clicking a code sets `resp_tab`; the add-response edit
-/// is applied here so both `responses()` and the RespHeader tab can share it.
+/// A compact response-code dropdown plus a colored `code reason` status label,
+/// and the `+ response` button in edit mode. Selecting a code sets `resp_tab`;
+/// the add-response edit is applied here so both `responses()` and the
+/// RespHeader tab can share it.
 pub(crate) fn response_code_selector(
     ui: &mut egui::Ui,
     model: &mut EditModel,
@@ -479,33 +479,57 @@ pub(crate) fn response_code_selector(
     editing: bool,
 ) {
     let mut actions: Vec<EditAction> = Vec::new();
-    if editing || !model.responses.is_empty() {
-        ui.horizontal_wrapped(|ui| {
-            for (i, r) in model.responses.iter().enumerate() {
-                let label = format!("[ {} ]", if r.code.is_empty() { "?" } else { &r.code });
-                let color = if r.code.trim().parse::<u16>().is_err() {
-                    RED
-                } else if i == *resp_tab {
-                    GREEN
+    ui.horizontal(|ui| {
+        let current = model
+            .responses
+            .get(*resp_tab)
+            .map(|r| r.code.clone())
+            .unwrap_or_default();
+        egui::ComboBox::from_id_salt("resp_code")
+            .selected_text(
+                RichText::new(if current.is_empty() {
+                    "—".into()
                 } else {
-                    DIM
-                };
-                if ui
-                    .selectable_label(i == *resp_tab, RichText::new(label).color(color))
-                    .clicked()
-                {
-                    *resp_tab = i;
+                    current.clone()
+                })
+                .color(GREEN),
+            )
+            .show_ui(ui, |ui| {
+                for (i, r) in model.responses.iter().enumerate() {
+                    ui.selectable_value(resp_tab, i, r.code.clone());
                 }
-            }
-            if editing && add_button(ui, "+ response") {
-                actions.push(EditAction::Add {
-                    field: Field::ResponseAdd,
-                });
-            }
-        });
-    }
+            });
+        if let Some(r) = model.responses.get(*resp_tab) {
+            let ok = r.code.trim().parse::<u16>().is_ok();
+            ui.label(
+                RichText::new(format!("{} {}", r.code, status_text(&r.code)))
+                    .color(if ok { GREEN } else { RED })
+                    .strong(),
+            );
+        }
+        if editing && add_button(ui, "+ response") {
+            actions.push(EditAction::Add {
+                field: Field::ResponseAdd,
+            });
+        }
+    });
     for a in &actions {
         apply(model, a);
+    }
+}
+
+/// A short reason phrase for common status codes; empty for the rest.
+fn status_text(code: &str) -> &'static str {
+    match code.trim() {
+        "200" => "OK",
+        "201" => "Created",
+        "204" => "No Content",
+        "400" => "Bad Request",
+        "401" => "Unauthorized",
+        "403" => "Forbidden",
+        "404" => "Not Found",
+        "500" => "Server Error",
+        _ => "",
     }
 }
 
@@ -566,40 +590,44 @@ pub(crate) fn responses(
             }
         });
     }
-    section_label(ui, "RESPONSE SCHEMA");
-    // Cap the schema list at half the remaining height so a large schema scrolls
-    // internally instead of pushing the stretched example off the bottom.
-    let schema_cap = (ui.available_height() * 0.5).max(120.0);
-    egui::ScrollArea::vertical()
-        .id_salt("resp_schema_scroll")
-        .max_height(schema_cap)
-        .auto_shrink([false, true])
+    egui::CollapsingHeader::new(RichText::new("Schema").color(DIM))
+        .default_open(false)
         .show(ui, |ui| {
-            table_frame(ui, |ui| {
-                table_header(ui, &["name", "type", "requirement", "description"]);
-                if editing {
-                    let mut path = Vec::new();
-                    edit_schema_fields(
-                        ui,
-                        &BodyLoc::Response(idx),
-                        &mut r.schema,
-                        &mut path,
-                        &mut actions,
-                    );
-                    schema_add_button(
-                        ui,
-                        "+ field",
-                        &BodyLoc::Response(idx),
-                        &[],
-                        r.schema.len(),
-                        &mut actions,
-                    );
-                } else if r.schema.is_empty() {
-                    ui.label(RichText::new("(none)").color(DIM));
-                } else {
-                    schema_fields(ui, &r.schema, 0);
-                }
-            });
+            // Cap the schema list at half the remaining height so a large schema
+            // scrolls internally instead of pushing the stretched example off the
+            // bottom.
+            let schema_cap = (ui.available_height() * 0.5).max(120.0);
+            egui::ScrollArea::vertical()
+                .id_salt("resp_schema_scroll")
+                .max_height(schema_cap)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    table_frame(ui, |ui| {
+                        table_header(ui, &["name", "type", "requirement", "description"]);
+                        if editing {
+                            let mut path = Vec::new();
+                            edit_schema_fields(
+                                ui,
+                                &BodyLoc::Response(idx),
+                                &mut r.schema,
+                                &mut path,
+                                &mut actions,
+                            );
+                            schema_add_button(
+                                ui,
+                                "+ field",
+                                &BodyLoc::Response(idx),
+                                &[],
+                                r.schema.len(),
+                                &mut actions,
+                            );
+                        } else if r.schema.is_empty() {
+                            ui.label(RichText::new("(none)").color(DIM));
+                        } else {
+                            schema_fields(ui, &r.schema, 0);
+                        }
+                    });
+                });
         });
     ui.add_space(SPACE_LARGE);
     ui.horizontal(|ui| {
@@ -629,11 +657,7 @@ pub(crate) fn responses(
         }
     });
     let h = ui.available_height().max(160.0);
-    if editing {
-        code_block(ui, &mut r.example, h);
-    } else {
-        json_block(ui, &r.example, h);
-    }
+    json_editor(ui, &mut r.example, editing, h);
 
     for a in &actions {
         apply(model, a);
