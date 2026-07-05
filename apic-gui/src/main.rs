@@ -1264,26 +1264,30 @@ impl App {
                     rep.buffer = apic_core::json::pretty_json(&rep.buffer);
                 }
                 ui.add_space(SPACE_SMALL);
-                let resp = ui.add_sized(
-                    [
-                        ui.available_width(),
-                        (ui.available_height() - 8.0).max(40.0),
-                    ],
-                    egui::TextEdit::multiline(&mut rep.buffer)
-                        .code_editor()
-                        .desired_width(f32::INFINITY),
-                );
-                if resp.changed() || pretty {
-                    rep.error = match apic_core::json::validate(&rep.buffer) {
-                        Ok(()) => String::new(),
-                        Err(e) => e.to_string(),
-                    };
-                    if rep.error.is_empty()
-                        && let Some(entry) = entries.get(rep.index)
-                    {
-                        promote = Some((entry.path.clone(), rep.buffer.clone()));
-                    }
-                }
+                // The multiline TextEdit has no scrollbar of its own; a long
+                // invalid contract is only reachable inside an enclosing
+                // ScrollArea (egui lays the editor out to full content height).
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let resp = ui.add(
+                            egui::TextEdit::multiline(&mut rep.buffer)
+                                .code_editor()
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(24),
+                        );
+                        if resp.changed() || pretty {
+                            rep.error = match apic_core::json::validate(&rep.buffer) {
+                                Ok(()) => String::new(),
+                                Err(e) => e.to_string(),
+                            };
+                            if rep.error.is_empty()
+                                && let Some(entry) = entries.get(rep.index)
+                            {
+                                promote = Some((entry.path.clone(), rep.buffer.clone()));
+                            }
+                        }
+                    });
                 return;
             }
             let Some(model) = model.as_mut() else {
