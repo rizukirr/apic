@@ -119,8 +119,8 @@ place:
 - **Edit a cell:** `Enter` or `i` edits a text cell; `Enter` cycles the method,
   toggles a `required` flag, or toggles a body `type` between `object` and
   `object[]`. While typing, `Enter` commits and `Esc` cancels.
-- **Expand:** `Enter` on the `METHOD url` line reveals the protocol, host, and
-  path; `Enter` on a `REQUEST`/`RESPONSE` title reveals its code, description, and
+- **Expand:** `Enter` on the `METHOD url` line reveals the editable URL string;
+  `Enter` on a `REQUEST`/`RESPONSE` title reveals its code, description, and
   type. `Esc` collapses either.
 - **Add / delete:** `a` adds a row to the current section, a nested field when
   you're on an `object` field, or a new response on the `+ add response` line;
@@ -373,26 +373,14 @@ to the built-in default.
     "name": "update-user",
     "description": "Update a user",
     "method": "PUT",
-    "url": {
-        "protocol": "https",
-        "host": "api.example.com",
-        "path": ["users", "{id}"],
-        "query": [
-            {
-                "name": "notify",
-                "type": "boolean",
-                "description": "Send a notification email",
-                "required": false
-            }
-        ],
-        "variable": [
-            {
-                "name": "id",
-                "type": "int",
-                "description": "User ID"
-            }
-        ]
-    },
+    "url": "https://api.example.com/users/{id}",
+    "query": [
+        {
+            "name": "notify",
+            "value": "true",
+            "description": "Send a notification email"
+        }
+    ],
     "headers": [
         { "name": "Content-Type", "value": "application/json" },
         { "name": "Authorization", "value": "Bearer {token}" }
@@ -415,6 +403,9 @@ to the built-in default.
         {
             "code": 200,
             "description": "User updated",
+            "headers": [
+                { "name": "X-Request-Id", "value": "abc-123" }
+            ],
             "schema": [
                 {
                     "name": "status",
@@ -455,20 +446,22 @@ there is no schema), and `read --example` shows only the payloads.
 | `name` | yes | Endpoint name. |
 | `description` | no | Short description of the endpoint. |
 | `method` | yes | HTTP method: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, or `OPTIONS`. |
-| `url` | yes | Request URL, broken into parts (see below). |
+| `url` | yes | Request URL as a single free-form string, e.g. `https://api.example.com/users/{id}`. Path parameters are written inline as `{name}` tokens. |
+| `query` | no | Array of query parameters (`name`, `value`, `description`); see below. |
 | `headers` | yes | Array of headers (`name`, `value`). |
 | `request` | no | Request body: `{ "type": <body shape>, "schema": [fields], "example": <raw JSON> }`, all parts optional; `type` defaults to `"object"` (see [Array bodies](#array-bodies)). |
-| `responses` | yes | Array of responses (`code`, `description`, optional `type`, optional `schema`, optional `example`). |
+| `responses` | yes | Array of responses (`code`, `description`, optional `headers`, optional `type`, optional `schema`, optional `example`). |
 
-The `url` object has:
+Each entry in the top-level `query` array has:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `protocol` | yes | URL scheme, e.g. `http` or `https`. |
-| `host` | yes | Host, e.g. `api.example.com`. |
-| `path` | no | Path segments as an array, e.g. `["auth", "login"]`. |
-| `query` | no | Array of query parameters (`name`, `type`, `description`, `required`). |
-| `variable` | no | Array of path variables (`name`, optional `type`, defaults to `string`, `description`). |
+| `name` | yes | Parameter key, e.g. `page`. |
+| `value` | no | Example value, e.g. `2`. |
+| `description` | no | What the parameter is for. |
+
+Path parameters are not a separate section: write them inline in the `url`
+string as `{name}` (e.g. `{id}` in `.../users/{id}`).
 
 A **field** (in the request `schema` and response `schema`) has:
 
@@ -496,11 +489,7 @@ optional `accept` field documents which MIME types the part allows, and
 {
     "name": "upload-avatar",
     "method": "POST",
-    "url": {
-        "protocol": "https",
-        "host": "api.example.com",
-        "path": ["user", "avatar"]
-    },
+    "url": "https://api.example.com/user/avatar",
     "headers": [
         { "name": "Content-Type", "value": "multipart/form-data" }
     ],
@@ -557,7 +546,7 @@ request **and** an array response) and
 {
     "name": "bulk-create-items",
     "method": "POST",
-    "url": { "protocol": "https", "host": "api.example.com", "path": ["items", "bulk"] },
+    "url": "https://api.example.com/items/bulk",
     "headers": [{ "name": "Content-Type", "value": "application/json" }],
     "request": {
         "type": "object[]",
