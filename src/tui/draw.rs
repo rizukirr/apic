@@ -815,24 +815,31 @@ pub(crate) fn draw_new_response_form(
     const STATUS_W: usize = 12; // status column width
     const DESC_W: usize = 20; // description column width (input box)
     const SEP: &str = " │ ";
-    let popup = centered(frame.area(), 50, 30);
+    // A compact, content-sized popup centered in the terminal (border + 1-cell
+    // top/bottom padding around the 5 content rows, so 9 tall).
+    let area = frame.area();
+    let w = 46.min(area.width);
+    let h = 9.min(area.height);
+    let popup = Rect {
+        x: area.x + area.width.saturating_sub(w) / 2,
+        y: area.y + area.height.saturating_sub(h) / 2,
+        width: w,
+        height: h,
+    };
     frame.render_widget(Clear, popup);
 
-    let header = Style::default()
-        .fg(Color::Cyan)
-        .add_modifier(Modifier::BOLD);
-    let focused = Style::default()
-        .fg(Color::White)
-        .bg(Color::Blue)
-        .add_modifier(Modifier::BOLD);
-    let blurred = Style::default().fg(Color::White).bg(Color::DarkGray);
-    let sep = Style::default().fg(Color::DarkGray);
+    // Border and text follow the terminal's default foreground (not a hardcoded
+    // white); the focused field is marked by a background highlight only.
+    let fg = Style::default().fg(Color::Reset);
+    let header = fg.add_modifier(Modifier::BOLD);
+    let focused = fg.bg(Color::Blue).add_modifier(Modifier::BOLD);
+    let blurred = fg.bg(Color::DarkGray);
 
     let content = vec![
         Line::from(""),
         Line::from(vec![
             Span::styled(format!("{:<STATUS_W$}", "Status"), header),
-            Span::styled(SEP, sep),
+            Span::styled(SEP, fg),
             Span::styled(format!("{:<DESC_W$}", "Short Description"), header),
         ]),
         Line::from(vec![
@@ -840,7 +847,7 @@ pub(crate) fn draw_new_response_form(
                 format!("{status:<STATUS_W$}"),
                 if on_description { blurred } else { focused },
             ),
-            Span::styled(SEP, sep),
+            Span::styled(SEP, fg),
             Span::styled(
                 format!("{description:<DESC_W$}"),
                 if on_description { focused } else { blurred },
@@ -849,15 +856,15 @@ pub(crate) fn draw_new_response_form(
         Line::from(""),
         Line::from(Span::styled(
             "Enter: Yes    Esc: No    Tab: switch field",
-            Style::default().fg(Color::Gray),
+            fg,
         )),
     ];
     let dialog = Paragraph::new(content).block(
         Block::default()
             .title(" new response ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
-            .padding(Padding::new(2, 2, 1, 1)),
+            .border_style(fg)
+            .padding(Padding::new(2, 1, 1, 1)),
     );
     frame.render_widget(dialog, popup);
 

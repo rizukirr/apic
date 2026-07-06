@@ -280,10 +280,8 @@ fn append_here(state: &mut UiState, model: &mut EditModel) -> Action {
         return Action::None;
     };
     if target == Field::RequestToggle {
-        // `a` writes the request JSON; create an empty body if there isn't one.
-        if model.request.is_none() {
-            add_row(state, model, &Field::RequestToggle);
-        }
+        // `a` opens the JSON editor. The body is materialized only when a real
+        // example is saved (see `set_example`), so cancelling leaves it `(none)`.
         return Action::OpenExample(Field::BodyExample(BodyLoc::Request), String::new());
     }
     if target == Field::ResponseAdd {
@@ -655,13 +653,13 @@ pub(crate) fn handle_confirm_delete(
     }
 }
 
-/// Clears a request/response example body to empty. Returns `false` when the
-/// field is not a body example or the body is missing.
+/// Clears a request/response example body. Returns `false` when the field is not
+/// a body example or the body is missing.
 fn clear_example(model: &mut EditModel, field: &Field) -> bool {
     match field {
-        Field::BodyExample(BodyLoc::Request) => {
-            model.request.as_mut().map(|b| b.example.clear()).is_some()
-        }
+        // A request body is only its example, so clearing it removes the body
+        // entirely and the section falls back to `(none)`.
+        Field::BodyExample(BodyLoc::Request) => model.request.take().is_some(),
         Field::BodyExample(BodyLoc::Response(i)) => model
             .responses
             .get_mut(*i)
@@ -1121,7 +1119,7 @@ mod tests {
     }
 
     #[test]
-    fn a_on_request_creates_body_and_opens_example_editor() {
+    fn a_on_request_opens_editor_without_creating_the_body() {
         let c = json_get(
             r#"{ "name":"t","method":"POST","url":"https://h/x","headers":[],"responses":[] }"#,
             None,
@@ -1140,10 +1138,34 @@ mod tests {
         s.row = 0;
         s.cell = None;
         let action = handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
-        assert!(m.request.is_some(), "an empty request body is created");
+        // The body is not materialized here — cancelling the editor must leave
+        // REQUEST as (none). It is created only when a real example is saved.
+        assert!(m.request.is_none(), "no body until an example is saved");
         assert_eq!(
             action,
             Action::OpenExample(Field::BodyExample(BodyLoc::Request), String::new())
+        );
+    }
+
+    #[test]
+    fn clearing_the_request_example_drops_the_body_to_none() {
+        let c = json_get(
+            r#"{ "name":"t","method":"POST","url":"https://h/x","headers":[],
+                 "request":{"example":{"a":1}},"responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        assert!(m.request.is_some());
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| {
+            matches!(f, Field::BodyExample(BodyLoc::Request))
+        });
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('d')));
+        handle_confirm_delete(&mut s, &mut m, key(KeyCode::Char('y')));
+        assert!(
+            m.request.is_none(),
+            "clearing the request example removes the body"
         );
     }
 

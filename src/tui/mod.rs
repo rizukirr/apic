@@ -81,9 +81,13 @@ fn example_text(model: &EditModel, field: &Field) -> String {
 fn set_example(model: &mut EditModel, field: &Field, text: String) {
     match field {
         Field::BodyExample(BodyLoc::Request) => {
-            if let Some(b) = model.request.as_mut() {
-                b.example = text;
-            }
+            // The request body is only its example: a non-empty save materializes
+            // it, an empty save leaves/returns it to `(none)`.
+            model.request = if text.trim().is_empty() {
+                None
+            } else {
+                Some(model::EditBody { example: text })
+            };
         }
         Field::BodyExample(BodyLoc::Response(i)) => {
             if let Some(r) = model.responses.get_mut(*i) {
