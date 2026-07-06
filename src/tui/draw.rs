@@ -138,7 +138,7 @@ fn build_lines(state: &UiState) -> (Vec<Line<'static>>, usize, usize, Option<(us
 }
 
 /// Emits the header block: ` NAME`, ` description` (when non-empty), a blank
-/// line, then the URL (collapsed ` METHOD url` or expanded key/value rows).
+/// line, then the inline-editable ` METHOD url` line.
 fn push_header(
     state: &UiState,
     si: usize,
@@ -183,13 +183,11 @@ fn push_header(
                 if selected {
                     *sel = (lines.len(), lines.len());
                 }
-                lines.push(url_line(state, row, selected));
+                let (line, col) = url_line(state, row, selected);
+                record_cursor(cursor, lines.len(), col);
+                lines.push(line);
             }
             RowKind::Field => {
-                // Expanded URL: blank line precedes the method row.
-                if ri > 0 && section.rows[ri - 1].kind == RowKind::Desc {
-                    lines.push(Line::raw(""));
-                }
                 if selected {
                     *sel = (lines.len(), lines.len());
                 }
@@ -236,12 +234,15 @@ fn header_value_line(
     (Line::from(Span::styled(fmt(&cell.value), style)), None)
 }
 
-/// The collapsed ` METHOD <built-url>` line.
-fn url_line(state: &UiState, row: &TableRow, selected: bool) -> Line<'static> {
+/// The ` METHOD url` line. Both cells are inline-editable: the method cell
+/// (cell 0) highlights on focus and cycles on Enter; the url cell (cell 1)
+/// highlights on focus and shows the insert buffer + a real cursor while typing.
+fn url_line(state: &UiState, row: &TableRow, selected: bool) -> (Line<'static>, Option<usize>) {
     let base = sel_style(state, selected);
     let method = &row.cells[0];
     let url = &row.cells[1];
     let method_focused = selected && state.cell == Some(0);
+    let url_focused = selected && state.cell == Some(1);
 
     let method_style = if method_focused {
         cell_hl()
@@ -253,16 +254,27 @@ fn url_line(state: &UiState, row: &TableRow, selected: bool) -> Line<'static> {
         base.fg(method_color(&method.value))
             .add_modifier(Modifier::BOLD)
     };
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(" ", base),
         Span::styled(method.value.clone(), method_style),
         Span::styled(" ", base),
-        Span::styled(url.value.clone(), base),
-    ])
+    ];
+    // Column where the url span starts: leading space + method + separator.
+    let url_col = 1 + method.value.chars().count() + 1;
+    let mut cursor_col = None;
+    if url_focused && let Mode::Insert(buf) = &state.mode {
+        // Plain text + real cursor while typing (no highlight).
+        spans.push(Span::styled(buf.clone(), base.add_modifier(Modifier::BOLD)));
+        cursor_col = Some(url_col + buf.chars().count());
+    } else {
+        let url_style = if url_focused { cell_hl() } else { base };
+        spans.push(Span::styled(url.value.clone(), url_style));
+    }
+    (Line::from(spans), cursor_col)
 }
 
-/// A ` label  value` key/value line (expanded URL rows). The label is dim; the
-/// value cell honors focus and the insert buffer.
+/// A ` label  value` key/value line (table / key-value rows). The label is dim;
+/// the value cell honors focus and the insert buffer.
 fn kv_line(state: &UiState, row: &TableRow, selected: bool) -> (Line<'static>, Option<usize>) {
     let base = sel_style(state, selected);
     let mut spans = vec![Span::styled(" ", base)];
@@ -660,7 +672,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
     let rows = vec![
         Row::new(vec!["↑/↓  j/k", "Select a row"]),
         Row::new(vec!["←/→  h/l", "Move between cells"]),
-        Row::new(vec!["Enter", "Edit cell · expand url/title · open example"]),
+        Row::new(vec!["Enter", "Edit cell · expand response · open example"]),
         Row::new(vec!["i", "Insert — edit the focused text cell"]),
         Row::new(vec!["Esc", "Back · collapse · cancel"]),
         Row::new(vec![

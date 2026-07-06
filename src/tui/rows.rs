@@ -40,7 +40,6 @@ pub(crate) enum SectionKind {
 /// Which collapsible region (if any) is currently expanded.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Expand {
-    Url,
     Response(usize),
 }
 
@@ -49,7 +48,7 @@ pub(crate) enum Expand {
 pub(crate) enum RowKind {
     Name,    // header name line (drawn uppercased)
     Desc,    // header description line (drawn only when non-empty)
-    UrlLine, // collapsed ` METHOD <built-url>`; Enter expands
+    UrlLine, // ` METHOD url`; Enter edits the url, h reaches the method enum
     Title,   // a Body section's bold title line; Enter expands code/description
     Field,   // an editable table / key-value row
     Example, // inline ` Example:` + raw JSON; Enter opens the modal
@@ -152,7 +151,6 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
 
     // Header block: name, description, URL.
     let method_s = apic_core::json::method_str(&m.method);
-    let url_expanded = expanded == Some(Expand::Url);
     let mut head_rows = vec![
         TableRow {
             kind: RowKind::Name,
@@ -170,38 +168,25 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
         },
     ];
     let head_add: Option<Field> = None;
-    if url_expanded {
-        head_rows.push(field_row(vec![
-            label("method"),
-            enum_cell(Field::Method, method_s.clone()),
-        ]));
-        head_rows.push(field_row(vec![
-            label("url"),
+    // The ` METHOD url` line stays collapsed and is edited in place: the method
+    // is an enum cell (cycles) and the url is an editable text cell.
+    head_rows.push(TableRow {
+        kind: RowKind::UrlLine,
+        indent: 0,
+        cells: vec![
+            enum_cell(Field::Method, method_s),
             text(Field::Url, m.url.clone()),
-        ]));
-    } else {
-        head_rows.push(TableRow {
-            kind: RowKind::UrlLine,
-            indent: 0,
-            cells: vec![
-                enum_cell(Field::Method, method_s),
-                Cell {
-                    field: Field::Url,
-                    kind: CellKind::Label,
-                    value: m.url.clone(),
-                },
-            ],
-            raw: String::new(),
-            prefix: String::new(),
-        });
-    }
+        ],
+        raw: String::new(),
+        prefix: String::new(),
+    });
     out.push(Section {
         title: String::new(),
         kind: SectionKind::Header,
         headers: None,
         rows: head_rows,
         add: head_add,
-        expand: Some(Expand::Url),
+        expand: None,
     });
 
     // QUERY
@@ -364,15 +349,18 @@ mod tests {
     }
 
     #[test]
-    fn url_expands_to_editable_url_row() {
-        let secs = flatten(&model(), Some(Expand::Url));
-        let head = &secs[0];
-        assert!(head.rows.iter().all(|r| r.kind != RowKind::UrlLine));
-        assert!(
-            head.rows
-                .iter()
-                .any(|r| matches!(r.cells.last().map(|c| &c.field), Some(Field::Url)))
-        );
+    fn url_line_carries_editable_method_and_url_cells() {
+        let head = &flatten(&model(), None)[0];
+        let url = head
+            .rows
+            .iter()
+            .find(|r| r.kind == RowKind::UrlLine)
+            .unwrap();
+        // Method is an enum cell (cycles); the url is an editable text cell.
+        assert_eq!(url.cells[0].field, Field::Method);
+        assert_eq!(url.cells[0].kind, CellKind::Enum);
+        assert_eq!(url.cells[1].field, Field::Url);
+        assert_eq!(url.cells[1].kind, CellKind::Text);
         assert_eq!(head.add, None);
     }
 

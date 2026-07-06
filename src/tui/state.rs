@@ -379,7 +379,17 @@ fn begin_row(state: &mut UiState, model: &mut EditModel) -> Action {
         return Action::None;
     };
     match row.kind {
-        RowKind::UrlLine | RowKind::Title => {
+        RowKind::UrlLine => {
+            // Edit the url line in place: focus the url cell and drop into
+            // insert. `h` reaches the method enum, where Enter cycles it — so a
+            // stray Enter never changes the method.
+            if let Some(url_i) = row.cells.iter().position(|c| c.field == Field::Url) {
+                state.cell = Some(url_i);
+                return begin_cell_edit(state, model);
+            }
+            Action::None
+        }
+        RowKind::Title => {
             // Title rows on table sections (VARIABLE/QUERY/HEADERS/empty RESPONSE)
             // have no expand target — Enter does nothing there.
             let Some(tgt) = state.sections[state.sec].expand else {
@@ -633,14 +643,15 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_url_expands_then_esc_collapses() {
+    fn enter_on_url_line_edits_url_inline() {
         let mut m = model();
         let mut s = UiState::new(&m);
-        goto(&mut s, |f| matches!(f, Field::Method)); // url line carries Method
+        goto(&mut s, |f| matches!(f, Field::Method)); // url line carries Method + Url
         handle_normal(&mut s, &mut m, key(KeyCode::Enter));
-        assert_eq!(s.expanded, Some(Expand::Url));
-        handle_normal(&mut s, &mut m, key(KeyCode::Esc));
+        // No expansion: Enter focuses the url cell and drops into insert.
         assert_eq!(s.expanded, None);
+        assert!(matches!(s.focused_field_pub(), Some(Field::Url)));
+        assert!(matches!(s.mode, Mode::Insert(_)));
     }
 
     #[test]
@@ -859,13 +870,11 @@ mod tests {
     }
 
     #[test]
-    fn method_cycles_when_url_expanded() {
+    fn method_cycles_on_collapsed_url_line() {
         let mut m = model();
         let mut s = UiState::new(&m);
-        s.expanded = Some(Expand::Url);
-        s.refresh(&m);
         goto(&mut s, |f| matches!(f, Field::Method));
-        // focus the method enum cell
+        // focus the method enum cell on the collapsed url line
         let mi = s
             .current_row()
             .unwrap()
