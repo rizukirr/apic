@@ -380,12 +380,11 @@ fn begin_row(state: &mut UiState, model: &mut EditModel) -> Action {
     };
     match row.kind {
         RowKind::UrlLine => {
-            // Edit the url line in place: focus the url cell and drop into
-            // insert. `h` reaches the method enum, where Enter cycles it — so a
-            // stray Enter never changes the method.
-            if let Some(url_i) = row.cells.iter().position(|c| c.field == Field::Url) {
-                state.cell = Some(url_i);
-                return begin_cell_edit(state, model);
+            // Focus the method cell (highlighted, not yet cycled) so a stray
+            // Enter never flips the method. A second Enter cycles it; `l` moves
+            // to the url cell, where Enter/i edits it inline.
+            if let Some(mi) = row.cells.iter().position(|c| c.field == Field::Method) {
+                state.cell = Some(mi);
             }
             Action::None
         }
@@ -643,15 +642,17 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_url_line_edits_url_inline() {
+    fn enter_on_url_line_focuses_method() {
         let mut m = model();
         let mut s = UiState::new(&m);
         goto(&mut s, |f| matches!(f, Field::Method)); // url line carries Method + Url
         handle_normal(&mut s, &mut m, key(KeyCode::Enter));
-        // No expansion: Enter focuses the url cell and drops into insert.
+        // No expansion: Enter focuses the method cell without cycling it, so the
+        // method is unchanged until a further Enter.
         assert_eq!(s.expanded, None);
-        assert!(matches!(s.focused_field_pub(), Some(Field::Url)));
-        assert!(matches!(s.mode, Mode::Insert(_)));
+        assert!(matches!(s.focused_field_pub(), Some(Field::Method)));
+        assert_eq!(s.mode, Mode::Normal);
+        assert_eq!(method_str(&m.method), "GET");
     }
 
     #[test]
