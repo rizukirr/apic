@@ -668,9 +668,39 @@ pub(crate) fn handle_insert(state: &mut UiState, model: &mut EditModel, key: Key
                 state.cell = None;
             }
             state.mode = Mode::Normal;
+            // Cancelling leaves an all-empty query/header row behind (e.g. a row
+            // just added with `a`); drop it so nothing empty lingers.
+            remove_empty_field_row(state, model);
             Action::None
         }
         _ => Action::None,
+    }
+}
+
+/// Removes the current row when it is a table field row whose every editable cell
+/// is blank (query/header/response-header). No-op otherwise.
+fn remove_empty_field_row(state: &mut UiState, model: &mut EditModel) {
+    let field = {
+        let Some(row) = state.current_row() else {
+            return;
+        };
+        if row.kind != RowKind::Field {
+            return;
+        }
+        let all_empty = row
+            .cells
+            .iter()
+            .filter(|c| c.kind != CellKind::Label)
+            .all(|c| c.value.trim().is_empty());
+        if !all_empty {
+            return;
+        }
+        delete_field(state)
+    };
+    if let Some(f) = field
+        && is_deletable(&f)
+    {
+        delete_row(state, model, &f);
     }
 }
 
@@ -902,6 +932,32 @@ mod tests {
         handle_insert(&mut s, &mut m, key(KeyCode::Enter));
         assert_eq!(m.headers[1].name, "X");
         assert!(s.cell.is_some());
+    }
+
+    #[test]
+    fn esc_removes_a_just_added_empty_row() {
+        let mut m = model(); // one query
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| matches!(f, Field::QueryName(_)));
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('a'))); // add + insert on new name
+        assert_eq!(m.query.len(), 2);
+        assert!(matches!(s.mode, Mode::Insert(_)));
+        handle_insert(&mut s, &mut m, key(KeyCode::Esc)); // cancel -> empty row removed
+        assert_eq!(m.query.len(), 1, "the cancelled empty row is removed");
+    }
+
+    #[test]
+    fn esc_keeps_a_row_that_has_a_committed_cell() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| matches!(f, Field::QueryName(_)));
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('a'))); // add + insert on name
+        handle_insert(&mut s, &mut m, key(KeyCode::Char('n')));
+        handle_insert(&mut s, &mut m, key(KeyCode::Tab)); // commit name "n", jump to value
+        let count = m.query.len();
+        handle_insert(&mut s, &mut m, key(KeyCode::Esc)); // cancel the value edit
+        assert_eq!(m.query.len(), count, "a row with content survives cancel");
+        assert!(m.query.iter().any(|q| q.name == "n"));
     }
 
     #[test]
