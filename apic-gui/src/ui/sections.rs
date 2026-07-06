@@ -389,6 +389,7 @@ pub(crate) fn response_code_selector(
     // codes stay on one line with the tabs' `code - title` labels intact.
     egui::ScrollArea::horizontal()
         .id_salt("resp_code_strip")
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 for i in 0..model.responses.len() {
