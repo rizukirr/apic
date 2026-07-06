@@ -858,7 +858,7 @@ impl App {
                     ui.add_space(SPACE_EXTRA_SMALL);
                 }
                 ui.add_space(SPACE_EXTRA_SMALL);
-                if text_button(ui, "[ Close ]", GREEN) {
+                if text_button(ui, "Close", GREEN) {
                     close = true;
                 }
             });
@@ -1313,8 +1313,8 @@ impl App {
             // Toolbar row: endpoint name on the left, EDIT/SAVE on the right.
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_space(SPACE_SMALL); // end padding, right of [ SAVE ]
-                    if text_button(ui, "[ SAVE ]", GREEN) {
+                    ui.add_space(SPACE_SMALL); // end padding, right of Save
+                    if text_button(ui, "Save", GREEN) {
                         match path.as_deref() {
                             Some(p) => match model.save(p) {
                                 Ok(()) => {
@@ -1327,7 +1327,7 @@ impl App {
                             None => *status = "no path to save to".into(),
                         }
                     }
-                    let edit_label = if *editing { "[ CANCEL ]" } else { "[ EDIT ]" };
+                    let edit_label = if *editing { "Cancel" } else { "Edit" };
                     if text_button(ui, edit_label, GREEN) {
                         // Applied after the panel closure via begin_edit/cancel_edit
                         // so the snapshot is taken/restored on `self`.
