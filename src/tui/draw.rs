@@ -552,12 +552,13 @@ fn push_example_block(
     }
 }
 
-/// Emits the inline example payload (` <line>` per line of the raw buffer), or
-/// ` (no example provided)` when empty.
+/// Emits the inline example payload (` <line>` per line of the raw buffer). An
+/// empty example renders a single blank line so the row stays selectable/editable
+/// without any placeholder text.
 fn push_example(state: &UiState, row: &TableRow, selected: bool, lines: &mut Vec<Line<'static>>) {
     let base = sel_style(state, selected);
     if row.raw.trim().is_empty() {
-        lines.push(Line::from(Span::styled(" (no example provided)", dim())));
+        lines.push(Line::from(Span::styled(" ", base)));
         return;
     }
     for raw_line in row.raw.lines() {
@@ -917,7 +918,8 @@ mod tests {
     }
 
     #[test]
-    fn empty_request_body_renders_editable_example_row() {
+    fn empty_request_body_keeps_a_reachable_example_row() {
+        use crate::tui::rows::{BodyLoc, Field};
         let c = json_get(
             r#"{ "name":"t","method":"POST",
                  "url":"https://h/x",
@@ -929,19 +931,35 @@ mod tests {
         .unwrap();
         let m = EditModel::from_contract(c);
         let state = UiState::new(&m);
+        // An empty body still exposes an example row (no placeholder text) so it
+        // stays reachable and editable.
+        let has_example = state.sections.iter().flat_map(|s| &s.rows).any(|r| {
+            r.kind == RowKind::Example
+                && matches!(&r.cells[0].field, Field::BodyExample(BodyLoc::Request))
+        });
+        assert!(
+            has_example,
+            "empty body should keep an editable example row"
+        );
+    }
+
+    #[test]
+    fn no_request_body_renders_none() {
+        let c = json_get(
+            r#"{ "name":"t","method":"GET","url":"https://h/x","headers":[],"responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let m = EditModel::from_contract(c);
+        let state = UiState::new(&m);
         let backend = TestBackend::new(100, 50);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, &state)).unwrap();
         let buf = terminal.backend().buffer().clone();
         let text: String = buf.content().iter().map(|c| c.symbol()).collect();
-        // An empty body still renders its `Example:` row (showing the empty
-        // placeholder) so the example stays reachable and editable — you can
-        // write an example first, then generate the schema from it.
-        assert!(text.contains("REQUEST"), "REQUEST section present");
-        assert!(
-            text.contains("no example provided"),
-            "empty body should render the editable example row"
-        );
+        // A REQUEST with no body renders ` (none)`, like an empty RESPONSE.
+        assert!(text.contains("REQUEST"));
+        assert!(text.contains("(none)"));
     }
 
     #[test]

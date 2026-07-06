@@ -222,9 +222,11 @@ pub(crate) fn flatten(m: &EditModel, resp: usize) -> Vec<Section> {
                 add: Some(Field::RequestToggle),
             });
         }
+        // No body yet: a plain title section that renders ` (none)`, like an
+        // empty RESPONSE. `a` creates the body and opens the JSON editor.
         None => out.push(Section {
             title: "REQUEST".to_string(),
-            kind: SectionKind::Body,
+            kind: SectionKind::Table,
             headers: None,
             rows: vec![title_row("REQUEST".to_string())],
             add: Some(Field::RequestToggle),
