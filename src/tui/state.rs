@@ -30,6 +30,8 @@ pub(crate) enum Action {
     OpenExample(Field, String),
     /// Open the two-field "new response" dialog (status + short description).
     NewResponse,
+    /// Open the same dialog to edit an existing response's status/description.
+    EditResponse(usize),
     Save,
     Quit,
 }
@@ -235,7 +237,18 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
         }
         (KeyCode::Enter, _) => begin_row(state, model),
         (KeyCode::Char('a'), _) => append_here(state, model),
-        (KeyCode::Char('e'), _) => edit_example_here(state),
+        (KeyCode::Char('e'), _) => {
+            // On the response tab strip `e` edits the active tab's status/title;
+            // anywhere else in a body it opens that body's JSON editor.
+            if matches!(
+                state.current_row().map(|r| &r.kind),
+                Some(RowKind::RespTabs)
+            ) {
+                Action::EditResponse(state.resp)
+            } else {
+                edit_example_here(state)
+            }
+        }
         (KeyCode::Char('d'), _) => {
             // On an example row `d` clears the JSON; elsewhere it deletes the row.
             let example_field = state
@@ -316,6 +329,28 @@ pub(crate) fn create_response(
     state.dirty = true;
     state.refresh(model);
     Action::OpenExample(Field::BodyExample(BodyLoc::Response(idx)), String::new())
+}
+
+/// Updates an existing response's status (defaulting to 200 when blank) and
+/// description from the edit form, and makes it the active tab. No editor opens.
+pub(crate) fn update_response(
+    state: &mut UiState,
+    model: &mut EditModel,
+    idx: usize,
+    status: String,
+    description: String,
+) {
+    if let Some(r) = model.responses.get_mut(idx) {
+        r.code = if status.trim().is_empty() {
+            "200".to_string()
+        } else {
+            status
+        };
+        r.description = description;
+        state.resp = idx;
+        state.dirty = true;
+        state.refresh(model);
+    }
 }
 
 /// The "name" field of the just-added entity for `target`, used to auto-focus
@@ -1116,6 +1151,37 @@ mod tests {
         let mut s = UiState::new(&m);
         create_response(&mut s, &mut m, String::new(), String::new());
         assert_eq!(m.responses.last().unwrap().code, "200");
+    }
+
+    #[test]
+    fn e_edits_the_response_on_the_tab_strip_but_opens_json_on_the_body() {
+        let mut m = model();
+        m.responses[0].example = r#"{"a":1}"#.to_string();
+        let mut s = UiState::new(&m);
+        // `e` on the tab strip -> edit the active response's status/description.
+        goto(&mut s, |f| matches!(f, Field::ResponseCode(0)));
+        assert_eq!(
+            handle_normal(&mut s, &mut m, key(KeyCode::Char('e'))),
+            Action::EditResponse(0)
+        );
+        // `e` on the example row -> open that body's JSON editor.
+        goto(&mut s, |f| {
+            matches!(f, Field::BodyExample(BodyLoc::Response(_)))
+        });
+        assert!(matches!(
+            handle_normal(&mut s, &mut m, key(KeyCode::Char('e'))),
+            Action::OpenExample(Field::BodyExample(BodyLoc::Response(0)), _)
+        ));
+    }
+
+    #[test]
+    fn update_response_sets_code_and_description() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        update_response(&mut s, &mut m, 0, "404".into(), "gone".into());
+        assert_eq!(m.responses[0].code, "404");
+        assert_eq!(m.responses[0].description, "gone");
+        assert_eq!(s.resp, 0);
     }
 
     #[test]

@@ -17,15 +17,18 @@ pub(crate) use seed::seed_model;
 use crate::tui::rows::{BodyLoc, Field};
 use crate::tui::state::{
     Action, Mode, UiState, apply_save, create_response, handle_confirm_delete, handle_confirm_quit,
-    handle_insert, handle_normal,
+    handle_insert, handle_normal, update_response,
 };
 
-/// The two-field "new response" dialog state: status code + short description.
-struct NewResponseForm {
+/// The two-field response dialog state: status code + short description.
+struct ResponseForm {
     status: String,
     description: String,
     /// `false` = editing the status field, `true` = the description field.
     on_description: bool,
+    /// `Some(idx)` edits response `idx` in place; `None` creates a new one and
+    /// then chains into its JSON editor.
+    editing: Option<usize>,
 }
 // Crossterm is imported via ratatui's re-export (== 0.28) so event/terminal
 // types match ratatui and tui-textarea. The root `crossterm` 0.29 crate is used
@@ -120,8 +123,8 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
     let mut state = UiState::new(&model);
     // Holds the active modal editor and the field it edits, if any.
     let mut modal: Option<(Field, TextArea<'static>)> = None;
-    // Holds the "new response" dialog while it is open.
-    let mut form: Option<NewResponseForm> = None;
+    // Holds the response (new / edit) dialog while it is open.
+    let mut form: Option<ResponseForm> = None;
 
     loop {
         terminal
@@ -131,7 +134,13 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                     draw::draw_example_modal(f, ta);
                 }
                 if let Some(fm) = &form {
-                    draw::draw_new_response_form(f, &fm.status, &fm.description, fm.on_description);
+                    draw::draw_response_form(
+                        f,
+                        &fm.status,
+                        &fm.description,
+                        fm.on_description,
+                        fm.editing.is_some(),
+                    );
                 }
             })
             .map_err(|e| format!("draw: {e}"))?;
@@ -152,13 +161,29 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                         KeyCode::Esc => form = None,
                         KeyCode::Enter => {
                             let fm = form.take().unwrap();
-                            let action =
-                                create_response(&mut state, &mut model, fm.status, fm.description);
-                            // Chain straight into the JSON editor for the new body.
-                            if let Action::OpenExample(field, _) = action {
-                                let text = example_text(&model, &field);
-                                modal = Some((field, example_textarea(&text)));
-                                state.mode = Mode::Example;
+                            match fm.editing {
+                                // Editing: update the response in place, no editor.
+                                Some(idx) => update_response(
+                                    &mut state,
+                                    &mut model,
+                                    idx,
+                                    fm.status,
+                                    fm.description,
+                                ),
+                                // New: create it, then chain into its JSON editor.
+                                None => {
+                                    let action = create_response(
+                                        &mut state,
+                                        &mut model,
+                                        fm.status,
+                                        fm.description,
+                                    );
+                                    if let Action::OpenExample(field, _) = action {
+                                        let text = example_text(&model, &field);
+                                        modal = Some((field, example_textarea(&text)));
+                                        state.mode = Mode::Example;
+                                    }
+                                }
                             }
                         }
                         KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down => {
@@ -232,11 +257,22 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                             state.mode = Mode::Example;
                         }
                         Action::NewResponse => {
-                            form = Some(NewResponseForm {
+                            form = Some(ResponseForm {
                                 status: String::new(),
                                 description: String::new(),
                                 on_description: false,
+                                editing: None,
                             });
+                        }
+                        Action::EditResponse(idx) => {
+                            if let Some(r) = model.responses.get(idx) {
+                                form = Some(ResponseForm {
+                                    status: r.code.clone(),
+                                    description: r.description.clone(),
+                                    on_description: false,
+                                    editing: Some(idx),
+                                });
+                            }
                         }
                         Action::Save => {
                             let was_confirm = state.mode == Mode::ConfirmQuit;

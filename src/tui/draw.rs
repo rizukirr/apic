@@ -777,7 +777,10 @@ fn draw_help(frame: &mut Frame, area: Rect) {
             "a",
             "Add row · REQUEST writes JSON · RESPONSE new-response form",
         ]),
-        Row::new(vec!["e", "Edit the example (create one when empty)"]),
+        Row::new(vec![
+            "e",
+            "Edit — response tab: status/title · body: JSON example",
+        ]),
         Row::new(vec!["d", "Delete the selected row"]),
         Row::new(vec!["Ctrl-S", "Save"]),
         Row::new(vec!["q", "Quit"]),
@@ -806,14 +809,15 @@ pub(crate) fn draw_example_modal(frame: &mut Frame, textarea: &TextArea) {
     frame.render_widget(textarea, area);
 }
 
-/// The "new response" dialog, laid out as a two-column table (`Status` and
-/// `Short Description`) with the values editable underneath. The focused column
-/// carries a real terminal cursor at the end of its text.
-pub(crate) fn draw_new_response_form(
+/// The response dialog, laid out as a two-column table (`Status` and `Short
+/// Description`) with the values editable underneath. The focused column carries
+/// a real terminal cursor at the end of its text. `editing` picks the title.
+pub(crate) fn draw_response_form(
     frame: &mut Frame,
     status: &str,
     description: &str,
     on_description: bool,
+    editing: bool,
 ) {
     const STATUS_W: usize = 12; // status column width
     const DESC_W: usize = 20; // description column width (input box)
@@ -862,9 +866,14 @@ pub(crate) fn draw_new_response_form(
             fg,
         )),
     ];
+    let title = if editing {
+        " edit response "
+    } else {
+        " new response "
+    };
     let dialog = Paragraph::new(content).block(
         Block::default()
-            .title(" new response ")
+            .title(title)
             .borders(Borders::ALL)
             .border_style(fg)
             .padding(Padding::new(2, 1, 1, 1)),
