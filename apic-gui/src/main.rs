@@ -270,7 +270,7 @@ impl App {
             self.root = None;
             self.templates.clear();
             self.entries.clear();
-            self.status = "No project open. Use [ Open ] or [ New ].".into();
+            self.status = "No project open. Use Open or New.".into();
             return;
         };
 
@@ -1069,15 +1069,15 @@ impl App {
                     ui.add_space(SPACE_MEDIUM); // left padding so the title isn't flush to the edge
                     ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
                     ui.add_space(SPACE_MEDIUM);
-                    if text_button(ui, "[ Open ]", GREEN) {
+                    if text_button(ui, "Open", GREEN) {
                         action = Some(SidebarAction::OpenProject);
                     }
-                    ui.add_space(SPACE_EXTRA_SMALL);
-                    if text_button(ui, "[ New ]", GREEN) {
+                    ui.add_space(2.0);
+                    if text_button(ui, "New", GREEN) {
                         action = Some(SidebarAction::NewProject);
                     }
-                    ui.add_space(SPACE_EXTRA_SMALL);
-                    ui.menu_button(RichText::new("[ Import ]").color(GREEN), |ui| {
+                    ui.add_space(2.0);
+                    ui.menu_button(RichText::new("Import").color(GREEN), |ui| {
                         if ui.button("Postman collection").clicked() {
                             action = Some(SidebarAction::ImportPostman);
                             ui.close();
@@ -1251,10 +1251,8 @@ impl App {
                     ui.label(RichText::new("No project open").color(DIM).size(16.0));
                     ui.add_space(SPACE_SMALL);
                     ui.label(
-                        RichText::new(
-                            "Use [ Open ] to open a project folder, or [ New ] to create one.",
-                        )
-                        .color(DIM),
+                        RichText::new("Use Open to open a project folder, or New to create one.")
+                            .color(DIM),
                     );
                 });
                 return;
