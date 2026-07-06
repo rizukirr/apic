@@ -12,6 +12,7 @@ use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Row, Table};
 use ratatui_textarea::TextArea;
 
 const GAP: usize = 2; // spaces between table columns
+const RESP_TITLE_HINT: &str = "title"; // placeholder shown when editing an empty response title
 
 /// Draws the whole UI for the current frame.
 pub(crate) fn draw(frame: &mut Frame, state: &UiState) {
@@ -314,21 +315,32 @@ fn resp_tabs_line(
         }
 
         // ` - title`, shown when the title is set or its cell is being edited.
+        // A focused-but-empty title shows a dim `title` hint; in preview an empty
+        // title drops the ` - ` entirely.
         if !desc.value.is_empty() || desc_focused {
             spans.push(Span::styled(" - ", base));
             emitted += 3;
             if desc_focused && let Mode::Insert(buf) = &state.mode {
-                cursor_col = Some(emitted + buf.chars().count());
-                emitted += buf.chars().count();
-                spans.push(Span::styled(buf.clone(), base.add_modifier(Modifier::BOLD)));
-            } else {
-                let shown = if desc.value.is_empty() {
-                    " ".to_string()
+                if buf.is_empty() {
+                    // Ghost hint; the cursor sits at its start.
+                    cursor_col = Some(emitted);
+                    emitted += RESP_TITLE_HINT.chars().count();
+                    spans.push(Span::styled(RESP_TITLE_HINT, dim()));
                 } else {
-                    desc.value.clone()
-                };
-                emitted += shown.chars().count();
-                spans.push(Span::styled(shown, tab_style(base, desc_focused, active)));
+                    cursor_col = Some(emitted + buf.chars().count());
+                    emitted += buf.chars().count();
+                    spans.push(Span::styled(buf.clone(), base.add_modifier(Modifier::BOLD)));
+                }
+            } else if desc.value.is_empty() {
+                // Focused (cell-select) but empty: show the hint placeholder.
+                emitted += RESP_TITLE_HINT.chars().count();
+                spans.push(Span::styled(RESP_TITLE_HINT, dim()));
+            } else {
+                emitted += desc.value.chars().count();
+                spans.push(Span::styled(
+                    desc.value.clone(),
+                    tab_style(base, desc_focused, active),
+                ));
             }
         }
     }
