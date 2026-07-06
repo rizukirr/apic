@@ -16,9 +16,17 @@ pub(crate) use seed::seed_model;
 
 use crate::tui::rows::{BodyLoc, Field};
 use crate::tui::state::{
-    Action, Mode, UiState, apply_save, handle_confirm_delete, handle_confirm_quit, handle_insert,
-    handle_normal,
+    Action, Mode, UiState, apply_save, create_response, handle_confirm_delete, handle_confirm_quit,
+    handle_insert, handle_normal,
 };
+
+/// The two-field "new response" dialog state: status code + short description.
+struct NewResponseForm {
+    status: String,
+    description: String,
+    /// `false` = editing the status field, `true` = the description field.
+    on_description: bool,
+}
 // Crossterm is imported via ratatui's re-export (== 0.28) so event/terminal
 // types match ratatui and tui-textarea. The root `crossterm` 0.29 crate is used
 // only by `picker.rs`; the two never exchange values.
@@ -108,6 +116,8 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
     let mut state = UiState::new(&model);
     // Holds the active modal editor and the field it edits, if any.
     let mut modal: Option<(Field, TextArea<'static>)> = None;
+    // Holds the "new response" dialog while it is open.
+    let mut form: Option<NewResponseForm> = None;
 
     loop {
         terminal
@@ -115,6 +125,9 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                 draw::draw(f, &state);
                 if let Some((_, ta)) = &modal {
                     draw::draw_example_modal(f, ta);
+                }
+                if let Some(fm) = &form {
+                    draw::draw_new_response_form(f, &fm.status, &fm.description, fm.on_description);
                 }
             })
             .map_err(|e| format!("draw: {e}"))?;
@@ -128,8 +141,49 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
             if let Some(Event::Key(key)) = next.take()
                 && key.kind == KeyEventKind::Press
             {
-                // Modal editor takes all keys until closed.
-                if let Some((field, ta)) = &mut modal {
+                // The new-response form takes all keys until confirmed/cancelled.
+                if form.is_some() {
+                    use ratatui::crossterm::event::KeyCode;
+                    match key.code {
+                        KeyCode::Esc => form = None,
+                        KeyCode::Enter => {
+                            let fm = form.take().unwrap();
+                            let action =
+                                create_response(&mut state, &mut model, fm.status, fm.description);
+                            // Chain straight into the JSON editor for the new body.
+                            if let Action::OpenExample(field, _) = action {
+                                let text = example_text(&model, &field);
+                                modal = Some((field, example_textarea(&text)));
+                                state.mode = Mode::Example;
+                            }
+                        }
+                        KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down => {
+                            if let Some(fm) = &mut form {
+                                fm.on_description = !fm.on_description;
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            if let Some(fm) = &mut form {
+                                if fm.on_description {
+                                    fm.description.pop();
+                                } else {
+                                    fm.status.pop();
+                                }
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            if let Some(fm) = &mut form {
+                                if fm.on_description {
+                                    fm.description.push(c);
+                                } else if c.is_ascii_digit() && fm.status.chars().count() < 3 {
+                                    // Status is a 3-digit HTTP code.
+                                    fm.status.push(c);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                } else if let Some((field, ta)) = &mut modal {
                     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
                     match key.code {
                         KeyCode::Esc => {
@@ -169,6 +223,13 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                             let text = example_text(&model, &field);
                             modal = Some((field, example_textarea(&text)));
                             state.mode = Mode::Example;
+                        }
+                        Action::NewResponse => {
+                            form = Some(NewResponseForm {
+                                status: String::new(),
+                                description: String::new(),
+                                on_description: false,
+                            });
                         }
                         Action::Save => {
                             let was_confirm = state.mode == Mode::ConfirmQuit;

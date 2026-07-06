@@ -4,7 +4,7 @@
 //! they are unit-testable without a terminal. The cursor is two-level:
 //! `cell: None` selects a whole table row; `cell: Some(c)` edits a cell.
 
-use crate::tui::model::EditModel;
+use crate::tui::model::{EditModel, EditResponse};
 use crate::tui::rows::{BodyLoc, CellKind, Field, RowKind, Section, TableRow, flatten};
 use apic_core::edit::{EditAction, apply};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -28,6 +28,8 @@ pub(crate) enum Mode {
 pub(crate) enum Action {
     None,
     OpenExample(Field, String),
+    /// Open the two-field "new response" dialog (status + short description).
+    NewResponse,
     Save,
     Quit,
 }
@@ -284,19 +286,38 @@ fn append_here(state: &mut UiState, model: &mut EditModel) -> Action {
         }
         return Action::OpenExample(Field::BodyExample(BodyLoc::Request), String::new());
     }
-    add_row(state, model, &target);
     if target == Field::ResponseAdd {
-        if let Some(idx) = model.responses.len().checked_sub(1) {
-            state.resp = idx;
-            state.refresh(model);
-            focus_and_insert(state, &Field::ResponseCode(idx));
-        }
-        return Action::None;
+        // A response is created through the two-step form (status/title, then
+        // the JSON editor), not appended inline.
+        return Action::NewResponse;
     }
+    add_row(state, model, &target);
     if let Some(nf) = new_name_field(model, &target) {
         focus_and_insert(state, &nf);
     }
     Action::None
+}
+
+/// Creates a response from the new-response form: `status` (defaulting to 200
+/// when blank) and `description`. Makes it the active tab and returns the action
+/// to open its JSON example editor.
+pub(crate) fn create_response(
+    state: &mut UiState,
+    model: &mut EditModel,
+    status: String,
+    description: String,
+) -> Action {
+    let mut r = EditResponse::blank();
+    if !status.trim().is_empty() {
+        r.code = status;
+    }
+    r.description = description;
+    model.responses.push(r);
+    let idx = model.responses.len() - 1;
+    state.resp = idx;
+    state.dirty = true;
+    state.refresh(model);
+    Action::OpenExample(Field::BodyExample(BodyLoc::Response(idx)), String::new())
 }
 
 /// The "name" field of the just-added entity for `target`, used to auto-focus
@@ -1060,38 +1081,43 @@ mod tests {
     }
 
     #[test]
-    fn a_adds_a_response_tab_and_focuses_its_code() {
-        let c = json_get(
-            r#"{ "name":"t","method":"GET",
-                 "url":"https://h/x","headers":[],
-                 "responses":[{"code":200,"description":"ok","schema":[]}] }"#,
-            None,
-        )
-        .unwrap();
-        let mut m = EditModel::from_contract(c);
+    fn a_on_response_requests_the_new_response_form() {
+        let mut m = model();
         let mut s = UiState::new(&m);
-        // Anywhere in the RESPONSE section, `a` adds a new tab.
+        // Anywhere in the RESPONSE section, `a` opens the form (no immediate add).
         goto(&mut s, |f| matches!(f, Field::ResponseCode(0)));
-        handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
-        assert_eq!(m.responses.len(), 2);
-        // the new tab is active and its code cell is focused in insert mode
-        assert_eq!(s.resp, 1);
-        assert!(matches!(s.mode, Mode::Insert(_)));
-        assert!(matches!(
-            s.focused_field_pub(),
-            Some(Field::ResponseCode(1))
-        ));
-        // the new response is prefilled with the default code 200
-        assert_eq!(m.responses[1].code, "200");
-        // the prefill is editable: clear it, then type a new code
-        handle_insert(&mut s, &mut m, key(KeyCode::Backspace));
-        handle_insert(&mut s, &mut m, key(KeyCode::Backspace));
-        handle_insert(&mut s, &mut m, key(KeyCode::Backspace));
-        handle_insert(&mut s, &mut m, key(KeyCode::Char('4')));
-        handle_insert(&mut s, &mut m, key(KeyCode::Char('2')));
-        handle_insert(&mut s, &mut m, key(KeyCode::Char('9')));
-        handle_insert(&mut s, &mut m, key(KeyCode::Enter));
-        assert_eq!(m.responses[1].code, "429");
+        let action = handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
+        assert_eq!(action, Action::NewResponse);
+        assert_eq!(
+            m.responses.len(),
+            1,
+            "nothing is added until the form confirms"
+        );
+    }
+
+    #[test]
+    fn create_response_adds_active_tab_and_opens_its_example() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        let before = m.responses.len();
+        let action = create_response(&mut s, &mut m, "404".into(), "not found".into());
+        assert_eq!(m.responses.len(), before + 1);
+        let new = m.responses.last().unwrap();
+        assert_eq!(new.code, "404");
+        assert_eq!(new.description, "not found");
+        assert_eq!(s.resp, before, "the new tab becomes active");
+        assert_eq!(
+            action,
+            Action::OpenExample(Field::BodyExample(BodyLoc::Response(before)), String::new())
+        );
+    }
+
+    #[test]
+    fn create_response_defaults_blank_status_to_200() {
+        let mut m = model();
+        let mut s = UiState::new(&m);
+        create_response(&mut s, &mut m, String::new(), String::new());
+        assert_eq!(m.responses.last().unwrap().code, "200");
     }
 
     #[test]

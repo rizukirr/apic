@@ -771,7 +771,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Row::new(vec!["Esc", "Back · cancel"]),
         Row::new(vec![
             "a",
-            "Add row · REQUEST writes JSON · RESPONSE adds a tab",
+            "Add row · REQUEST writes JSON · RESPONSE new-response form",
         ]),
         Row::new(vec!["e", "Edit the example (create one when empty)"]),
         Row::new(vec!["d", "Delete the selected row"]),
@@ -800,6 +800,60 @@ pub(crate) fn draw_example_modal(frame: &mut Frame, textarea: &TextArea) {
     let area = centered(frame.area(), 80, 70);
     frame.render_widget(Clear, area);
     frame.render_widget(textarea, area);
+}
+
+/// The two-field "new response" dialog (status + short description). The focused
+/// field carries a real terminal cursor at the end of its text.
+pub(crate) fn draw_new_response_form(
+    frame: &mut Frame,
+    status: &str,
+    description: &str,
+    on_description: bool,
+) {
+    const LABEL_W: usize = 19; // aligns "Status:" and "Short Description:"
+    let popup = centered(frame.area(), 50, 30);
+    frame.render_widget(Clear, popup);
+
+    let field = |label: &str, value: &str| {
+        Line::from(vec![
+            Span::styled(format!("{label:<LABEL_W$}"), dim()),
+            Span::raw(value.to_string()),
+        ])
+    };
+    let content = vec![
+        Line::from(""),
+        field("Status:", status),
+        Line::from(""),
+        field("Short Description:", description),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Enter: Yes    Esc: No    Tab: switch field",
+            dim(),
+        )),
+    ];
+    let dialog = Paragraph::new(content).block(
+        Block::default()
+            .title(" new response ")
+            .borders(Borders::ALL)
+            .padding(Padding::new(2, 2, 1, 1)),
+    );
+    frame.render_widget(dialog, popup);
+
+    // Place the cursor at the end of the focused field. Content starts inside the
+    // border (1) + left/top padding (2/1); the Status line is content row 1 and
+    // the Description line is content row 3.
+    let content_x = popup.x + 1 + 2;
+    let content_y = popup.y + 1 + 1;
+    let (row, text) = if on_description {
+        (3u16, description)
+    } else {
+        (1u16, status)
+    };
+    let x = content_x + (LABEL_W + text.chars().count()) as u16;
+    let y = content_y + row;
+    if x < popup.x + popup.width && y < popup.y + popup.height {
+        frame.set_cursor_position((x, y));
+    }
 }
 
 /// A centered rect `pct_x`% × `pct_y`% of `area`.
