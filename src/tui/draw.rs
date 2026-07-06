@@ -310,7 +310,7 @@ fn resp_tabs_line(
             emitted += code.value.chars().count();
             spans.push(Span::styled(
                 code.value.clone(),
-                tab_style(base, code_focused, active),
+                tab_style(base, code_focused, active, selected),
             ));
         }
 
@@ -339,7 +339,7 @@ fn resp_tabs_line(
                 emitted += desc.value.chars().count();
                 spans.push(Span::styled(
                     desc.value.clone(),
-                    tab_style(base, desc_focused, active),
+                    tab_style(base, desc_focused, active, selected),
                 ));
             }
         }
@@ -347,11 +347,14 @@ fn resp_tabs_line(
     (Line::from(spans), cursor_col)
 }
 
-/// Style for a tab cell: yellow highlight when focused, cyan-bold when it is the
-/// active tab, dim otherwise.
-fn tab_style(base: Style, focused: bool, active: bool) -> Style {
+/// Style for a tab cell: yellow highlight when focused. When the row is selected
+/// the text follows the selection's white foreground so it stays readable on the
+/// highlight; otherwise the active tab is cyan-bold and the rest are dim.
+fn tab_style(base: Style, focused: bool, active: bool, selected: bool) -> Style {
     if focused {
         cell_hl()
+    } else if selected {
+        base
     } else if active {
         base.fg(Color::Cyan).add_modifier(Modifier::BOLD)
     } else {
