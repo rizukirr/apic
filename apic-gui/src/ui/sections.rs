@@ -429,6 +429,16 @@ pub(crate) fn response_code_selector(
                                 .desired_width(code_w + 10.0)
                                 .text_color(color),
                         );
+                        // A status code is exactly 3 digits: drop anything else
+                        // and cap the length as the user types.
+                        let code = &mut model.responses[i].code;
+                        if code.len() > 3 || !code.bytes().all(|b| b.is_ascii_digit()) {
+                            *code = code
+                                .chars()
+                                .filter(|c| c.is_ascii_digit())
+                                .take(3)
+                                .collect();
+                        }
                         ui.label(RichText::new("-").color(DIM));
                         // Size the title field to its text (30-char cap) so the
                         // `x` sits right after the title instead of a fixed gap.
