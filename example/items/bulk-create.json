@@ -14,92 +14,47 @@
         }
     ],
     "request": {
-        "type": "object[]",
-        "schema": [
-            {
-                "name": "name",
-                "type": "string",
-                "default": null,
-                "description": "Item name",
-                "required": true
-            },
-            {
-                "name": "category",
-                "type": "string",
-                "default": null,
-                "description": "Item category",
-                "required": true
-            },
-            {
-                "name": "tags",
-                "type": "string[]",
-                "default": null,
-                "description": "Free-form labels",
-                "required": false
-            }
-        ],
         "example": [
-            { "name": "Widget", "category": "hardware", "tags": ["new", "featured"] },
-            { "name": "Gadget", "category": "electronics", "tags": [] }
+            {
+                "name": "Widget",
+                "category": "hardware",
+                "tags": [
+                    "new",
+                    "featured"
+                ]
+            },
+            {
+                "name": "Gadget",
+                "category": "electronics",
+                "tags": []
+            }
         ]
     },
     "responses": [
         {
             "code": 201,
-            "type": "object[]",
             "description": "Items created",
-            "schema": [
-                {
-                    "name": "id",
-                    "type": "string",
-                    "default": null,
-                    "description": "Generated identifier",
-                    "required": true,
-                    "properties": null
-                },
-                {
-                    "name": "name",
-                    "type": "string",
-                    "default": null,
-                    "description": "Item name",
-                    "required": true,
-                    "properties": null
-                },
-                {
-                    "name": "category",
-                    "type": "string",
-                    "default": null,
-                    "description": "Item category",
-                    "required": true,
-                    "properties": null
-                },
-                {
-                    "name": "tags",
-                    "type": "string[]",
-                    "default": null,
-                    "description": "Free-form labels",
-                    "required": false,
-                    "properties": null
-                }
-            ],
             "example": [
-                { "id": "itm_1", "name": "Widget", "category": "hardware", "tags": ["new", "featured"] },
-                { "id": "itm_2", "name": "Gadget", "category": "electronics", "tags": [] }
+                {
+                    "id": "itm_1",
+                    "name": "Widget",
+                    "category": "hardware",
+                    "tags": [
+                        "new",
+                        "featured"
+                    ]
+                },
+                {
+                    "id": "itm_2",
+                    "name": "Gadget",
+                    "category": "electronics",
+                    "tags": []
+                }
             ]
         },
         {
             "code": 400,
-            "description": "Validation failed",
-            "schema": [
-                {
-                    "name": "message",
-                    "type": "string",
-                    "default": null,
-                    "description": "Human-readable error message",
-                    "required": true,
-                    "properties": null
-                }
-            ]
+            "description": "Validation failed"
         }
     ]
 }

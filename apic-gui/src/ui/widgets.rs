@@ -8,21 +8,9 @@
 use eframe::egui::{self, TextBuffer};
 use egui::{Color32, RichText, Stroke};
 
-use super::theme::{BORDER, CYAN, DIM, GREEN, RED, SPACE_EXTRA_SMALL, TEXT};
-
-/// Schema field types: scalars plus their array variants and `object`.
-pub(crate) const SCHEMA_TYPES: &[&str] = &[
-    "string",
-    "int",
-    "float",
-    "boolean",
-    "object",
-    "string[]",
-    "int[]",
-    "float[]",
-    "boolean[]",
-    "object[]",
-];
+use super::theme::{
+    BORDER, CHIP_BG, CHIP_REQUIRED_BG, DIM, GREEN, RED, SPACE_EXTRA_SMALL, SPACE_SMALL, TEXT,
+};
 
 /// A single-line bordered text input. A non-finite `width` (`f32::INFINITY`)
 /// fills the available space; otherwise the box is exactly `width` wide.
@@ -58,32 +46,6 @@ pub(crate) fn bordered_input_colored(
                     .hint_text(hint)
                     .text_color(if error { RED } else { TEXT })
                     .desired_width(if fill { f32::INFINITY } else { width }),
-            )
-        })
-        .inner
-}
-
-/// A multi-line bordered text input, `rows` tall and filling the available
-/// width. The editor grows with content past `rows` lines. Used for free-text
-/// fields (e.g. the endpoint description) that read better on several lines.
-pub(crate) fn bordered_multiline(
-    ui: &mut egui::Ui,
-    buf: &mut String,
-    rows: usize,
-    hint: &str,
-) -> egui::Response {
-    egui::Frame::new()
-        .stroke(Stroke::new(1.0, BORDER))
-        .inner_margin(egui::Margin::symmetric(8, 4))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.add(
-                egui::TextEdit::multiline(buf)
-                    .frame(false)
-                    .hint_text(hint)
-                    .text_color(TEXT)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(rows),
             )
         })
         .inner
@@ -138,17 +100,43 @@ pub(crate) fn section_label(ui: &mut egui::Ui, text: &str) {
     ui.add_space(SPACE_EXTRA_SMALL);
 }
 
-/// The red `x` row-removal button. Returns `true` on click.
+/// A frameless `x` row-removal button: muted by default, brightening to red
+/// over a subtle rounded backdrop on hover so it clearly reads as clickable.
+/// Returns `true` on click.
 #[must_use]
 pub(crate) fn delete_button(ui: &mut egui::Ui) -> bool {
-    ui.button(RichText::new("x").color(RED)).clicked()
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+    let resp = resp.on_hover_text("Remove");
+    if ui.is_rect_visible(rect) {
+        let hovered = resp.hovered();
+        if hovered {
+            ui.painter()
+                .rect_filled(rect, 4.0, ui.visuals().widgets.hovered.weak_bg_fill);
+        }
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "x",
+            egui::FontId::proportional(14.0),
+            if hovered { RED } else { DIM },
+        );
+    }
+    resp.clicked()
+}
+
+/// The app's reusable flat text button: `label` in `color`, framed so egui
+/// gives it the standard hover/press feedback. The single place ordinary action
+/// buttons are built, so they share one look. Returns `true` on click.
+#[must_use]
+pub(crate) fn text_button(ui: &mut egui::Ui, label: &str, color: egui::Color32) -> bool {
+    ui.button(RichText::new(label).color(color)).clicked()
 }
 
 /// A green `+ <noun>` add button. Returns `true` on click. Centralizes the
 /// add affordance so every list shares one label convention and color.
 #[must_use]
 pub(crate) fn add_button(ui: &mut egui::Ui, label: &str) -> bool {
-    ui.button(RichText::new(label).color(GREEN)).clicked()
+    text_button(ui, label, GREEN)
 }
 
 /// Records that the row identified by `ident` (under list `key`) should grab
@@ -177,46 +165,8 @@ pub(crate) fn take_pending_focus(
     }
 }
 
-/// A read-mode `name → value` row: `name` in body text on the left, `value`
-/// right-aligned in `value_color`. Shared by the query/variable/header viewers.
-pub(crate) fn kv_row(ui: &mut egui::Ui, name: &str, value: &str, value_color: Color32) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(name).color(TEXT));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(RichText::new(value).color(value_color));
-        });
-    });
-}
-
-/// Type-picker dropdown bound to `dtype`. `id_salt` disambiguates the combo
-/// across rows; `types` is the option list (scalars only for params, scalars
-/// plus array variants for schema fields).
-pub(crate) fn type_dropdown(
-    ui: &mut egui::Ui,
-    id_salt: impl std::hash::Hash,
-    dtype: &mut String,
-    types: &[&str],
-) {
-    // Clone the label so the read borrow ends before the closure takes `dtype`
-    // mutably.
-    let label = RichText::new(if dtype.is_empty() {
-        "string".to_string()
-    } else {
-        dtype.clone()
-    })
-    .color(CYAN);
-    egui::ComboBox::from_id_salt(id_salt)
-        .width(90.0)
-        .selected_text(label)
-        .show_ui(ui, |ui| {
-            for t in types {
-                ui.selectable_value(dtype, t.to_string(), *t);
-            }
-        });
-}
-
-/// `TextEdit` layouter shared by the read-only `json_block` and the editable
-/// `code_block`, so both color JSON identically. The highlight is memoized per
+/// `TextEdit` layouter used by `json_editor`, so its editable and read-only
+/// variants color JSON identically. The highlight is memoized per
 /// `(text, font)`, so re-rendering unchanged JSON every frame is cheap.
 fn json_layouter(
     ui: &egui::Ui,
@@ -230,71 +180,142 @@ fn json_layouter(
     ui.fonts_mut(|f| f.layout_job(job))
 }
 
-/// A read-only, indentation-preserving JSON block (pretty-printed via the
-/// shared core formatter so it matches `apic read`/TUI exactly).
-pub(crate) fn json_block(ui: &mut egui::Ui, raw: &str, height: f32) {
-    let mut text = if raw.trim().is_empty() {
-        "(no example)".to_string()
+/// A line-numbered JSON editor. `editing` picks editable vs read-only; `height`
+/// is the stretched box height. A dim gutter of logical line numbers sits left
+/// of the syntax-highlighted text; soft-wrap is off so numbers stay 1:1 and long
+/// lines scroll horizontally. This is the single JSON block used everywhere.
+/// Renders as a plain vertical block that grows to its content height; the
+/// enclosing pane owns the scroll, so this widget has no scroll area of its own.
+pub(crate) fn json_editor(ui: &mut egui::Ui, buf: &mut String, editing: bool) {
+    // Read-only preview pretty-prints and shows a placeholder when empty.
+    let mut owned;
+    let text: &mut String = if editing {
+        buf
     } else {
-        apic_core::json::pretty_json(raw)
+        owned = if buf.trim().is_empty() {
+            "(no example)".to_string()
+        } else {
+            apic_core::json::pretty_json(buf)
+        };
+        &mut owned
     };
+    let line_count = text.lines().count().max(1);
     let mut layouter = json_layouter;
     egui::Frame::new()
-        .fill(Color32::from_rgb(4, 6, 5))
+        .fill(Color32::from_rgb(11, 15, 13))
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
-            // A read-only code editor preserves the indentation (a plain Label
-            // collapses leading whitespace, flattening the JSON). The layouter
-            // adds JSON syntax colors on top of that.
-            let edit = egui::TextEdit::multiline(&mut text)
-                .code_editor()
-                .interactive(false)
-                .frame(false)
-                .layouter(&mut layouter)
-                .desired_width(f32::INFINITY);
-            // A multiline TextEdit has no scrollbar of its own, so a long
-            // example is only reachable inside an enclosing ScrollArea capped
-            // at the stretched height.
-            if height > 0.0 {
-                egui::ScrollArea::vertical()
-                    .id_salt("json_block_scroll")
-                    .max_height(height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.add(edit);
-                    });
-            } else {
-                ui.add(edit);
-            }
+            ui.horizontal_top(|ui| {
+                let gutter: String = (1..=line_count).map(|n| format!("{n}\n")).collect();
+                ui.add(egui::Label::new(
+                    RichText::new(gutter).color(DIM).monospace(),
+                ));
+                ui.add_space(SPACE_SMALL);
+                ui.add(
+                    egui::TextEdit::multiline(text)
+                        .code_editor()
+                        .frame(false)
+                        .interactive(editing)
+                        .lock_focus(editing)
+                        .layouter(&mut layouter)
+                        .desired_width(f32::INFINITY),
+                );
+            });
         });
 }
 
-pub(crate) fn code_block(ui: &mut egui::Ui, raw: &mut String, height: f32) {
-    let mut layouter = json_layouter;
+/// The `Required` / `Optional` pill for the REQUIREMENT column. In edit mode it
+/// is a button that returns `Some(new_value)` when clicked; in view mode it is a
+/// static label returning `None`.
+pub(crate) fn required_chip(ui: &mut egui::Ui, required: bool, editing: bool) -> Option<bool> {
+    let (label, fg, bg) = if required {
+        ("Required", TEXT, CHIP_REQUIRED_BG)
+    } else {
+        ("Optional", DIM, CHIP_BG)
+    };
+    let text = RichText::new(format!(" {label} "))
+        .color(fg)
+        .size(11.0)
+        .background_color(bg);
+    if editing {
+        if ui.add(egui::Button::new(text).frame(false)).clicked() {
+            return Some(!required);
+        }
+        None
+    } else {
+        ui.label(text);
+        None
+    }
+}
+
+/// Header height and per-row height for the metadata/schema tables.
+pub(crate) const TABLE_HEADER_H: f32 = 16.0;
+pub(crate) const TABLE_ROW_H: f32 = 24.0;
+
+/// A dim, small, upper-case column-header cell label.
+pub(crate) fn header_label(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        RichText::new(text.to_uppercase())
+            .color(DIM)
+            .size(10.0)
+            .strong(),
+    );
+}
+
+/// An editable table cell that fills its column. With `egui_extras` the column
+/// owns the width, so the cell just stretches to it (`desired_width` infinite).
+pub(crate) fn tcell_edit(ui: &mut egui::Ui, buf: &mut String, hint: &str) -> egui::Response {
+    ui.add(
+        egui::TextEdit::singleline(buf)
+            .frame(false)
+            .hint_text(hint)
+            .text_color(TEXT)
+            .desired_width(f32::INFINITY),
+    )
+}
+
+/// A `TableBuilder` preconfigured for the metadata/schema tables: left-aligned
+/// cells and no scroll area of its own (the pane already scrolls). Columns are
+/// added by the caller; because the table lays them out, the header and every
+/// row stay aligned.
+pub(crate) fn metadata_table(ui: &mut egui::Ui) -> egui_extras::TableBuilder<'_> {
+    egui_extras::TableBuilder::new(ui)
+        .vscroll(false)
+        .striped(false)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+}
+
+/// The final stretch column, sized to fill the row's remaining width after the
+/// fixed columns (pass every other column's width in `fixed`).
+///
+/// We compute an *exact* width each frame rather than use `Column::remainder()`,
+/// because egui_extras ratchets a remainder column to the widest content it has
+/// ever held (`at_least(max_used)`) and never shrinks it back — so on a window
+/// resize the table would stretch out but never contract. An exact column is
+/// resolved to its literal width every frame, so it tracks the window both ways.
+pub(crate) fn fill_column(ui: &egui::Ui, fixed: &[f32]) -> egui_extras::Column {
+    let cols = fixed.len() + 1; // + the stretch column itself
+    let spacing = ui.spacing().item_spacing.x * (cols as f32 - 1.0);
+    let used: f32 = fixed.iter().sum::<f32>() + spacing;
+    // Small safety margin so rounding never pushes the row past the frame.
+    let width = (ui.available_width() - used - 2.0).max(80.0);
+    egui_extras::Column::exact(width)
+}
+
+/// The bordered container that wraps a metadata table's header + rows.
+pub(crate) fn table_frame<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::group(ui.style())
+        .stroke(Stroke::new(1.0, BORDER))
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
-            let edit = egui::TextEdit::multiline(raw)
-                .frame(false)
-                .lock_focus(true)
-                .code_editor()
-                .interactive(true)
-                .layouter(&mut layouter)
-                .desired_width(f32::INFINITY);
-            // Editable examples can grow past the stretched box; keep them
-            // reachable by scrolling inside an enclosing ScrollArea.
-            if height > 0.0 {
-                egui::ScrollArea::vertical()
-                    .id_salt("code_block_scroll")
-                    .max_height(height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.add(edit.desired_rows(10));
-                    });
-            } else {
-                ui.add(edit.desired_rows(10));
-            }
-        });
+            // Pin the content to exactly the available width so the frame can
+            // never grow past its (e.g. 50%) column and bleed into a sibling pane.
+            let w = ui.available_width();
+            ui.set_min_width(w);
+            ui.set_max_width(w);
+            add(ui)
+        })
+        .inner
 }
 
 #[cfg(test)]
@@ -302,25 +323,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn json_block_renders_without_panicking() {
-        // Exercises the TextEdit `.layouter` path (which the highlighter unit
-        // tests don't reach) across real JSON, the empty placeholder, and
-        // malformed input.
+    fn json_editor_renders_edit_and_preview() {
         egui::__run_test_ui(|ui| {
-            json_block(ui, "{\n  \"a\": 1,\n  \"ok\": true\n}", 0.0);
-            json_block(ui, "", 0.0);
-            json_block(ui, "not json", 0.0);
+            let mut good = "{\n  \"a\": 1\n}".to_string();
+            let mut empty = String::new();
+            json_editor(ui, &mut good, true);
+            json_editor(ui, &mut good, false);
+            json_editor(ui, &mut empty, false);
         });
     }
 
     #[test]
-    fn code_block_renders_without_panicking() {
-        // Drives the editable layouter path across valid and malformed JSON.
+    fn table_primitives_render_without_panicking() {
         egui::__run_test_ui(|ui| {
-            let mut good = "{\n  \"a\": 1,\n  \"ok\": true\n}".to_string();
-            let mut bad = "not json".to_string();
-            code_block(ui, &mut good, 0.0);
-            code_block(ui, &mut bad, 0.0);
+            let mut buf = "x".to_string();
+            table_frame(ui, |ui| {
+                metadata_table(ui)
+                    .column(egui_extras::Column::exact(120.0))
+                    .column(egui_extras::Column::remainder())
+                    .header(TABLE_HEADER_H, |mut h| {
+                        h.col(|ui| header_label(ui, "header"));
+                        h.col(|ui| header_label(ui, "value"));
+                    })
+                    .body(|mut body| {
+                        body.row(TABLE_ROW_H, |mut row| {
+                            row.col(|ui| {
+                                tcell_edit(ui, &mut buf, "value");
+                            });
+                            row.col(|ui| {
+                                required_chip(ui, true, true);
+                            });
+                        });
+                    });
+            });
         });
     }
 }

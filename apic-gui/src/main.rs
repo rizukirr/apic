@@ -20,11 +20,11 @@ mod settings;
 mod ui;
 use settings::Settings;
 use ui::sections::{
-    endpoint_header, headers, method_url_row, query_section, request_body, response_code_selector,
-    response_headers, responses,
+    endpoint_description, endpoint_name, headers, method_url_row, query_section, request_body,
+    response_body, response_code_selector, response_headers,
 };
 use ui::theme::*;
-use ui::widgets::{bordered_input, take_pending_focus};
+use ui::widgets::{bordered_input, take_pending_focus, text_button};
 
 // egui temp-data keys for the "focus the input when the dialog opens" markers,
 // claimed once via `take_pending_focus` the first frame each modal renders.
@@ -136,9 +136,11 @@ struct App {
     search: String,
     resp_tab: usize,
 
-    /// The active tab in the single request/response tab bar; reset to
-    /// [`MainTab::ReqHeader`] on load.
+    /// The active top-level editor tab; reset to [`MainTab::Overview`] on load.
     main_tab: MainTab,
+
+    /// The active sub-tab inside the Response tab; reset to [`RespTab::Body`].
+    resp_tab_view: RespTab,
 
     /// The `.apic` directory, for locating templates.
     apic_dir: Option<PathBuf>,
@@ -195,14 +197,21 @@ enum DialogKind {
     ImportPostman,
 }
 
-/// The single active tab across the request/response tab bar.
+/// The active tab in the left pane. Response lives permanently in the right
+/// pane, so it is not a variant here.
 #[derive(Clone, Copy, PartialEq)]
 enum MainTab {
-    ReqHeader,
-    ReqQuery,
-    ReqBody,
-    RespBody,
-    RespHeader,
+    Overview,
+    Headers,
+    Query,
+    Request,
+}
+
+/// The active sub-tab inside the Response tab.
+#[derive(Clone, Copy, PartialEq)]
+enum RespTab {
+    Body,
+    Headers,
 }
 
 impl App {
@@ -217,7 +226,8 @@ impl App {
             editing: false,
             search: String::new(),
             resp_tab: 0,
-            main_tab: MainTab::ReqHeader,
+            main_tab: MainTab::Overview,
+            resp_tab_view: RespTab::Body,
             apic_dir: None,
             project_root: None,
             open_blocked: None,
@@ -260,7 +270,7 @@ impl App {
             self.root = None;
             self.templates.clear();
             self.entries.clear();
-            self.status = "No project open. Use [ Open ] or [ New ].".into();
+            self.status = "No project open. Use Open or New.".into();
             return;
         };
 
@@ -374,7 +384,8 @@ impl App {
                 self.selected = Some(i);
                 self.selected_template = None;
                 self.resp_tab = 0;
-                self.main_tab = MainTab::ReqHeader;
+                self.main_tab = MainTab::Overview;
+                self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
                 self.status = self
@@ -405,7 +416,8 @@ impl App {
                 self.selected = None;
                 self.selected_template = Some(i);
                 self.resp_tab = 0;
-                self.main_tab = MainTab::ReqHeader;
+                self.main_tab = MainTab::Overview;
+                self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
                 self.status = format!("template '{name}'");
@@ -635,7 +647,7 @@ impl App {
                 ui.add_space(SPACE_LARGE);
                 ui.columns(2, |cols| {
                     cols[0].vertical_centered(|ui| {
-                        if ui.button(RichText::new("Create").color(GREEN)).clicked() {
+                        if text_button(ui, "Create", GREEN) {
                             create = true;
                         }
                     });
@@ -794,7 +806,7 @@ impl App {
                 ui.add_space(SPACE_LARGE);
                 ui.columns(2, |cols| {
                     cols[0].vertical_centered(|ui| {
-                        if ui.button(RichText::new("Create").color(GREEN)).clicked() {
+                        if text_button(ui, "Create", GREEN) {
                             create = true;
                         }
                     });
@@ -846,7 +858,7 @@ impl App {
                     ui.add_space(SPACE_EXTRA_SMALL);
                 }
                 ui.add_space(SPACE_EXTRA_SMALL);
-                if ui.button(RichText::new("[ Close ]").color(GREEN)).clicked() {
+                if text_button(ui, "Close", GREEN) {
                     close = true;
                 }
             });
@@ -892,7 +904,7 @@ impl App {
                 ui.add_space(SPACE_LARGE);
                 ui.columns(2, |cols| {
                     cols[0].vertical_centered(|ui| {
-                        if ui.button(RichText::new("Delete").color(RED)).clicked() {
+                        if text_button(ui, "Delete", RED) {
                             confirm = true;
                         }
                     });
@@ -1057,15 +1069,15 @@ impl App {
                     ui.add_space(SPACE_MEDIUM); // left padding so the title isn't flush to the edge
                     ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
                     ui.add_space(SPACE_MEDIUM);
-                    if ui.button(RichText::new("[ Open ]").color(GREEN)).clicked() {
+                    if text_button(ui, "Open", GREEN) {
                         action = Some(SidebarAction::OpenProject);
                     }
-                    ui.add_space(SPACE_EXTRA_SMALL);
-                    if ui.button(RichText::new("[ New ]").color(GREEN)).clicked() {
+                    ui.add_space(2.0);
+                    if text_button(ui, "New", GREEN) {
                         action = Some(SidebarAction::NewProject);
                     }
-                    ui.add_space(SPACE_EXTRA_SMALL);
-                    ui.menu_button(RichText::new("[ Import ]").color(GREEN), |ui| {
+                    ui.add_space(2.0);
+                    ui.menu_button(RichText::new("Import").color(GREEN), |ui| {
                         if ui.button("Postman collection").clicked() {
                             action = Some(SidebarAction::ImportPostman);
                             ui.close();
@@ -1226,6 +1238,7 @@ impl App {
             editing,
             resp_tab,
             main_tab,
+            resp_tab_view,
             repair,
             entries,
             original_model,
@@ -1238,10 +1251,8 @@ impl App {
                     ui.label(RichText::new("No project open").color(DIM).size(16.0));
                     ui.add_space(SPACE_SMALL);
                     ui.label(
-                        RichText::new(
-                            "Use [ Open ] to open a project folder, or [ New ] to create one.",
-                        )
-                        .color(DIM),
+                        RichText::new("Use Open to open a project folder, or New to create one.")
+                            .color(DIM),
                     );
                 });
                 return;
@@ -1259,7 +1270,7 @@ impl App {
                     ui.label(RichText::new(&rep.error).color(AMBER).size(12.0));
                 }
                 ui.add_space(SPACE_SMALL);
-                let pretty = ui.button(RichText::new("pretty").color(AMBER)).clicked();
+                let pretty = text_button(ui, "pretty", AMBER);
                 if pretty {
                     rep.buffer = apic_core::json::pretty_json(&rep.buffer);
                 }
@@ -1299,9 +1310,11 @@ impl App {
                 return;
             };
 
+            // Toolbar row: endpoint name on the left, EDIT/SAVE on the right.
             ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
-                    if ui.button(RichText::new("[ SAVE ]").color(GREEN)).clicked() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(SPACE_SMALL); // end padding, right of Save
+                    if text_button(ui, "Save", GREEN) {
                         match path.as_deref() {
                             Some(p) => match model.save(p) {
                                 Ok(()) => {
@@ -1314,70 +1327,151 @@ impl App {
                             None => *status = "no path to save to".into(),
                         }
                     }
-                    let edit_label = if *editing { "[ CANCEL ]" } else { "[ EDIT ]" };
-                    if ui.button(RichText::new(edit_label).color(GREEN)).clicked() {
+                    let edit_label = if *editing { "Cancel" } else { "Edit" };
+                    if text_button(ui, edit_label, GREEN) {
                         // Applied after the panel closure via begin_edit/cancel_edit
                         // so the snapshot is taken/restored on `self`.
                         toggle_edit = true;
                     }
+                    // The name fills the space to the left of the buttons.
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add_space(SPACE_SMALL); // start padding, left of the name
+                        endpoint_name(ui, model, *editing);
+                    });
                 });
             });
-            ui.add_space(SPACE_MEDIUM);
+            ui.add_space(SPACE_SMALL);
 
             egui::Frame::NONE
-                .inner_margin(egui::Margin::same(8))
+                .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
-                    endpoint_header(ui, model, *editing);
                     method_url_row(ui, model, *editing);
                     ui.add_space(SPACE_SMALL);
 
-                    // Single tab bar with a divider between request and response groups.
-                    ui.horizontal(|ui| {
-                        let mut tab = |ui: &mut egui::Ui, label: &str, which: MainTab| {
-                            if ui
-                                .selectable_label(
-                                    *main_tab == which,
-                                    RichText::new(label).color(if *main_tab == which {
-                                        GREEN
-                                    } else {
-                                        DIM
-                                    }),
-                                )
-                                .clicked()
-                            {
-                                *main_tab = which;
-                            }
-                        };
-                        tab(ui, "Header", MainTab::ReqHeader);
-                        tab(ui, "Query", MainTab::ReqQuery);
-                        tab(ui, "Request", MainTab::ReqBody);
-                        ui.label(RichText::new("‖").color(DIM));
-                        tab(ui, "Response", MainTab::RespBody);
-                        tab(ui, "Header", MainTab::RespHeader);
-                    });
-                    ui.separator();
+                    // 50:50 split with a vertical divider between the panes:
+                    // request tabs on the left, Response on the right.
+                    ui.horizontal_top(|ui| {
+                        let gap = ui.spacing().item_spacing.x;
+                        // Reserve the divider's own width plus a gap on each side so the
+                        // two panes stay an even 50:50.
+                        let divider_w = 6.0;
+                        let col_w = ((ui.available_width() - divider_w - gap * 2.0) / 2.0).max(0.0);
+                        let col_h = ui.available_height();
 
-                    // Content of the active tab, filling the rest of the panel.
-                    match *main_tab {
-                        MainTab::ReqHeader => {
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| headers(ui, model, *editing));
-                        }
-                        MainTab::ReqQuery => {
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| query_section(ui, model, *editing));
-                        }
-                        MainTab::ReqBody => request_body(ui, model, *editing),
-                        MainTab::RespBody => responses(ui, model, resp_tab, *editing),
-                        MainTab::RespHeader => {
-                            response_code_selector(ui, model, resp_tab, *editing);
-                            let idx = *resp_tab;
-                            response_headers(ui, model, idx, *editing);
-                        }
-                    }
+                        // Left pane: Overview / Headers / Query / Request.
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(col_w, col_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |left| {
+                                left.horizontal(|ui| {
+                                    let mut t = |ui: &mut egui::Ui, label: &str, which: MainTab| {
+                                        if ui
+                                            .selectable_label(
+                                                *main_tab == which,
+                                                RichText::new(label).color(if *main_tab == which {
+                                                    GREEN
+                                                } else {
+                                                    DIM
+                                                }),
+                                            )
+                                            .clicked()
+                                        {
+                                            *main_tab = which;
+                                        }
+                                    };
+                                    t(ui, "Overview", MainTab::Overview);
+                                    t(ui, "Headers", MainTab::Headers);
+                                    t(ui, "Query", MainTab::Query);
+                                    t(ui, "Request", MainTab::Request);
+                                });
+                                left.separator();
+                                // One scroll per pane (distinct id) so the left
+                                // and right panes scroll independently.
+                                egui::ScrollArea::vertical()
+                                    .id_salt("left_pane_scroll")
+                                    .auto_shrink([false, false])
+                                    .show(left, |ui| match *main_tab {
+                                        MainTab::Overview => {
+                                            endpoint_description(ui, model, *editing)
+                                        }
+                                        MainTab::Headers => headers(ui, model, *editing),
+                                        MainTab::Query => query_section(ui, model, *editing),
+                                        MainTab::Request => request_body(ui, model, *editing),
+                                    });
+                            },
+                        );
+
+                        ui.separator();
+
+                        // Right pane: a Response / Header tab bar over a shared,
+                        // per-response status strip.
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(col_w, col_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |right| {
+                                right.horizontal(|ui| {
+                                    let mut t = |ui: &mut egui::Ui, label: &str, which: RespTab| {
+                                        if ui
+                                            .selectable_label(
+                                                *resp_tab_view == which,
+                                                RichText::new(label).color(
+                                                    if *resp_tab_view == which {
+                                                        GREEN
+                                                    } else {
+                                                        DIM
+                                                    },
+                                                ),
+                                            )
+                                            .clicked()
+                                        {
+                                            *resp_tab_view = which;
+                                        }
+                                    };
+                                    t(ui, "Response", RespTab::Body);
+                                    t(ui, "Header", RespTab::Headers);
+                                });
+                                right.separator();
+                                // One scroll per pane (distinct id) starting under
+                                // the "Response" title, so the left and right panes
+                                // scroll independently as plain vertical content.
+                                egui::ScrollArea::vertical()
+                                    .id_salt("right_pane_scroll")
+                                    .auto_shrink([false, false])
+                                    .show(right, |ui| {
+                                        // An endpoint is expected to document a
+                                        // response, so default to a 200 in edit mode
+                                        // (its editor shows without "+ new response").
+                                        if *editing && model.responses.is_empty() {
+                                            model
+                                                .responses
+                                                .push(apic_core::edit::EditResponse::blank());
+                                        }
+                                        // Per-response status strip; its `code -
+                                        // title` tabs select the response whose
+                                        // body/headers the tab bar above shows.
+                                        response_code_selector(ui, model, resp_tab, *editing);
+                                        if model.responses.is_empty() {
+                                            ui.label(RichText::new("(no responses)").color(DIM));
+                                            return;
+                                        }
+                                        if *resp_tab >= model.responses.len() {
+                                            *resp_tab = 0;
+                                        }
+                                        ui.add_space(SPACE_SMALL);
+                                        let idx = *resp_tab;
+                                        match *resp_tab_view {
+                                            RespTab::Body => {
+                                                response_body(ui, model, idx, *editing)
+                                            }
+                                            RespTab::Headers => {
+                                                response_headers(ui, model, idx, *editing)
+                                            }
+                                        }
+                                    });
+                            },
+                        );
+                    });
                 });
         });
         if toggle_edit {

@@ -26,62 +26,7 @@
                     "email": "rizki@example.com",
                     "role": "admin"
                 }
-            },
-            "schema": [
-                {
-                    "name": "status",
-                    "type": "int",
-                    "default": "200",
-                    "description": "Status code",
-                    "required": true,
-                    "properties": null
-                },
-                {
-                    "name": "message",
-                    "type": "string",
-                    "default": null,
-                    "description": "Message",
-                    "required": true,
-                    "properties": null
-                },
-                {
-                    "name": "data",
-                    "type": "object",
-                    "default": null,
-                    "description": "Data",
-                    "required": false,
-                    "properties": [
-                        {
-                            "name": "id",
-                            "type": "int",
-                            "default": null,
-                            "description": "User ID",
-                            "required": true
-                        },
-                        {
-                            "name": "name",
-                            "type": "string",
-                            "default": null,
-                            "description": "User name",
-                            "required": true
-                        },
-                        {
-                            "name": "email",
-                            "type": "string",
-                            "default": null,
-                            "description": "User email",
-                            "required": true
-                        },
-                        {
-                            "name": "role",
-                            "type": "string",
-                            "default": null,
-                            "description": "User role",
-                            "required": true
-                        }
-                    ]
-                }
-            ]
+            }
         },
         {
             "code": 401,
@@ -90,33 +35,7 @@
                 "status": 401,
                 "message": "Invalid credentials",
                 "data": null
-            },
-            "schema": [
-                {
-                    "name": "status",
-                    "type": "int",
-                    "default": "401",
-                    "description": "Status code",
-                    "required": true,
-                    "properties": null
-                },
-                {
-                    "name": "message",
-                    "type": "string",
-                    "default": null,
-                    "description": "Message",
-                    "required": true,
-                    "properties": null
-                },
-                {
-                    "name": "data",
-                    "type": "object",
-                    "default": null,
-                    "description": "Data",
-                    "required": false,
-                    "properties": null
-                }
-            ]
+            }
         }
     ]
 }

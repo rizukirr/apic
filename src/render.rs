@@ -4,30 +4,25 @@
 //! query, headers, request, responses). Colors are applied only when stdout is
 //! a terminal, so piped or redirected output stays clean.
 
-use apic_core::json::{JsonContent, Method, Schema, any_accept, method_str, parse_type};
+use apic_core::json::{JsonContent, Method, method_str};
 use crossterm::style::Stylize;
 use std::io::IsTerminal;
 
 /// Renders `contract` as formatted text to stdout.
-///
-/// With `example_mode` the request and response sections print their raw JSON
-/// example payloads instead of schema tables.
-pub(crate) fn render(contract: &JsonContent, example_mode: bool) {
-    let p = Printer::new(example_mode);
+pub(crate) fn render(contract: &JsonContent) {
+    let p = Printer::new();
     p.contract(contract);
 }
 
-/// Stateful printer carrying the color-or-plain decision and view mode.
+/// Stateful printer carrying the color-or-plain decision.
 struct Printer {
     color: bool,
-    example_mode: bool,
 }
 
 impl Printer {
-    fn new(example_mode: bool) -> Self {
+    fn new() -> Self {
         Self {
             color: std::io::stdout().is_terminal(),
-            example_mode,
         }
     }
 
@@ -71,26 +66,9 @@ impl Printer {
             self.table(None, &rows);
         }
 
-        let request_label = match &c.request {
-            Some(r) => format!("REQUEST{}", array_marker(&r.dtype)),
-            None => "REQUEST".to_string(),
-        };
-        self.section(&request_label);
+        self.section("REQUEST");
         match &c.request {
-            Some(request) if self.example_mode => self.example(request.example.as_ref()),
-            Some(request) => match &request.schema {
-                Some(schema) if !schema.is_empty() => {
-                    let (headers, rows) = field_rows(schema);
-                    self.table(Some(&headers), &rows);
-                    // Keep the concrete payload adjacent to its schema.
-                    if let Some(example) = &request.example {
-                        self.example_block(example);
-                    }
-                }
-                // No schema — show `(none)` in the default view regardless of
-                // whether an example exists (examples are shown via --example).
-                _ => self.none(),
-            },
+            Some(request) => self.example(request.example.as_ref()),
             None => self.none(),
         }
 
@@ -99,34 +77,10 @@ impl Printer {
             self.none();
         } else {
             for response in &c.responses {
-                self.response_title(response.code, &response.description, &response.dtype);
-                if self.example_mode {
-                    self.example(response.example.as_ref());
-                } else if !response.schema.is_empty() {
-                    let (headers, rows) = field_rows(&response.schema);
-                    self.table(Some(&headers), &rows);
-                    if let Some(example) = &response.example {
-                        self.example_block(example);
-                    }
-                } else {
-                    // No schema — show `(none)` in the default view regardless
-                    // of whether an example exists (shown via --example).
-                    self.none();
-                }
+                self.response_title(response.code, &response.description);
+                self.example(response.example.as_ref());
             }
         }
-    }
-
-    /// Prints a dimmed `Example:` label followed by the JSON payload. Used in
-    /// the default view beneath a schema table, only when an example exists.
-    fn example_block(&self, example: &serde_json::Value) {
-        println!();
-        if self.color {
-            println!(" {}", "Example:".dark_grey());
-        } else {
-            println!(" Example:");
-        }
-        self.example(Some(example));
     }
 
     /// Prints a raw JSON example payload, pretty-printed and indented, or a
@@ -169,10 +123,9 @@ impl Printer {
 
     /// Prints the `RESPONSE <code> — <description>` section title, coloring
     /// the status code by its class (2xx green, 4xx/5xx red).
-    fn response_title(&self, code: u16, description: &str, dtype: &str) {
+    fn response_title(&self, code: u16, description: &str) {
         println!();
         let description = sanitize(description);
-        let marker = array_marker(dtype);
         if self.color {
             let code = code.to_string();
             let code = match code.as_bytes()[0] {
@@ -180,9 +133,9 @@ impl Printer {
                 b'4' | b'5' => code.red().bold(),
                 _ => code.yellow().bold(),
             };
-            println!(" {} {code} — {description}{marker}", "RESPONSE".bold());
+            println!(" {} {code} — {description}", "RESPONSE".bold());
         } else {
-            println!(" RESPONSE {code} — {description}{marker}");
+            println!(" RESPONSE {code} — {description}");
         }
     }
 
@@ -261,72 +214,6 @@ impl Printer {
     }
 }
 
-/// The ` · <type>` suffix shown on a section title when the body is an array
-/// (e.g. `object[]`), or an empty string for a plain object body. The type is
-/// sanitized for display. Shared by the plain-text and TUI renderers.
-pub(crate) fn array_marker(dtype: &str) -> String {
-    if parse_type(dtype).1 {
-        format!(" · {}", sanitize(dtype))
-    } else {
-        String::new()
-    }
-}
-
-/// Builds the headers and rows for a request/response field table. The ACCEPT
-/// column (allowed MIME types for `file` fields) appears only when some field —
-/// at any depth — declares it. Nested `properties` are flattened with
-/// `├─`/`└─` tree prefixes per depth level.
-fn field_rows(fields: &[Schema]) -> (Vec<&'static str>, Vec<Vec<String>>) {
-    let has_accept = any_accept(fields);
-    let headers = if has_accept {
-        vec!["NAME", "TYPE", "REQ", "ACCEPT", "DESCRIPTION"]
-    } else {
-        vec!["NAME", "TYPE", "REQ", "DESCRIPTION"]
-    };
-    let mut rows = Vec::new();
-    push_field_rows(fields, 0, has_accept, &mut rows);
-    (headers, rows)
-}
-
-fn push_field_rows(fields: &[Schema], depth: usize, has_accept: bool, out: &mut Vec<Vec<String>>) {
-    for (i, s) in fields.iter().enumerate() {
-        let prefix = if depth == 0 {
-            String::new()
-        } else {
-            let branch = if i + 1 == fields.len() {
-                "└─ "
-            } else {
-                "├─ "
-            };
-            format!("{}{branch}", "  ".repeat(depth - 1))
-        };
-
-        let mut row = vec![
-            format!("{prefix}{}", s.name),
-            s.dtype.clone(),
-            req_mark(s.required),
-        ];
-        if has_accept {
-            row.push(s.accept.clone().unwrap_or_default());
-        }
-        row.push(s.description.clone());
-        out.push(row);
-
-        if let Some(props) = &s.properties {
-            push_field_rows(props, depth + 1, has_accept, out);
-        }
-    }
-}
-
-/// Marks a required field in table output.
-fn req_mark(required: bool) -> String {
-    if required {
-        "✓".to_string()
-    } else {
-        String::new()
-    }
-}
-
 /// Strips control characters from a file-derived string before it is printed.
 ///
 /// Contract files are untrusted input; without this, embedded ANSI/OSC escape
@@ -340,7 +227,6 @@ pub(crate) fn sanitize(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apic_core::json::Schema;
 
     #[test]
     fn sanitize_strips_escape_and_bell_sequences() {
@@ -356,90 +242,5 @@ mod tests {
     #[test]
     fn sanitize_keeps_normal_and_multibyte_text() {
         assert_eq!(sanitize("café /auth/login"), "café /auth/login");
-    }
-
-    #[test]
-    fn req_mark_renders_check_only_when_required() {
-        assert_eq!(req_mark(true), "✓");
-        assert_eq!(req_mark(false), "");
-    }
-
-    #[test]
-    fn array_marker_only_decorates_array_bodies() {
-        assert_eq!(array_marker("object[]"), " · object[]");
-        assert_eq!(array_marker("string[]"), " · string[]");
-        assert_eq!(array_marker("object"), "");
-        assert_eq!(array_marker("string"), "");
-    }
-
-    fn field(name: &str, properties: Option<Vec<Schema>>) -> Schema {
-        Schema {
-            name: name.to_string(),
-            dtype: "string".to_string(),
-            default: None,
-            description: String::new(),
-            required: true,
-            properties,
-            accept: None,
-        }
-    }
-
-    #[test]
-    fn schema_rows_flattens_nested_properties_with_tree_prefixes() {
-        let schema = vec![field(
-            "data",
-            Some(vec![field("first", None), field("last", None)]),
-        )];
-        let (_headers, rows) = field_rows(&schema);
-
-        // Top-level name has no prefix; nested names get tree branches.
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0][0], "data");
-        assert_eq!(rows[1][0], "├─ first");
-        assert_eq!(rows[2][0], "└─ last");
-    }
-
-    #[test]
-    fn field_rows_recurses_properties_and_adds_accept_column() {
-        // A request element whose value is a nested object, plus a file field
-        // with `accept` — the unified table must flatten the nesting and show ACCEPT.
-        let nested = Schema {
-            name: "user".to_string(),
-            dtype: "object[]".to_string(),
-            default: None,
-            description: "list".to_string(),
-            required: true,
-            properties: Some(vec![Schema {
-                name: "id".to_string(),
-                dtype: "string".to_string(),
-                default: None,
-                description: "uid".to_string(),
-                required: true,
-                properties: None,
-                accept: None,
-            }]),
-            accept: None,
-        };
-        let avatar = Schema {
-            name: "avatar".to_string(),
-            dtype: "file".to_string(),
-            default: None,
-            description: "img".to_string(),
-            required: true,
-            properties: None,
-            accept: Some("image/png".to_string()),
-        };
-        let (headers, rows) = field_rows(&[nested, avatar]);
-        assert_eq!(
-            headers,
-            vec!["NAME", "TYPE", "REQ", "ACCEPT", "DESCRIPTION"]
-        );
-        // 2 top-level rows + 1 nested row.
-        assert_eq!(rows.len(), 3);
-        // Nested child is flattened with a tree prefix in the NAME column.
-        assert_eq!(rows[1][0], "└─ id");
-        // ACCEPT column (index 3) carries the file field's value, blank otherwise.
-        assert_eq!(rows[0][3], "");
-        assert_eq!(rows[2][3], "image/png");
     }
 }

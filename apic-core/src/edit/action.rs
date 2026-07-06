@@ -9,11 +9,8 @@
 //! Navigation and view state (cursor, focus, expanded regions) are NOT modeled
 //! here; they belong to each front-end.
 
-use super::address::{BodyLoc, Field};
-use super::model::{
-    EditBody, EditHeader, EditModel, EditQuery, EditResponse, EditSchema, example_from_schema,
-    schema_from_example,
-};
+use super::address::Field;
+use super::model::{EditBody, EditHeader, EditModel, EditQuery, EditResponse};
 
 /// A single edit to apply to an [`EditModel`].
 #[derive(Debug, Clone, PartialEq)]
@@ -32,15 +29,6 @@ pub enum EditAction {
 
     /// Cycle the HTTP method forward (`true`) or backward (`false`).
     CycleMethod { forward: bool },
-
-    /// Toggle a body between `object` and `object[]`.
-    ToggleBodyType { loc: BodyLoc },
-
-    /// Fill a body's example buffer from its schema fields.
-    GenerateExample { loc: BodyLoc },
-
-    /// Fill a body's schema from its example buffer (inverse of `GenerateExample`).
-    InferSchema { loc: BodyLoc },
 }
 
 /// Applies `action` to `model`, returning `true` when it changed the model
@@ -56,9 +44,6 @@ pub fn apply(model: &mut EditModel, action: &EditAction) -> bool {
             cycle_method(model, *forward);
             true
         }
-        EditAction::ToggleBodyType { loc } => toggle_body_type(model, loc),
-        EditAction::GenerateExample { loc } => generate_example(model, loc),
-        EditAction::InferSchema { loc } => infer_schema(model, loc),
     }
 }
 
@@ -100,16 +85,6 @@ fn set_field(model: &mut EditModel, field: &Field, value: String) -> bool {
                 h.value = value;
             }
         }
-        Field::BodyDtype(BodyLoc::Request) => {
-            if let Some(b) = model.request.as_mut() {
-                b.dtype = value;
-            }
-        }
-        Field::BodyDtype(BodyLoc::Response(r)) => {
-            if let Some(b) = model.responses.get_mut(*r) {
-                b.dtype = value;
-            }
-        }
         Field::ResponseCode(i) => {
             if let Some(r) = model.responses.get_mut(*i) {
                 r.code = value;
@@ -120,10 +95,6 @@ fn set_field(model: &mut EditModel, field: &Field, value: String) -> bool {
                 r.description = value;
             }
         }
-        Field::SchemaName(loc, p) => set_schema(model, loc, p, |s| s.name = value.clone()),
-        Field::SchemaType(loc, p) => set_schema(model, loc, p, |s| s.dtype = value.clone()),
-        Field::SchemaDesc(loc, p) => set_schema(model, loc, p, |s| s.description = value.clone()),
-        Field::SchemaAccept(loc, p) => set_schema(model, loc, p, |s| s.accept = value.clone()),
         _ => return false,
     }
     true
@@ -135,32 +106,17 @@ fn set_query(model: &mut EditModel, i: usize, f: impl FnOnce(&mut EditQuery)) {
     }
 }
 
-fn set_schema(
-    model: &mut EditModel,
-    loc: &BodyLoc,
-    path: &[usize],
-    f: impl FnOnce(&mut EditSchema),
-) {
-    let node = match loc {
-        BodyLoc::Request => model.schema_at_mut_request(path),
-        BodyLoc::Response(r) => model.schema_at_mut_response(*r, path),
-    };
-    if let Some(n) = node {
-        f(n);
-    }
-}
-
 /// Flips a boolean field. Returns `false` for a non-boolean target.
 fn toggle_bool(model: &mut EditModel, field: &Field) -> bool {
     match field {
-        Field::SchemaRequired(BodyLoc::Request, path) => {
-            if let Some(n) = model.schema_at_mut_request(path) {
-                n.required = !n.required;
+        Field::HeaderRequired(i) => {
+            if let Some(h) = model.headers.get_mut(*i) {
+                h.required = !h.required;
             }
         }
-        Field::SchemaRequired(BodyLoc::Response(r), path) => {
-            if let Some(n) = model.schema_at_mut_response(*r, path) {
-                n.required = !n.required;
+        Field::QueryRequired(i) => {
+            if let Some(q) = model.query.get_mut(*i) {
+                q.required = !q.required;
             }
         }
         _ => return false,
@@ -176,18 +132,21 @@ fn add(model: &mut EditModel, field: &Field) -> bool {
             name: String::new(),
             value: String::new(),
             description: String::new(),
+            required: false,
         }),
         Field::ResponseHeaderAdd(r) => {
             if let Some(resp) = model.responses.get_mut(*r) {
                 resp.headers.push(EditHeader {
                     name: String::new(),
                     value: String::new(),
+                    required: false,
                 });
             }
         }
         Field::HeaderAdd => model.headers.push(EditHeader {
             name: String::new(),
             value: String::new(),
+            required: false,
         }),
         Field::ResponseAdd => model.responses.push(EditResponse::blank()),
         Field::RequestToggle => {
@@ -196,16 +155,6 @@ fn add(model: &mut EditModel, field: &Field) -> bool {
             } else {
                 Some(EditBody::empty())
             };
-        }
-        Field::SchemaAdd(BodyLoc::Request, path) => {
-            if let Some(children) = model.schema_children_mut_request(path) {
-                children.push(EditSchema::blank());
-            }
-        }
-        Field::SchemaAdd(BodyLoc::Response(r), path) => {
-            if let Some(children) = model.schema_children_mut_response(*r, path) {
-                children.push(EditSchema::blank());
-            }
         }
         _ => return false,
     }
@@ -216,31 +165,19 @@ fn add(model: &mut EditModel, field: &Field) -> bool {
 /// that addresses nothing deletable.
 fn delete(model: &mut EditModel, field: &Field) -> bool {
     match field {
-        Field::QueryName(i) | Field::QueryValue(i) | Field::QueryDesc(i) => {
-            drop_at(&mut model.query, *i)
-        }
+        Field::QueryName(i)
+        | Field::QueryValue(i)
+        | Field::QueryDesc(i)
+        | Field::QueryRequired(i) => drop_at(&mut model.query, *i),
         Field::ResponseHeaderName(r, i) | Field::ResponseHeaderValue(r, i) => {
             if let Some(resp) = model.responses.get_mut(*r) {
                 drop_at(&mut resp.headers, *i);
             }
         }
-        Field::HeaderName(i) | Field::HeaderValue(i) => drop_at(&mut model.headers, *i),
-        Field::ResponseCode(i) | Field::ResponseDesc(i) => drop_at(&mut model.responses, *i),
-        Field::SchemaName(loc, path)
-        | Field::SchemaType(loc, path)
-        | Field::SchemaDesc(loc, path)
-        | Field::SchemaRequired(loc, path)
-        | Field::SchemaAccept(loc, path) => {
-            if let Some((last, parent)) = path.split_last() {
-                let children = match loc {
-                    BodyLoc::Request => model.schema_children_mut_request(parent),
-                    BodyLoc::Response(r) => model.schema_children_mut_response(*r, parent),
-                };
-                if let Some(c) = children {
-                    drop_at(c, *last);
-                }
-            }
+        Field::HeaderName(i) | Field::HeaderValue(i) | Field::HeaderRequired(i) => {
+            drop_at(&mut model.headers, *i)
         }
+        Field::ResponseCode(i) | Field::ResponseDesc(i) => drop_at(&mut model.responses, *i),
         _ => return false,
     }
     true
@@ -264,97 +201,6 @@ fn cycle_method(model: &mut EditModel, forward: bool) {
         (idx + all.len() - 1) % all.len()
     };
     model.method = all[next].clone();
-}
-
-/// Toggles a request/response body type between `object` and `object[]`.
-/// Anything else normalizes to `object[]`. Returns `false` when the body is
-/// absent.
-fn toggle_body_type(model: &mut EditModel, loc: &BodyLoc) -> bool {
-    let cur = match loc {
-        BodyLoc::Request => model.request.as_ref().map(|b| b.dtype.clone()),
-        BodyLoc::Response(i) => model.responses.get(*i).map(|r| r.dtype.clone()),
-    };
-    let Some(cur) = cur else { return false };
-    let next = if cur == "object[]" {
-        "object"
-    } else {
-        "object[]"
-    };
-    set_field(model, &Field::BodyDtype(loc.clone()), next.to_string())
-}
-
-/// Fills a body's example buffer from its schema fields. An array body
-/// (`object[]`) generates a one-element array. Returns `false` when the body is
-/// absent or the example could not be rendered.
-fn generate_example(model: &mut EditModel, loc: &BodyLoc) -> bool {
-    let body = match loc {
-        BodyLoc::Request => model
-            .request
-            .as_ref()
-            .map(|b| (b.schema.clone(), b.dtype.clone())),
-        BodyLoc::Response(i) => model
-            .responses
-            .get(*i)
-            .map(|r| (r.schema.clone(), r.dtype.clone())),
-    };
-    let Some((schema, dtype)) = body else {
-        return false;
-    };
-    let mut value = example_from_schema(&schema);
-    if crate::json::parse_type(&dtype).1 {
-        value = serde_json::Value::Array(vec![value]);
-    }
-    let Ok(text) = crate::template::render_pretty(&value) else {
-        return false;
-    };
-    match loc {
-        BodyLoc::Request => {
-            if let Some(b) = model.request.as_mut() {
-                b.example = text;
-            }
-        }
-        BodyLoc::Response(i) => {
-            if let Some(r) = model.responses.get_mut(*i) {
-                r.example = text;
-            }
-        }
-    }
-    true
-}
-
-/// Fills a body's schema from its example buffer (the inverse of
-/// `generate_example`). On a parse/shape error the message is stored in
-/// `model.last_error` and the schema is left unchanged. Returns `true` on success.
-fn infer_schema(model: &mut EditModel, loc: &BodyLoc) -> bool {
-    model.last_error = None;
-    let example = match loc {
-        BodyLoc::Request => model.request.as_ref().map(|b| b.example.clone()),
-        BodyLoc::Response(i) => model.responses.get(*i).map(|r| r.example.clone()),
-    };
-    let Some(example) = example else {
-        return false;
-    };
-    match schema_from_example(&example) {
-        Ok(fields) => {
-            match loc {
-                BodyLoc::Request => {
-                    if let Some(b) = model.request.as_mut() {
-                        b.schema = fields;
-                    }
-                }
-                BodyLoc::Response(i) => {
-                    if let Some(r) = model.responses.get_mut(*i) {
-                        r.schema = fields;
-                    }
-                }
-            }
-            true
-        }
-        Err(msg) => {
-            model.last_error = Some((loc.clone(), msg));
-            false
-        }
-    }
 }
 
 #[cfg(test)]
@@ -443,81 +289,29 @@ mod tests {
     }
 
     #[test]
+    fn toggle_header_and_query_required() {
+        let mut m = model();
+        apply(
+            &mut m,
+            &EditAction::ToggleBool {
+                field: Field::HeaderRequired(0),
+            },
+        );
+        assert!(m.headers[0].required);
+        apply(
+            &mut m,
+            &EditAction::ToggleBool {
+                field: Field::QueryRequired(0),
+            },
+        );
+        assert!(m.query[0].required);
+    }
+
+    #[test]
     fn cycle_method_advances() {
         let mut m = model();
         apply(&mut m, &EditAction::CycleMethod { forward: true });
         assert_ne!(crate::json::method_str(&m.method), "GET");
-    }
-
-    #[test]
-    fn toggle_body_type_round_trips() {
-        let mut m = model();
-        apply(
-            &mut m,
-            &EditAction::ToggleBodyType {
-                loc: BodyLoc::Request,
-            },
-        );
-        assert_eq!(m.request.as_ref().unwrap().dtype, "object[]");
-        apply(
-            &mut m,
-            &EditAction::ToggleBodyType {
-                loc: BodyLoc::Request,
-            },
-        );
-        assert_eq!(m.request.as_ref().unwrap().dtype, "object");
-    }
-
-    #[test]
-    fn generate_example_fills_buffer() {
-        let mut m = model();
-        assert!(apply(
-            &mut m,
-            &EditAction::GenerateExample {
-                loc: BodyLoc::Request
-            }
-        ));
-        assert!(m.request.as_ref().unwrap().example.contains("\"status\""));
-    }
-
-    #[test]
-    fn infer_schema_fills_schema() {
-        let mut m = model();
-        if let Some(b) = m.request.as_mut() {
-            b.example = r#"{"status":1,"label":"x"}"#.to_string();
-            b.schema.clear();
-        }
-        assert!(apply(
-            &mut m,
-            &EditAction::InferSchema {
-                loc: BodyLoc::Request
-            }
-        ));
-        let schema = &m.request.as_ref().unwrap().schema;
-        assert_eq!(
-            schema.iter().find(|f| f.name == "status").unwrap().dtype,
-            "int"
-        );
-        assert_eq!(
-            schema.iter().find(|f| f.name == "label").unwrap().dtype,
-            "string"
-        );
-        assert!(m.last_error.is_none());
-    }
-
-    #[test]
-    fn infer_schema_reports_error_on_invalid() {
-        let mut m = model();
-        if let Some(b) = m.request.as_mut() {
-            b.example = "{bad".to_string();
-        }
-        assert!(!apply(
-            &mut m,
-            &EditAction::InferSchema {
-                loc: BodyLoc::Request
-            }
-        ));
-        assert!(m.last_error.is_some());
     }
 
     #[test]

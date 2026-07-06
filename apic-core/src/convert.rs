@@ -77,6 +77,7 @@ fn split_raw_url(raw: &str) -> (String, Vec<Query>) {
                     name: k.to_string(),
                     value: v.to_string(),
                     description: None,
+                    required: false,
                 }
             })
             .collect(),
@@ -119,13 +120,15 @@ fn build_contract(raw: RawRequest) -> JsonContent {
     let headers = raw
         .headers
         .into_iter()
-        .map(|(name, value)| Header { name, value })
+        .map(|(name, value)| Header {
+            name,
+            value,
+            required: false,
+        })
         .collect();
 
     let request = raw.body.as_deref().and_then(|text| {
         body_example(Some(text)).map(|example| RequestBody {
-            dtype: "object".to_string(),
-            schema: None,
             example: Some(example),
         })
     });
@@ -137,8 +140,6 @@ fn build_contract(raw: RawRequest) -> JsonContent {
             code,
             description: status,
             headers: Vec::new(),
-            dtype: "object".to_string(),
-            schema: Vec::new(),
             example: body_example(body.as_deref()),
         })
         .collect();

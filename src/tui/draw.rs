@@ -358,66 +358,26 @@ fn push_section(
         Vec::new()
     };
 
-    // BODY sections (REQUEST/RESPONSE): show the schema table plus the inline
-    // example row. The example row always renders (even when the schema and the
-    // example are empty) so it stays reachable and editable in the TUI.
+    // BODY sections (REQUEST/RESPONSE): the lead kv rows (a response's expanded
+    // code/description) followed by the inline example row, which always renders
+    // (even when empty) so it stays reachable and editable in the TUI.
     if section.kind == SectionKind::Body {
-        // The real schema fields are the `Field` rows whose cell count equals
-        // the column count (NAME/TYPE/REQ/DESCRIPTION); the 2-cell `label value`
-        // rows are the expanded `type`/`code`/`description` lead rows.
-        let schema_rows_exist = field_rows
-            .iter()
-            .any(|r| ncols > 0 && r.cells.len() == ncols)
-            || has_example;
-
-        // Always render the lead kv rows (expanded type/code/description).
         for (ri, row) in section.rows.iter().enumerate() {
-            if row.kind != RowKind::Field || (ncols > 0 && row.cells.len() == ncols) {
-                continue;
-            }
             let selected = si == state.sec && ri == state.row;
-            if selected {
-                *sel = (lines.len(), lines.len());
-            }
-            let (line, col) = kv_line(state, row, selected);
-            record_cursor(cursor, lines.len(), col);
-            lines.push(line);
-        }
-
-        if schema_rows_exist {
-            // Column header line + schema rows, then the example row (always, so
-            // it stays editable / openable even when empty).
-            if let Some(h) = &section.headers {
-                let mut spans = vec![Span::raw(" ")];
-                for (i, head) in h.iter().enumerate() {
-                    spans.push(Span::styled(pad(head, widths[i]), dim()));
-                    if i + 1 < h.len() {
-                        spans.push(Span::raw(" ".repeat(GAP)));
+            match row.kind {
+                RowKind::Field => {
+                    if selected {
+                        *sel = (lines.len(), lines.len());
                     }
+                    let (line, col) = kv_line(state, row, selected);
+                    record_cursor(cursor, lines.len(), col);
+                    lines.push(line);
                 }
-                lines.push(Line::from(trim_trailing(spans)));
-            }
-            for (ri, row) in section.rows.iter().enumerate() {
-                let selected = si == state.sec && ri == state.row;
-                match row.kind {
-                    RowKind::Field if ncols > 0 && row.cells.len() == ncols => {
-                        if selected {
-                            *sel = (lines.len(), lines.len());
-                        }
-                        let (line, col) = table_line(state, row, &widths, ncols, selected);
-                        record_cursor(cursor, lines.len(), col);
-                        lines.push(line);
-                    }
-                    RowKind::Example => {
-                        push_example_block(state, row, selected, lines, sel);
-                    }
-                    _ => {}
+                RowKind::Example => {
+                    push_example_block(state, row, selected, lines, sel);
                 }
+                _ => {}
             }
-        } else {
-            // No schema fields: render `(none)` and nothing else (no header
-            // line, no example row), even when an example is present.
-            lines.push(Line::from(Span::styled(" (none)", dim())));
         }
         return;
     }
@@ -707,8 +667,6 @@ fn draw_help(frame: &mut Frame, area: Rect) {
             "a",
             "Add field/member · on '+ add response' adds a response",
         ]),
-        Row::new(vec!["g", "Generate example from the schema"]),
-        Row::new(vec!["G", "Generate schema from the example"]),
         Row::new(vec!["e", "Edit the example (create one when empty)"]),
         Row::new(vec!["d", "Delete the selected row"]),
         Row::new(vec!["Ctrl-S", "Save"]),
@@ -772,10 +730,8 @@ mod tests {
             r#"{ "name":"user","description":"User management","method":"GET",
                  "url":"https://api.example.com/user",
                  "headers":[{"name":"Content-Type","value":"application/json"}],
-                 "responses":[{"code":200,"description":"ok","schema":[
-                    {"name":"data","type":"object","default":null,"description":"d","required":false,
-                     "properties":[{"name":"access_token","type":"string","default":null,"description":"tok","required":true}]}
-                 ],"example":{"status":200}}] }"#,
+                 "responses":[{"code":200,"description":"ok",
+                    "example":{"access_token":"abc"}}] }"#,
             None,
         )
         .unwrap();
@@ -791,14 +747,9 @@ mod tests {
         assert!(text.contains("https://api.example.com/user")); // url string
         assert!(text.contains("HEADERS"));
         assert!(text.contains("RESPONSE 200 — ok"));
-        assert!(text.contains("Example:"));
-        // The nested field renders with exactly one tree prefix (no doubling).
+        // The body renders its raw JSON example.
         assert!(text.contains("access_token"));
-        assert!(
-            !text.contains("└─ └─") && !text.contains("├─ ├─"),
-            "tree prefix is doubled"
-        );
-        // No box borders (a single └─/├─ tree prefix is allowed).
+        // No box borders.
         for g in ['│', '┌', '┐', '┘', '┤', '┬', '┴', '┼'] {
             assert!(!text.contains(g), "found border glyph {g:?}");
         }

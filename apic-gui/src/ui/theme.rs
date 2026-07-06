@@ -6,22 +6,26 @@
 use eframe::egui;
 use egui::{Color32, RichText, Stroke};
 
-// Terminal/cyberpunk palette.
-pub(crate) const BG: Color32 = Color32::from_rgb(8, 12, 10);
-pub(crate) const PANEL_BG: Color32 = Color32::from_rgb(12, 17, 14);
-pub(crate) const BORDER: Color32 = Color32::from_rgb(30, 64, 46);
-pub(crate) const GREEN: Color32 = Color32::from_rgb(0, 230, 118);
-pub(crate) const CYAN: Color32 = Color32::from_rgb(86, 197, 255);
-pub(crate) const DIM: Color32 = Color32::from_rgb(110, 140, 122);
-pub(crate) const TEXT: Color32 = Color32::from_rgb(190, 225, 205);
-pub(crate) const RED: Color32 = Color32::from_rgb(255, 86, 86);
-pub(crate) const AMBER: Color32 = Color32::from_rgb(255, 196, 0);
+// Terminal-green identity, toned down for a calmer, cleaner surface.
+pub(crate) const BG: Color32 = Color32::from_rgb(15, 20, 17);
+pub(crate) const PANEL_BG: Color32 = Color32::from_rgb(20, 27, 23);
+pub(crate) const BORDER: Color32 = Color32::from_rgb(45, 66, 54);
+pub(crate) const GREEN: Color32 = Color32::from_rgb(78, 201, 138);
+pub(crate) const CYAN: Color32 = Color32::from_rgb(120, 190, 230);
+pub(crate) const DIM: Color32 = Color32::from_rgb(128, 150, 138);
+pub(crate) const TEXT: Color32 = Color32::from_rgb(205, 225, 213);
+pub(crate) const RED: Color32 = Color32::from_rgb(230, 110, 110);
+pub(crate) const AMBER: Color32 = Color32::from_rgb(224, 176, 60);
 
-// Spacing scale.
-pub(crate) const SPACE_MEDIUM: f32 = 8.0;
-pub(crate) const SPACE_SMALL: f32 = 6.0;
-pub(crate) const SPACE_EXTRA_SMALL: f32 = 4.0;
-pub(crate) const SPACE_LARGE: f32 = 16.0;
+/// Chip backgrounds for the REQUIREMENT column.
+pub(crate) const CHIP_BG: Color32 = Color32::from_rgb(40, 50, 45);
+pub(crate) const CHIP_REQUIRED_BG: Color32 = Color32::from_rgb(120, 60, 30);
+
+// Spacing scale (wider for calmer padding).
+pub(crate) const SPACE_EXTRA_SMALL: f32 = 5.0;
+pub(crate) const SPACE_SMALL: f32 = 8.0;
+pub(crate) const SPACE_MEDIUM: f32 = 12.0;
+pub(crate) const SPACE_LARGE: f32 = 20.0;
 
 /// Installs the dark, monospace, neon theme.
 pub(crate) fn apply_theme(ctx: &egui::Context) {
@@ -31,7 +35,7 @@ pub(crate) fn apply_theme(ctx: &egui::Context) {
     v.dark_mode = true;
     v.panel_fill = BG;
     v.window_fill = BG;
-    v.extreme_bg_color = Color32::from_rgb(4, 6, 5);
+    v.extreme_bg_color = Color32::from_rgb(11, 15, 13);
     v.faint_bg_color = PANEL_BG;
     v.override_text_color = Some(TEXT);
     v.hyperlink_color = CYAN;
@@ -42,6 +46,8 @@ pub(crate) fn apply_theme(ctx: &egui::Context) {
     v.widgets.inactive.weak_bg_fill = PANEL_BG;
     v.widgets.hovered.bg_stroke = Stroke::new(1.0, GREEN);
     v.widgets.active.bg_stroke = Stroke::new(1.0, GREEN);
+    style.spacing.item_spacing = egui::vec2(8.0, 8.0);
+    style.spacing.button_padding = egui::vec2(8.0, 4.0);
     ctx.set_style(style);
 }
 

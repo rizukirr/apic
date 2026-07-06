@@ -5,7 +5,7 @@
 //!
 //! [`EditModel`]: super::EditModel
 
-/// Where a request/response schema lives.
+/// Which body (request, or a given response) an edit targets.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BodyLoc {
     Request,
@@ -23,24 +23,19 @@ pub enum Field {
     QueryName(usize),
     QueryValue(usize),
     QueryDesc(usize),
+    QueryRequired(usize),
     QueryAdd,
     HeaderName(usize),
     HeaderValue(usize),
+    HeaderRequired(usize),
     HeaderAdd,
     RequestToggle,
-    BodyDtype(BodyLoc),
     ResponseCode(usize),
     ResponseDesc(usize),
     ResponseHeaderName(usize, usize),
     ResponseHeaderValue(usize, usize),
     ResponseHeaderAdd(usize),
     BodyExample(BodyLoc),
-    SchemaName(BodyLoc, Vec<usize>),
-    SchemaType(BodyLoc, Vec<usize>),
-    SchemaDesc(BodyLoc, Vec<usize>),
-    SchemaRequired(BodyLoc, Vec<usize>),
-    SchemaAccept(BodyLoc, Vec<usize>),
-    SchemaAdd(BodyLoc, Vec<usize>),
     ResponseAdd,
     SectionHeader,
 }

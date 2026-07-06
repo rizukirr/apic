@@ -238,12 +238,6 @@ impl TemplateRules {
         let mut issues = Vec::new();
         check_headers(template, &contract, &mut issues);
         check_query(template, &contract, &mut issues);
-        check_schema(
-            template.pointer("/request/schema"),
-            contract.pointer("/request/schema"),
-            "request",
-            &mut issues,
-        );
         check_responses(template, &contract, &mut issues);
         Ok(issues)
     }
@@ -275,7 +269,7 @@ fn check_query(template: &Value, contract: &Value, issues: &mut Vec<String>) {
 }
 
 /// For each response code the template declares, the contract must carry that
-/// code and contain every schema field name the template's response declares.
+/// code.
 fn check_responses(template: &Value, contract: &Value, issues: &mut Vec<String>) {
     let Some(Value::Array(t_responses)) = template.get("responses") else {
         return;
@@ -291,41 +285,9 @@ fn check_responses(template: &Value, contract: &Value, issues: &mut Vec<String>)
         };
         let matched = c_responses
             .iter()
-            .find(|c| c.get("code").and_then(Value::as_u64) == Some(code));
-        match matched {
-            None => issues.push(format!("missing response `{code}`")),
-            Some(c_resp) => check_schema(
-                t_resp.get("schema"),
-                c_resp.get("schema"),
-                &format!("response {code}"),
-                issues,
-            ),
-        }
-    }
-}
-
-/// Every field name declared by the template `schema` (descending into nested
-/// `properties`, names joined with `.`) must be declared by the contract schema.
-/// `label` prefixes the issue message, e.g. `request` or `response 200`.
-fn check_schema(
-    template: Option<&Value>,
-    contract: Option<&Value>,
-    label: &str,
-    issues: &mut Vec<String>,
-) {
-    let Some(t_schema) = template else { return };
-    let mut required = Vec::new();
-    schema_field_names(t_schema, "", &mut required);
-    if required.is_empty() {
-        return;
-    }
-    let mut present = Vec::new();
-    if let Some(c_schema) = contract {
-        schema_field_names(c_schema, "", &mut present);
-    }
-    for name in required {
-        if !present.contains(&name) {
-            issues.push(format!("{label} schema missing field `{name}`"));
+            .any(|c| c.get("code").and_then(Value::as_u64) == Some(code));
+        if !matched {
+            issues.push(format!("missing response `{code}`"));
         }
     }
 }
@@ -340,26 +302,6 @@ fn object_names(array: Option<&Value>) -> Vec<String> {
             .map(str::to_string)
             .collect(),
         _ => Vec::new(),
-    }
-}
-
-/// Collects dotted field names from a `schema` array, descending into nested
-/// `properties`: `[{name:"data", properties:[{name:"x"}]}]` -> `["data", "data.x"]`.
-fn schema_field_names(schema: &Value, prefix: &str, out: &mut Vec<String>) {
-    let Value::Array(items) = schema else { return };
-    for item in items {
-        let Some(name) = item.get("name").and_then(Value::as_str) else {
-            continue;
-        };
-        let full = if prefix.is_empty() {
-            name.to_string()
-        } else {
-            format!("{prefix}.{name}")
-        };
-        if let Some(props) = item.get("properties") {
-            schema_field_names(props, &full, out);
-        }
-        out.push(full);
     }
 }
 
@@ -748,37 +690,15 @@ mod tests {
     }
 
     #[test]
-    fn request_schema_field_names_match_recursively() {
-        let template = r#"{ "request": { "schema": [
-            { "name": "data", "properties": [ { "name": "id" } ] }
-        ] } }"#;
-        let ok = r#"{ "request": { "schema": [
-            { "name": "data", "properties": [ { "name": "id" }, { "name": "extra" } ] }
-        ] } }"#;
-        let bad = r#"{ "request": { "schema": [ { "name": "data", "properties": [] } ] } }"#;
-        assert!(issues(template, ok).is_empty());
-        assert_eq!(
-            issues(template, bad),
-            vec!["request schema missing field `data.id`"]
-        );
-    }
-
-    #[test]
-    fn response_must_have_matching_code_and_schema() {
-        let template = r#"{ "responses": [
-            { "code": 200, "schema": [ { "name": "status" }, { "name": "message" } ] }
-        ] }"#;
-        let missing_code = r#"{ "responses": [ { "code": 400, "schema": [] } ] }"#;
-        let missing_field =
-            r#"{ "responses": [ { "code": 200, "schema": [ { "name": "status" } ] } ] }"#;
+    fn response_must_have_matching_code() {
+        let template = r#"{ "responses": [ { "code": 200 } ] }"#;
+        let missing_code = r#"{ "responses": [ { "code": 400 } ] }"#;
+        let present = r#"{ "responses": [ { "code": 200 } ] }"#;
         assert_eq!(
             issues(template, missing_code),
             vec!["missing response `200`"]
         );
-        assert_eq!(
-            issues(template, missing_field),
-            vec!["response 200 schema missing field `message`"]
-        );
+        assert!(issues(template, present).is_empty());
     }
 
     #[test]
@@ -804,16 +724,5 @@ mod tests {
             vec!["A".to_string(), "B".to_string()]
         );
         assert!(object_names(v.get("missing")).is_empty());
-    }
-
-    #[test]
-    fn schema_field_names_flattens_nested_properties() {
-        let v: Value = serde_json::from_str(
-            r#"[ { "name": "data", "properties": [ { "name": "x" } ] }, { "name": "top" } ]"#,
-        )
-        .unwrap();
-        let mut out = Vec::new();
-        schema_field_names(&v, "", &mut out);
-        assert_eq!(out, vec!["data.x", "data", "top"]);
     }
 }

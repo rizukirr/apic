@@ -4,7 +4,6 @@
 //! example fields as raw `String` buffers so half-typed input is always a
 //! valid in-memory state. Conversion to a real contract happens only on save.
 
-use super::address::BodyLoc;
 use crate::json::Method;
 
 /// The whole contract under edit.
@@ -18,16 +17,13 @@ pub struct EditModel {
     pub headers: Vec<EditHeader>,
     pub request: Option<EditBody>,
     pub responses: Vec<EditResponse>,
-    /// Transient UI feedback as `(which body, message)`, e.g. a failed schema
-    /// inference. Scoped to a `BodyLoc` so it renders only under that body. Not
-    /// serialized.
-    pub last_error: Option<(BodyLoc, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EditHeader {
     pub name: String,
     pub value: String,
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,12 +31,11 @@ pub struct EditQuery {
     pub name: String,
     pub value: String,
     pub description: String, // empty => None
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EditBody {
-    pub dtype: String, // e.g. "object", "object[]"
-    pub schema: Vec<EditSchema>,
     pub example: String, // raw JSON text; empty => None
 }
 
@@ -49,29 +44,13 @@ pub struct EditResponse {
     pub code: String, // numeric text; parsed to u16 on save
     pub description: String,
     pub headers: Vec<EditHeader>,
-    pub dtype: String,
-    pub schema: Vec<EditSchema>,
     pub example: String, // raw JSON text; empty => None
 }
 
-/// A schema field. `properties` nests recursively for object types.
-#[derive(Debug, Clone, PartialEq)]
-pub struct EditSchema {
-    pub name: String,
-    pub dtype: String,
-    pub default: String, // empty => None
-    pub description: String,
-    pub required: bool,
-    pub properties: Vec<EditSchema>, // empty => None on save
-    pub accept: String,              // empty => None
-}
-
 impl EditBody {
-    /// A request body with no fields and no example.
+    /// A request body with no example.
     pub fn empty() -> Self {
         EditBody {
-            dtype: "object".to_string(),
-            schema: Vec::new(),
             example: String::new(),
         }
     }
@@ -84,14 +63,12 @@ impl EditResponse {
             code: "200".to_string(),
             description: String::new(),
             headers: Vec::new(),
-            dtype: "object".to_string(),
-            schema: Vec::new(),
             example: String::new(),
         }
     }
 }
 
-use crate::json::{Header, JsonContent, Query, RequestBody, Response, Schema};
+use crate::json::{Header, JsonContent, Query, RequestBody, Response};
 use serde_json::Value;
 
 /// Pretty-prints a JSON example value to raw text (4-space indent), or empty
@@ -105,23 +82,6 @@ fn example_to_text(value: Option<&Value>) -> String {
 
 fn opt_to_string(opt: Option<String>) -> String {
     opt.unwrap_or_default()
-}
-
-fn schema_to_edit(s: Schema) -> EditSchema {
-    EditSchema {
-        name: s.name,
-        dtype: s.dtype,
-        default: opt_to_string(s.default),
-        description: s.description,
-        required: s.required,
-        properties: s
-            .properties
-            .unwrap_or_default()
-            .into_iter()
-            .map(schema_to_edit)
-            .collect(),
-        accept: opt_to_string(s.accept),
-    }
 }
 
 impl EditModel {
@@ -139,6 +99,7 @@ impl EditModel {
                     name: q.name,
                     value: q.value,
                     description: opt_to_string(q.description),
+                    required: q.required,
                 })
                 .collect(),
             headers: c
@@ -147,16 +108,10 @@ impl EditModel {
                 .map(|h: Header| EditHeader {
                     name: h.name,
                     value: h.value,
+                    required: h.required,
                 })
                 .collect(),
             request: c.request.map(|r: RequestBody| EditBody {
-                dtype: r.dtype,
-                schema: r
-                    .schema
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(schema_to_edit)
-                    .collect(),
                 example: example_to_text(r.example.as_ref()),
             }),
             responses: c
@@ -171,14 +126,12 @@ impl EditModel {
                         .map(|h: Header| EditHeader {
                             name: h.name,
                             value: h.value,
+                            required: h.required,
                         })
                         .collect(),
-                    dtype: r.dtype,
-                    schema: r.schema.into_iter().map(schema_to_edit).collect(),
                     example: example_to_text(r.example.as_ref()),
                 })
                 .collect(),
-            last_error: None,
         }
     }
 }
@@ -200,33 +153,8 @@ fn parse_example(raw: &str, ctx: &str) -> Result<Option<Value>, String> {
         .map_err(|err| format!("{ctx} example is not valid JSON: {err}"))
 }
 
-fn edit_schema_to_value(s: &EditSchema) -> Value {
-    let mut map = serde_json::Map::new();
-    map.insert("name".into(), Value::String(s.name.clone()));
-    map.insert("type".into(), Value::String(s.dtype.clone()));
-    map.insert(
-        "default".into(),
-        match str_opt(&s.default) {
-            Some(d) => Value::String(d.to_string()),
-            None => Value::Null,
-        },
-    );
-    map.insert("description".into(), Value::String(s.description.clone()));
-    map.insert("required".into(), Value::Bool(s.required));
-    if !s.properties.is_empty() {
-        map.insert(
-            "properties".into(),
-            Value::Array(s.properties.iter().map(edit_schema_to_value).collect()),
-        );
-    }
-    if let Some(a) = str_opt(&s.accept) {
-        map.insert("accept".into(), Value::String(a.to_string()));
-    }
-    Value::Object(map)
-}
-
 impl EditModel {
-    /// Serializes the model to a pretty, schema-valid contract string.
+    /// Serializes the model to a pretty, valid contract string.
     ///
     /// Returns `Err` (never panics) when an example buffer is malformed JSON, a
     /// response code is non-numeric, or the assembled document fails contract
@@ -254,6 +182,7 @@ impl EditModel {
                             let mut m = serde_json::Map::new();
                             m.insert("name".into(), Value::String(q.name.clone()));
                             m.insert("value".into(), Value::String(q.value.clone()));
+                            m.insert("required".into(), Value::Bool(q.required));
                             if let Some(d) = str_opt(&q.description) {
                                 m.insert("description".into(), Value::String(d.to_string()));
                             }
@@ -274,25 +203,20 @@ impl EditModel {
                         let mut m = serde_json::Map::new();
                         m.insert("name".into(), Value::String(h.name.clone()));
                         m.insert("value".into(), Value::String(h.value.clone()));
+                        m.insert("required".into(), Value::Bool(h.required));
                         Value::Object(m)
                     })
                     .collect(),
             ),
         );
 
-        // request (optional)
-        if let Some(req) = &self.request {
+        // request (optional): only written when it carries an example, so an
+        // empty body (the GUI always shows an editable one) is not persisted.
+        if let Some(req) = &self.request
+            && let Some(ex) = parse_example(&req.example, "request")?
+        {
             let mut m = serde_json::Map::new();
-            m.insert("type".into(), Value::String(req.dtype.clone()));
-            if !req.schema.is_empty() {
-                m.insert(
-                    "schema".into(),
-                    Value::Array(req.schema.iter().map(edit_schema_to_value).collect()),
-                );
-            }
-            if let Some(ex) = parse_example(&req.example, "request")? {
-                m.insert("example".into(), ex);
-            }
+            m.insert("example".into(), ex);
             root.insert("request".into(), Value::Object(m));
         }
 
@@ -319,17 +243,11 @@ impl EditModel {
                                 let mut mm = serde_json::Map::new();
                                 mm.insert("name".into(), Value::String(h.name.clone()));
                                 mm.insert("value".into(), Value::String(h.value.clone()));
+                                mm.insert("required".into(), Value::Bool(h.required));
                                 Value::Object(mm)
                             })
                             .collect(),
                     ),
-                );
-            }
-            m.insert("type".into(), Value::String(r.dtype.clone()));
-            if !r.schema.is_empty() {
-                m.insert(
-                    "schema".into(),
-                    Value::Array(r.schema.iter().map(edit_schema_to_value).collect()),
                 );
             }
             if let Some(ex) = parse_example(&r.example, &format!("response {code}"))? {
@@ -358,175 +276,6 @@ impl EditModel {
     }
 }
 
-/// Walks `fields` following `path`, returning the addressed node.
-fn schema_node_mut<'a>(fields: &'a mut [EditSchema], path: &[usize]) -> Option<&'a mut EditSchema> {
-    let (&first, rest) = path.split_first()?;
-    let node = fields.get_mut(first)?;
-    if rest.is_empty() {
-        Some(node)
-    } else {
-        schema_node_mut(&mut node.properties, rest)
-    }
-}
-
-impl EditModel {
-    /// Mutable access to a request-body schema node by path ([] is invalid;
-    /// use the top-level vec directly for inserts).
-    pub fn schema_at_mut_request(&mut self, path: &[usize]) -> Option<&mut EditSchema> {
-        let req = self.request.as_mut()?;
-        schema_node_mut(&mut req.schema, path)
-    }
-
-    /// Mutable access to a response schema node by path.
-    pub fn schema_at_mut_response(
-        &mut self,
-        resp: usize,
-        path: &[usize],
-    ) -> Option<&mut EditSchema> {
-        let r = self.responses.get_mut(resp)?;
-        schema_node_mut(&mut r.schema, path)
-    }
-
-    /// The vector that should receive a new child for `path` ([] = top-level).
-    /// Returns `None` if the path does not resolve.
-    pub fn schema_children_mut_request(&mut self, path: &[usize]) -> Option<&mut Vec<EditSchema>> {
-        let req = self.request.as_mut()?;
-        if path.is_empty() {
-            return Some(&mut req.schema);
-        }
-        schema_node_mut(&mut req.schema, path).map(|n| &mut n.properties)
-    }
-
-    /// Response counterpart of [`schema_children_mut_request`].
-    pub fn schema_children_mut_response(
-        &mut self,
-        resp: usize,
-        path: &[usize],
-    ) -> Option<&mut Vec<EditSchema>> {
-        let r = self.responses.get_mut(resp)?;
-        if path.is_empty() {
-            return Some(&mut r.schema);
-        }
-        schema_node_mut(&mut r.schema, path).map(|n| &mut n.properties)
-    }
-}
-
-/// A blank schema field for inserts.
-impl EditSchema {
-    pub fn blank() -> Self {
-        EditSchema {
-            name: String::new(),
-            dtype: "string".to_string(),
-            default: String::new(),
-            description: String::new(),
-            required: false,
-            properties: Vec::new(),
-            accept: String::new(),
-        }
-    }
-}
-
-/// Infers an editor schema (the inverse of [`example_from_schema`]) from an
-/// example JSON string. The example must be a JSON object, or a non-empty array
-/// of objects; each field's type is detected from its value. Returns `Err` with
-/// a human-readable message for malformed JSON or an unusable top-level shape.
-pub fn schema_from_example(example: &str) -> Result<Vec<EditSchema>, String> {
-    let value: serde_json::Value =
-        serde_json::from_str(example).map_err(|e| format!("invalid JSON: {e}"))?;
-    let fields = match &value {
-        serde_json::Value::Object(map) => map,
-        serde_json::Value::Array(items) => match items.first() {
-            Some(serde_json::Value::Object(map)) => map,
-            _ => return Err("example must be a JSON object or array of objects".to_string()),
-        },
-        _ => return Err("example must be a JSON object or array of objects".to_string()),
-    };
-    Ok(fields
-        .iter()
-        .map(|(name, v)| infer_field(name, v))
-        .collect())
-}
-
-/// Builds one `EditSchema` from a JSON `(name, value)` pair, recursing into
-/// objects and array element types. `required` is `true` for every present
-/// value except `null` (which carries no type, so it becomes an optional
-/// string). `default`/`description`/`accept` are left empty.
-fn infer_field(name: &str, value: &serde_json::Value) -> EditSchema {
-    use serde_json::Value;
-    let mut field = EditSchema::blank();
-    field.name = name.to_string();
-    field.required = !value.is_null();
-    match value {
-        Value::String(_) => field.dtype = "string".to_string(),
-        Value::Number(n) => field.dtype = number_base(n).to_string(),
-        Value::Bool(_) => field.dtype = "boolean".to_string(),
-        Value::Null => field.dtype = "string".to_string(),
-        Value::Object(map) => {
-            field.dtype = "object".to_string();
-            field.properties = map.iter().map(|(k, v)| infer_field(k, v)).collect();
-        }
-        Value::Array(items) => {
-            field.dtype = format!("{}[]", element_base(items.first()));
-            if let Some(Value::Object(map)) = items.first() {
-                field.properties = map.iter().map(|(k, v)| infer_field(k, v)).collect();
-            }
-        }
-    }
-    field
-}
-
-/// The base type name for an array's elements, taken from the first element.
-/// An empty array (or a nested-array/null element, neither representable as a
-/// single `[]` type) defaults to `string`.
-fn element_base(first: Option<&serde_json::Value>) -> &'static str {
-    use serde_json::Value;
-    match first {
-        Some(Value::Number(n)) => number_base(n),
-        Some(Value::Bool(_)) => "boolean",
-        Some(Value::Object(_)) => "object",
-        _ => "string",
-    }
-}
-
-/// `"int"` for an integer JSON number, `"float"` for a fractional one.
-fn number_base(n: &serde_json::Number) -> &'static str {
-    if n.is_f64() { "float" } else { "int" }
-}
-
-/// Builds an example JSON object from schema fields:
-/// string/file → "{name}", int-like → 0, float-like → 0.0, bool → false,
-/// object with properties → nested object, empty object → {} if required else null,
-/// arrays → a one-element array of the base type.
-pub fn example_from_schema(fields: &[EditSchema]) -> serde_json::Value {
-    let mut map = serde_json::Map::new();
-    for f in fields {
-        map.insert(f.name.clone(), gen_field_value(f));
-    }
-    serde_json::Value::Object(map)
-}
-
-fn gen_field_value(f: &EditSchema) -> serde_json::Value {
-    use serde_json::Value;
-    let (base, is_array) = crate::json::parse_type(&f.dtype);
-    let v = match base {
-        "string" | "file" => Value::String(format!("{{{}}}", f.name)),
-        "int" | "integer" | "number" | "long" | "short" => Value::Number(0.into()),
-        "float" | "double" | "decimal" => serde_json::json!(0.0),
-        "bool" | "boolean" => Value::Bool(false),
-        "object" => {
-            if !f.properties.is_empty() {
-                example_from_schema(&f.properties)
-            } else if f.required {
-                Value::Object(serde_json::Map::new())
-            } else {
-                Value::Null
-            }
-        }
-        _ => Value::Null,
-    };
-    if is_array { Value::Array(vec![v]) } else { v }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,8 +286,8 @@ mod tests {
         "description": "Log a user in",
         "method": "POST",
         "url": "https://api.example.com/auth/{id}",
-        "query": [{ "name": "page", "value": "1", "description": "Page" }],
-        "headers": [{ "name": "Content-Type", "value": "application/json" }],
+        "query": [{ "name": "page", "value": "1", "description": "Page", "required": true }],
+        "headers": [{ "name": "Content-Type", "value": "application/json", "required": true }],
         "request": {
             "type": "object",
             "schema": [{ "name": "user", "type": "object", "default": null,
@@ -566,14 +315,10 @@ mod tests {
         assert_eq!(m.headers[0].name, "Content-Type");
 
         let req = m.request.as_ref().unwrap();
-        assert_eq!(req.dtype, "object");
-        assert_eq!(req.schema[0].name, "user");
-        assert_eq!(req.schema[0].properties[0].name, "email");
         // example is pretty-printed raw text containing the key
         assert!(req.example.contains("\"email\""));
 
         assert_eq!(m.responses[0].code, "200");
-        assert_eq!(m.responses[0].schema[0].name, "token");
         assert!(m.responses[0].example.contains("\"token\""));
     }
 
@@ -587,6 +332,8 @@ mod tests {
         assert_eq!(back.name, "login");
         assert_eq!(back.url, "https://api.example.com/auth/{id}");
         assert_eq!(back.query[0].value, "1");
+        assert!(back.headers[0].required);
+        assert!(back.query[0].required);
         assert_eq!(back.responses[0].code, 200);
         assert_eq!(
             back.request.unwrap().example.unwrap()["user"]["email"],
@@ -604,118 +351,14 @@ mod tests {
     }
 
     #[test]
-    fn empty_example_becomes_absent() {
+    fn empty_request_body_is_omitted() {
         let contract = json_get(FULL, None).unwrap();
         let mut model = EditModel::from_contract(contract);
         model.request.as_mut().unwrap().example = String::new();
         let json = model.to_json().unwrap();
         let back = json_get(&json, None).unwrap();
-        assert!(back.request.unwrap().example.is_none());
-    }
-
-    #[test]
-    fn schema_at_mut_reaches_nested() {
-        let c = json_get(
-            r#"{ "name":"t","method":"GET",
-                 "url":"/x","headers":[],
-                 "request":{"type":"object","schema":[
-                   {"name":"wrap","type":"object","default":null,"description":"d","required":true,
-                    "properties":[{"name":"leaf","type":"string","default":null,"description":"d","required":false}]}
-                 ]},
-                 "responses":[] }"#,
-            None,
-        )
-        .unwrap();
-        let mut m = EditModel::from_contract(c);
-        let node = m.schema_at_mut_request(&[0, 0]).unwrap();
-        assert_eq!(node.name, "leaf");
-        node.name = "renamed".to_string();
-        assert_eq!(m.request.unwrap().schema[0].properties[0].name, "renamed");
-    }
-
-    #[test]
-    fn example_from_schema_generates_typed_placeholders() {
-        use serde_json::json;
-        let c = json_get(
-            r#"{ "name":"t","method":"POST",
-                 "url":"/x","headers":[],
-                 "request":{"type":"object","schema":[
-                    {"name":"status","type":"int","default":null,"description":"d","required":true},
-                    {"name":"message","type":"string","default":null,"description":"d","required":true},
-                    {"name":"data","type":"object","default":null,"description":"d","required":false}
-                 ]},
-                 "responses":[] }"#,
-            None,
-        ).unwrap();
-        let m = EditModel::from_contract(c);
-        let schema = &m.request.as_ref().unwrap().schema;
-        let v = example_from_schema(schema);
-        assert_eq!(v["status"], json!(0));
-        assert_eq!(v["message"], json!("{message}"));
-        assert_eq!(v["data"], serde_json::Value::Null); // object, not required -> null
-    }
-
-    #[test]
-    fn schema_from_example_infers_scalar_types() {
-        let fields =
-            schema_from_example(r#"{"name":"john","age":1,"score":1.5,"ok":true}"#).unwrap();
-        let by = |n: &str| fields.iter().find(|f| f.name == n).unwrap();
-        assert_eq!(by("name").dtype, "string");
-        assert_eq!(by("age").dtype, "int");
-        assert_eq!(by("score").dtype, "float");
-        assert_eq!(by("ok").dtype, "boolean");
-        assert!(by("name").required);
-    }
-
-    #[test]
-    fn schema_from_example_whole_float_is_float() {
-        // A JSON number with a fraction is a float even when whole (`1.0`).
-        let fields = schema_from_example(r#"{"x":1.0}"#).unwrap();
-        assert_eq!(fields[0].dtype, "float");
-    }
-
-    #[test]
-    fn schema_from_example_null_is_optional_string() {
-        let fields = schema_from_example(r#"{"x":null}"#).unwrap();
-        assert_eq!(fields[0].dtype, "string");
-        assert!(!fields[0].required);
-    }
-
-    #[test]
-    fn schema_from_example_nested_object_and_arrays() {
-        let fields = schema_from_example(
-            r#"{"user":{"email":"a@b.c"},"tags":["x"],"nums":[1],"items":[{"id":1}],"empty":[]}"#,
-        )
-        .unwrap();
-        let by = |n: &str| fields.iter().find(|f| f.name == n).unwrap();
-        assert_eq!(by("user").dtype, "object");
-        assert_eq!(by("user").properties[0].name, "email");
-        assert_eq!(by("user").properties[0].dtype, "string");
-        assert_eq!(by("tags").dtype, "string[]");
-        assert_eq!(by("nums").dtype, "int[]");
-        assert_eq!(by("items").dtype, "object[]");
-        assert_eq!(by("items").properties[0].dtype, "int");
-        assert_eq!(by("empty").dtype, "string[]");
-    }
-
-    #[test]
-    fn schema_from_example_top_level_array_of_objects() {
-        let fields = schema_from_example(r#"[{"id":1}]"#).unwrap();
-        assert_eq!(fields[0].name, "id");
-        assert_eq!(fields[0].dtype, "int");
-    }
-
-    #[test]
-    fn schema_from_example_rejects_malformed_json() {
-        let err = schema_from_example("{not json").unwrap_err();
-        assert!(err.starts_with("invalid JSON"), "got: {err}");
-    }
-
-    #[test]
-    fn schema_from_example_rejects_non_object_top_level() {
-        assert!(schema_from_example(r#""just a string""#).is_err());
-        assert!(schema_from_example("[1,2,3]").is_err());
-        assert!(schema_from_example("[]").is_err());
+        // A request body with no example is dropped entirely.
+        assert!(back.request.is_none());
     }
 
     #[test]
