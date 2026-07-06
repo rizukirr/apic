@@ -22,6 +22,8 @@ pub(crate) enum Mode {
     Help,
     ConfirmQuit,
     ConfirmDelete(Field),
+    /// The HTTP-method picker is open, highlighting this index into `method_all`.
+    MethodPick(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -467,9 +469,9 @@ fn begin_row(state: &mut UiState, model: &mut EditModel) -> Action {
     };
     match row.kind {
         RowKind::UrlLine => {
-            // Focus the method cell (highlighted, not yet cycled) so a stray
-            // Enter never flips the method. A second Enter cycles it; `l` moves
-            // to the url cell, where Enter/i edits it inline.
+            // Focus the method cell (highlighted) so a stray Enter never changes
+            // the method. A second Enter opens the method picker; `l` moves to the
+            // url cell, where Enter/i edits it inline.
             if let Some(mi) = row.cells.iter().position(|c| c.field == Field::Method) {
                 state.cell = Some(mi);
             }
@@ -515,8 +517,8 @@ fn begin_cell_edit(state: &mut UiState, model: &mut EditModel) -> Action {
             Action::None
         }
         CellKind::Enum => {
-            // Method is the only enum field today.
-            cycle_method(state, model, true);
+            // Method is the only enum field: open the picker at the current one.
+            state.mode = Mode::MethodPick(current_method_index(model));
             Action::None
         }
         CellKind::Bool => {
@@ -534,11 +536,43 @@ fn begin_cell_edit(state: &mut UiState, model: &mut EditModel) -> Action {
     }
 }
 
-/// Cycles the method enum forward/back (the only enum field today).
-fn cycle_method(state: &mut UiState, model: &mut EditModel, forward: bool) {
-    apply(model, &EditAction::CycleMethod { forward });
-    state.dirty = true;
-    state.refresh(model);
+/// The index of the model's current method within `method_all`.
+fn current_method_index(model: &EditModel) -> usize {
+    let all = apic_core::json::method_all();
+    let cur = apic_core::json::method_str(&model.method);
+    all.iter()
+        .position(|m| apic_core::json::method_str(m) == cur)
+        .unwrap_or(0)
+}
+
+/// Handles keys while the HTTP-method picker is open: `j`/`k` (or arrows) move
+/// the highlight, Enter selects, Esc cancels.
+pub(crate) fn handle_method_pick(
+    state: &mut UiState,
+    model: &mut EditModel,
+    key: KeyEvent,
+) -> Action {
+    let Mode::MethodPick(idx) = state.mode else {
+        return Action::None;
+    };
+    let all = apic_core::json::method_all();
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.mode = Mode::MethodPick((idx + all.len() - 1) % all.len());
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            state.mode = Mode::MethodPick((idx + 1) % all.len());
+        }
+        KeyCode::Enter => {
+            model.method = all[idx].clone();
+            state.dirty = true;
+            state.refresh(model);
+            state.mode = Mode::Normal;
+        }
+        KeyCode::Esc => state.mode = Mode::Normal,
+        _ => {}
+    }
+    Action::None
 }
 
 fn add_row(state: &mut UiState, model: &mut EditModel, field: &Field) {
@@ -971,8 +1005,8 @@ mod tests {
     }
 
     #[test]
-    fn method_cycles_on_collapsed_url_line() {
-        let mut m = model();
+    fn enter_on_method_opens_the_picker_and_selection_sets_it() {
+        let mut m = model(); // method GET
         let mut s = UiState::new(&m);
         goto(&mut s, |f| matches!(f, Field::Method));
         // focus the method enum cell on the collapsed url line
@@ -984,8 +1018,16 @@ mod tests {
             .position(|c| matches!(c.field, Field::Method))
             .unwrap();
         s.cell = Some(mi);
+        // Enter opens the picker at the current method (index 0 = GET); it does
+        // not change the method yet.
         handle_normal(&mut s, &mut m, key(KeyCode::Enter));
-        assert_ne!(method_str(&m.method), "GET");
+        assert_eq!(s.mode, Mode::MethodPick(0));
+        assert_eq!(method_str(&m.method), "GET");
+        // Move down one and select -> POST (the next method).
+        handle_method_pick(&mut s, &mut m, key(KeyCode::Char('j')));
+        handle_method_pick(&mut s, &mut m, key(KeyCode::Enter));
+        assert_eq!(method_str(&m.method), "POST");
+        assert_eq!(s.mode, Mode::Normal);
     }
 
     #[test]

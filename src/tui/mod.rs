@@ -17,7 +17,7 @@ pub(crate) use seed::seed_model;
 use crate::tui::rows::{BodyLoc, Field};
 use crate::tui::state::{
     Action, Mode, UiState, apply_save, create_response, handle_confirm_delete, handle_confirm_quit,
-    handle_insert, handle_normal, remove_response, update_response,
+    handle_insert, handle_method_pick, handle_normal, remove_response, update_response,
 };
 
 /// The two-field response dialog state: status code + short description.
@@ -289,6 +289,7 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                             state.mode = Mode::Normal;
                             Action::None
                         }
+                        Mode::MethodPick(_) => handle_method_pick(&mut state, &mut model, key),
                         Mode::Example => Action::None,
                     };
 

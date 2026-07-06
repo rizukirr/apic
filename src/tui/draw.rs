@@ -64,8 +64,45 @@ pub(crate) fn draw(frame: &mut Frame, state: &UiState) {
             "Delete this row?",
             "y: delete    n/Esc: cancel",
         ),
+        Mode::MethodPick(idx) => draw_method_pick(frame, area, idx),
         _ => {}
     }
+}
+
+/// The HTTP-method picker: a small list of methods (each in its color) with the
+/// highlighted one reversed. `j`/`k` move, Enter selects, Esc cancels.
+fn draw_method_pick(frame: &mut Frame, area: Rect, selected: usize) {
+    let all = apic_core::json::method_all();
+    let w = 30u16.min(area.width);
+    let h = (all.len() as u16 + 2).min(area.height); // methods + border
+    let popup = Rect {
+        x: area.x + area.width.saturating_sub(w) / 2,
+        y: area.y + area.height.saturating_sub(h) / 2,
+        width: w,
+        height: h,
+    };
+    frame.render_widget(Clear, popup);
+
+    let lines: Vec<Line> = all
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let name = apic_core::json::method_str(m);
+            let mut style = Style::default().fg(method_color(&name));
+            if i == selected {
+                style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
+            }
+            Line::from(Span::styled(format!(" {name}"), style))
+        })
+        .collect();
+    let list = Paragraph::new(lines).block(
+        Block::default()
+            .title(" method ")
+            .title_bottom(" j/k · Enter · Esc ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Reset)),
+    );
+    frame.render_widget(list, popup);
 }
 
 /// A style helper: the resting cyan section title.
