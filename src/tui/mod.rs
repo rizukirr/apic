@@ -16,9 +16,29 @@ pub(crate) use seed::seed_model;
 
 use crate::tui::rows::{BodyLoc, Field};
 use crate::tui::state::{
-    Action, Mode, UiState, apply_save, handle_confirm_delete, handle_confirm_quit, handle_insert,
-    handle_normal,
+    Action, Mode, UiState, apply_save, create_response, handle_confirm_delete, handle_confirm_quit,
+    handle_insert, handle_method_pick, handle_normal, remove_response, update_response,
 };
+
+/// The two-field response dialog state: status code + short description.
+struct ResponseForm {
+    status: String,
+    description: String,
+    /// `false` = editing the status field, `true` = the description field.
+    on_description: bool,
+    /// `Some(idx)` edits response `idx` in place; `None` creates a new one and
+    /// then chains into its JSON editor.
+    editing: Option<usize>,
+}
+
+/// What the JSON modal writes to on save.
+enum ModalTarget {
+    /// Edit an existing body's example (request, or a response index).
+    Body(Field),
+    /// A new response awaiting its first example: created on save only when the
+    /// JSON is non-empty, with this status/description.
+    NewResponse { status: String, description: String },
+}
 // Crossterm is imported via ratatui's re-export (== 0.28) so event/terminal
 // types match ratatui and tui-textarea. The root `crossterm` 0.29 crate is used
 // only by `picker.rs`; the two never exchange values.
@@ -73,9 +93,13 @@ fn example_text(model: &EditModel, field: &Field) -> String {
 fn set_example(model: &mut EditModel, field: &Field, text: String) {
     match field {
         Field::BodyExample(BodyLoc::Request) => {
-            if let Some(b) = model.request.as_mut() {
-                b.example = text;
-            }
+            // The request body is only its example: a non-empty save materializes
+            // it, an empty save leaves/returns it to `(none)`.
+            model.request = if text.trim().is_empty() {
+                None
+            } else {
+                Some(model::EditBody { example: text })
+            };
         }
         Field::BodyExample(BodyLoc::Response(i)) => {
             if let Some(r) = model.responses.get_mut(*i) {
@@ -86,6 +110,46 @@ fn set_example(model: &mut EditModel, field: &Field, text: String) {
     }
 }
 
+/// Applies a Ctrl-S save from the JSON modal. An empty example on a response
+/// removes that response (status and all); elsewhere it writes the buffer
+/// through, materializing a new response only when the example is non-empty.
+fn apply_modal_save(state: &mut UiState, model: &mut EditModel, target: ModalTarget, text: String) {
+    match target {
+        ModalTarget::Body(Field::BodyExample(BodyLoc::Response(i))) if text.trim().is_empty() => {
+            remove_response(state, model, i);
+        }
+        ModalTarget::Body(field) => {
+            set_example(model, &field, text);
+            state.dirty = true;
+            state.refresh(model);
+        }
+        ModalTarget::NewResponse {
+            status,
+            description,
+        } => {
+            if !text.trim().is_empty() {
+                let action = create_response(state, model, status, description);
+                if let Action::OpenExample(field, _) = action {
+                    set_example(model, &field, text);
+                    state.refresh(model);
+                }
+            }
+        }
+    }
+}
+
+/// Builds the bordered JSON-example modal editor seeded with `text`.
+fn example_textarea(text: &str) -> TextArea<'static> {
+    let mut ta = TextArea::from(text.lines().map(|l| l.to_string()).collect::<Vec<_>>());
+    ta.set_block(
+        Block::bordered()
+            .title(" JSON Example ")
+            .title_bottom(" Ctrl-S Save • Ctrl-P Pretty • Esc Cancel "),
+    );
+    ta.set_line_number_style(Style::default());
+    ta
+}
+
 /// Runs the authoring TUI on `model`, writing to `path` on save.
 pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
     let _guard = TermGuard::enter()?;
@@ -94,8 +158,10 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
         Terminal::new(backend).map_err(|e| format!("terminal init: {e}"))?;
 
     let mut state = UiState::new(&model);
-    // Holds the active modal editor and the field it edits, if any.
-    let mut modal: Option<(Field, TextArea<'static>)> = None;
+    // Holds the active JSON modal editor and what it writes to, if any.
+    let mut modal: Option<(ModalTarget, TextArea<'static>)> = None;
+    // Holds the response (new / edit) dialog while it is open.
+    let mut form: Option<ResponseForm> = None;
 
     loop {
         terminal
@@ -103,6 +169,15 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                 draw::draw(f, &state);
                 if let Some((_, ta)) = &modal {
                     draw::draw_example_modal(f, ta);
+                }
+                if let Some(fm) = &form {
+                    draw::draw_response_form(
+                        f,
+                        &fm.status,
+                        &fm.description,
+                        fm.on_description,
+                        fm.editing.is_some(),
+                    );
                 }
             })
             .map_err(|e| format!("draw: {e}"))?;
@@ -116,19 +191,90 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
             if let Some(Event::Key(key)) = next.take()
                 && key.kind == KeyEventKind::Press
             {
-                // Modal editor takes all keys until closed.
-                if let Some((field, ta)) = &mut modal {
+                // The new-response form takes all keys until confirmed/cancelled.
+                if form.is_some() {
                     use ratatui::crossterm::event::KeyCode;
                     match key.code {
+                        KeyCode::Esc => form = None,
+                        KeyCode::Enter => {
+                            let fm = form.take().unwrap();
+                            match fm.editing {
+                                // Editing: update the response in place, no editor.
+                                Some(idx) => update_response(
+                                    &mut state,
+                                    &mut model,
+                                    idx,
+                                    fm.status,
+                                    fm.description,
+                                ),
+                                // New: open the JSON editor now; the response is
+                                // created on save only if a non-empty example is
+                                // written (cancelling creates nothing).
+                                None => {
+                                    modal = Some((
+                                        ModalTarget::NewResponse {
+                                            status: fm.status,
+                                            description: fm.description,
+                                        },
+                                        example_textarea(""),
+                                    ));
+                                    state.mode = Mode::Example;
+                                }
+                            }
+                        }
+                        KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down => {
+                            if let Some(fm) = &mut form {
+                                fm.on_description = !fm.on_description;
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            if let Some(fm) = &mut form {
+                                if fm.on_description {
+                                    fm.description.pop();
+                                } else {
+                                    fm.status.pop();
+                                }
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            if let Some(fm) = &mut form {
+                                if fm.on_description {
+                                    fm.description.push(c);
+                                } else if c.is_ascii_digit() && fm.status.chars().count() < 3 {
+                                    // Status is a 3-digit HTTP code.
+                                    fm.status.push(c);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                } else if modal.is_some() {
+                    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+                    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                    match key.code {
+                        // Esc cancels: discard the buffer, leave the model as-is.
                         KeyCode::Esc => {
-                            let text = ta.lines().join("\n");
-                            set_example(&mut model, field, text);
-                            state.dirty = true;
-                            state.refresh(&model);
                             modal = None;
+                            state.mode = Mode::Normal;
+                        }
+                        // Ctrl-S applies the JSON changes and closes.
+                        KeyCode::Char('s') if ctrl => {
+                            let (target, ta) = modal.take().unwrap();
+                            let text = ta.lines().join("\n");
+                            apply_modal_save(&mut state, &mut model, target, text);
+                            state.mode = Mode::Normal;
+                        }
+                        // Ctrl-P reformats the buffer as pretty-printed JSON.
+                        KeyCode::Char('p') if ctrl => {
+                            if let Some((_, ta)) = &mut modal {
+                                let text = ta.lines().join("\n");
+                                *ta = example_textarea(&apic_core::json::pretty_json(&text));
+                            }
                         }
                         _ => {
-                            ta.input(key);
+                            if let Some((_, ta)) = &mut modal {
+                                ta.input(key);
+                            }
                         }
                     }
                 } else {
@@ -143,6 +289,7 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                             state.mode = Mode::Normal;
                             Action::None
                         }
+                        Mode::MethodPick(_) => handle_method_pick(&mut state, &mut model, key),
                         Mode::Example => Action::None,
                     };
 
@@ -150,17 +297,26 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                         Action::None => {}
                         Action::OpenExample(field, _) => {
                             let text = example_text(&model, &field);
-                            let mut ta = TextArea::from(
-                                text.lines().map(|l| l.to_string()).collect::<Vec<_>>(),
-                            );
-                            ta.set_block(
-                                Block::bordered()
-                                    .title(" JSON Example ")
-                                    .title_bottom(" Ctrl-S Save • Esc Close "),
-                            );
-                            ta.set_line_number_style(Style::default());
-                            modal = Some((field, ta));
+                            modal = Some((ModalTarget::Body(field), example_textarea(&text)));
                             state.mode = Mode::Example;
+                        }
+                        Action::NewResponse => {
+                            form = Some(ResponseForm {
+                                status: String::new(),
+                                description: String::new(),
+                                on_description: false,
+                                editing: None,
+                            });
+                        }
+                        Action::EditResponse(idx) => {
+                            if let Some(r) = model.responses.get(idx) {
+                                form = Some(ResponseForm {
+                                    status: r.code.clone(),
+                                    description: r.description.clone(),
+                                    on_description: false,
+                                    editing: Some(idx),
+                                });
+                            }
                         }
                         Action::Save => {
                             let was_confirm = state.mode == Mode::ConfirmQuit;

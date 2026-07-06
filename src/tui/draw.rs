@@ -12,6 +12,7 @@ use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Row, Table};
 use ratatui_textarea::TextArea;
 
 const GAP: usize = 2; // spaces between table columns
+const RESP_TITLE_HINT: &str = "title"; // placeholder shown when editing an empty response title
 
 /// Draws the whole UI for the current frame.
 pub(crate) fn draw(frame: &mut Frame, state: &UiState) {
@@ -63,8 +64,45 @@ pub(crate) fn draw(frame: &mut Frame, state: &UiState) {
             "Delete this row?",
             "y: delete    n/Esc: cancel",
         ),
+        Mode::MethodPick(idx) => draw_method_pick(frame, area, idx),
         _ => {}
     }
+}
+
+/// The HTTP-method picker: a small list of methods (each in its color) with the
+/// highlighted one reversed. `j`/`k` move, Enter selects, Esc cancels.
+fn draw_method_pick(frame: &mut Frame, area: Rect, selected: usize) {
+    let all = apic_core::json::method_all();
+    let w = 30u16.min(area.width);
+    let h = (all.len() as u16 + 2).min(area.height); // methods + border
+    let popup = Rect {
+        x: area.x + area.width.saturating_sub(w) / 2,
+        y: area.y + area.height.saturating_sub(h) / 2,
+        width: w,
+        height: h,
+    };
+    frame.render_widget(Clear, popup);
+
+    let lines: Vec<Line> = all
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let name = apic_core::json::method_str(m);
+            let mut style = Style::default().fg(method_color(&name));
+            if i == selected {
+                style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
+            }
+            Line::from(Span::styled(format!(" {name}"), style))
+        })
+        .collect();
+    let list = Paragraph::new(lines).block(
+        Block::default()
+            .title(" method ")
+            .title_bottom(" j/k · Enter · Esc ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Reset)),
+    );
+    frame.render_widget(list, popup);
 }
 
 /// A style helper: the resting cyan section title.
@@ -138,7 +176,7 @@ fn build_lines(state: &UiState) -> (Vec<Line<'static>>, usize, usize, Option<(us
 }
 
 /// Emits the header block: ` NAME`, ` description` (when non-empty), a blank
-/// line, then the URL (collapsed ` METHOD url` or expanded key/value rows).
+/// line, then the inline-editable ` METHOD url` line.
 fn push_header(
     state: &UiState,
     si: usize,
@@ -183,13 +221,11 @@ fn push_header(
                 if selected {
                     *sel = (lines.len(), lines.len());
                 }
-                lines.push(url_line(state, row, selected));
+                let (line, col) = url_line(state, row, selected);
+                record_cursor(cursor, lines.len(), col);
+                lines.push(line);
             }
             RowKind::Field => {
-                // Expanded URL: blank line precedes the method row.
-                if ri > 0 && section.rows[ri - 1].kind == RowKind::Desc {
-                    lines.push(Line::raw(""));
-                }
                 if selected {
                     *sel = (lines.len(), lines.len());
                 }
@@ -197,7 +233,7 @@ fn push_header(
                 record_cursor(cursor, lines.len(), col);
                 lines.push(line);
             }
-            RowKind::Title | RowKind::Example => {}
+            RowKind::Title | RowKind::Example | RowKind::RespTabs => {}
         }
     }
 }
@@ -236,12 +272,15 @@ fn header_value_line(
     (Line::from(Span::styled(fmt(&cell.value), style)), None)
 }
 
-/// The collapsed ` METHOD <built-url>` line.
-fn url_line(state: &UiState, row: &TableRow, selected: bool) -> Line<'static> {
+/// The ` METHOD url` line. Both cells are inline-editable: the method cell
+/// (cell 0) highlights on focus and cycles on Enter; the url cell (cell 1)
+/// highlights on focus and shows the insert buffer + a real cursor while typing.
+fn url_line(state: &UiState, row: &TableRow, selected: bool) -> (Line<'static>, Option<usize>) {
     let base = sel_style(state, selected);
     let method = &row.cells[0];
     let url = &row.cells[1];
     let method_focused = selected && state.cell == Some(0);
+    let url_focused = selected && state.cell == Some(1);
 
     let method_style = if method_focused {
         cell_hl()
@@ -253,16 +292,115 @@ fn url_line(state: &UiState, row: &TableRow, selected: bool) -> Line<'static> {
         base.fg(method_color(&method.value))
             .add_modifier(Modifier::BOLD)
     };
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(" ", base),
         Span::styled(method.value.clone(), method_style),
         Span::styled(" ", base),
-        Span::styled(url.value.clone(), base),
-    ])
+    ];
+    // Column where the url span starts: leading space + method + separator.
+    let url_col = 1 + method.value.chars().count() + 1;
+    let mut cursor_col = None;
+    if url_focused && let Mode::Insert(buf) = &state.mode {
+        // Plain text + real cursor while typing (no highlight).
+        spans.push(Span::styled(buf.clone(), base.add_modifier(Modifier::BOLD)));
+        cursor_col = Some(url_col + buf.chars().count());
+    } else {
+        let url_style = if url_focused { cell_hl() } else { base };
+        spans.push(Span::styled(url.value.clone(), url_style));
+    }
+    (Line::from(spans), cursor_col)
 }
 
-/// A ` label  value` key/value line (expanded URL rows). The label is dim; the
-/// value cell honors focus and the insert buffer.
+/// The RESPONSE tab strip: ` 200 - ok   400   201 - created`. Cells come in
+/// (code, desc) pairs per response; the active tab (`state.resp`) is emphasized,
+/// the focused cell highlights, and the ` - ` separator is dropped when a title
+/// is empty (unless that title cell is being edited).
+fn resp_tabs_line(
+    state: &UiState,
+    row: &TableRow,
+    selected: bool,
+) -> (Line<'static>, Option<usize>) {
+    let base = sel_style(state, selected);
+    let mut spans = vec![Span::styled(" ", base)];
+    let mut emitted = 1usize; // leading space
+    let mut cursor_col = None;
+
+    let nresp = row.cells.len() / 2;
+    for r in 0..nresp {
+        let code = &row.cells[r * 2];
+        let desc = &row.cells[r * 2 + 1];
+        let active = r == state.resp;
+        let code_focused = selected && state.cell == Some(r * 2);
+        let desc_focused = selected && state.cell == Some(r * 2 + 1);
+
+        if r > 0 {
+            spans.push(Span::styled("   ", base));
+            emitted += 3;
+        }
+
+        // Code.
+        if code_focused && let Mode::Insert(buf) = &state.mode {
+            cursor_col = Some(emitted + buf.chars().count());
+            emitted += buf.chars().count();
+            spans.push(Span::styled(buf.clone(), base.add_modifier(Modifier::BOLD)));
+        } else {
+            emitted += code.value.chars().count();
+            spans.push(Span::styled(
+                code.value.clone(),
+                tab_style(base, code_focused, active, selected),
+            ));
+        }
+
+        // ` - title`, shown when the title is set or its cell is being edited.
+        // A focused-but-empty title shows a dim `title` hint; in preview an empty
+        // title drops the ` - ` entirely.
+        if !desc.value.is_empty() || desc_focused {
+            spans.push(Span::styled(" - ", base));
+            emitted += 3;
+            if desc_focused && let Mode::Insert(buf) = &state.mode {
+                if buf.is_empty() {
+                    // Ghost hint; the cursor sits at its start.
+                    cursor_col = Some(emitted);
+                    emitted += RESP_TITLE_HINT.chars().count();
+                    spans.push(Span::styled(RESP_TITLE_HINT, dim()));
+                } else {
+                    cursor_col = Some(emitted + buf.chars().count());
+                    emitted += buf.chars().count();
+                    spans.push(Span::styled(buf.clone(), base.add_modifier(Modifier::BOLD)));
+                }
+            } else if desc.value.is_empty() {
+                // Focused (cell-select) but empty: show the hint placeholder.
+                emitted += RESP_TITLE_HINT.chars().count();
+                spans.push(Span::styled(RESP_TITLE_HINT, dim()));
+            } else {
+                emitted += desc.value.chars().count();
+                spans.push(Span::styled(
+                    desc.value.clone(),
+                    tab_style(base, desc_focused, active, selected),
+                ));
+            }
+        }
+    }
+    (Line::from(spans), cursor_col)
+}
+
+/// Style for a tab cell: yellow highlight when focused. When the row is selected
+/// the text follows the selection's white foreground so it stays readable on the
+/// highlight; otherwise the active tab is cyan-bold and the rest are dim.
+fn tab_style(base: Style, focused: bool, active: bool, selected: bool) -> Style {
+    if focused {
+        cell_hl()
+    } else if selected {
+        base
+    } else if active {
+        base.fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    } else {
+        base.fg(Color::DarkGray)
+    }
+}
+
+/// A ` label  value` key/value line (table / key-value rows). The label is dim;
+/// the value cell honors focus and the insert buffer.
 fn kv_line(state: &UiState, row: &TableRow, selected: bool) -> (Line<'static>, Option<usize>) {
     let base = sel_style(state, selected);
     let mut spans = vec![Span::styled(" ", base)];
@@ -373,6 +511,14 @@ fn push_section(
                     record_cursor(cursor, lines.len(), col);
                     lines.push(line);
                 }
+                RowKind::RespTabs => {
+                    if selected {
+                        *sel = (lines.len(), lines.len());
+                    }
+                    let (line, col) = resp_tabs_line(state, row, selected);
+                    record_cursor(cursor, lines.len(), col);
+                    lines.push(line);
+                }
                 RowKind::Example => {
                     push_example_block(state, row, selected, lines, sel);
                 }
@@ -429,8 +575,8 @@ fn push_section(
     }
 }
 
-/// Renders the ` Example:` label + the example payload (or ` (no example
-/// provided)`), tracking the row's selection span over the whole block.
+/// Renders the example payload (or ` (no example provided)`), tracking the row's
+/// selection span over the whole block.
 fn push_example_block(
     state: &UiState,
     row: &TableRow,
@@ -439,22 +585,20 @@ fn push_example_block(
     sel: &mut (usize, usize),
 ) {
     lines.push(Line::raw(""));
-    let example_label = lines.len();
-    lines.push(Line::from(Span::styled(" Example:", dim())));
+    let start = lines.len();
     push_example(state, row, selected, lines);
     if selected {
-        // First line of the block is ` Example:`; last is the final
-        // example-content line just pushed.
-        *sel = (example_label, lines.len().saturating_sub(1));
+        *sel = (start, lines.len().saturating_sub(1));
     }
 }
 
-/// Emits the inline example payload (` <line>` per line of the raw buffer), or
-/// ` (no example provided)` when empty.
+/// Emits the inline example payload (` <line>` per line of the raw buffer). An
+/// empty example renders a single blank line so the row stays selectable/editable
+/// without any placeholder text.
 fn push_example(state: &UiState, row: &TableRow, selected: bool, lines: &mut Vec<Line<'static>>) {
     let base = sel_style(state, selected);
     if row.raw.trim().is_empty() {
-        lines.push(Line::from(Span::styled(" (no example provided)", dim())));
+        lines.push(Line::from(Span::styled(" ", base)));
         return;
     }
     for raw_line in row.raw.lines() {
@@ -659,15 +803,21 @@ fn draw_confirm(frame: &mut Frame, area: Rect, title: &str, prompt: &str, keys: 
 fn draw_help(frame: &mut Frame, area: Rect) {
     let rows = vec![
         Row::new(vec!["↑/↓  j/k", "Select a row"]),
-        Row::new(vec!["←/→  h/l", "Move between cells"]),
-        Row::new(vec!["Enter", "Edit cell · expand url/title · open example"]),
+        Row::new(vec![
+            "←/→  h/l",
+            "Move between cells · switch response tabs",
+        ]),
+        Row::new(vec!["Enter", "Edit cell · open example"]),
         Row::new(vec!["i", "Insert — edit the focused text cell"]),
-        Row::new(vec!["Esc", "Back · collapse · cancel"]),
+        Row::new(vec!["Esc", "Back · cancel"]),
         Row::new(vec![
             "a",
-            "Add field/member · on '+ add response' adds a response",
+            "Add row · REQUEST writes JSON · RESPONSE new-response form",
         ]),
-        Row::new(vec!["e", "Edit the example (create one when empty)"]),
+        Row::new(vec![
+            "e",
+            "Edit — response tab: status/title · body: JSON example",
+        ]),
         Row::new(vec!["d", "Delete the selected row"]),
         Row::new(vec!["Ctrl-S", "Save"]),
         Row::new(vec!["q", "Quit"]),
@@ -694,6 +844,92 @@ pub(crate) fn draw_example_modal(frame: &mut Frame, textarea: &TextArea) {
     let area = centered(frame.area(), 80, 70);
     frame.render_widget(Clear, area);
     frame.render_widget(textarea, area);
+}
+
+/// The response dialog, laid out as a two-column table (`Status` and `Short
+/// Description`) with the values editable underneath. The focused column carries
+/// a real terminal cursor at the end of its text. `editing` picks the title.
+pub(crate) fn draw_response_form(
+    frame: &mut Frame,
+    status: &str,
+    description: &str,
+    on_description: bool,
+    editing: bool,
+) {
+    const STATUS_W: usize = 12; // status column width
+    const DESC_W: usize = 20; // description column width (input box)
+    const SEP: &str = " │ ";
+    // A compact, content-sized popup centered in the terminal (border + 1-cell
+    // top/bottom padding around the 5 content rows, so 9 tall).
+    let area = frame.area();
+    let w = 46.min(area.width);
+    let h = 9.min(area.height);
+    let popup = Rect {
+        x: area.x + area.width.saturating_sub(w) / 2,
+        y: area.y + area.height.saturating_sub(h) / 2,
+        width: w,
+        height: h,
+    };
+    frame.render_widget(Clear, popup);
+
+    // Border and text follow the terminal's default foreground (not a hardcoded
+    // white); the focused field is marked by a background highlight only.
+    let fg = Style::default().fg(Color::Reset);
+    let header = fg.add_modifier(Modifier::BOLD);
+    let focused = fg.bg(Color::Blue).add_modifier(Modifier::BOLD);
+    let blurred = fg.bg(Color::DarkGray);
+
+    let content = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(format!("{:<STATUS_W$}", "Status"), header),
+            Span::styled(SEP, fg),
+            Span::styled(format!("{:<DESC_W$}", "Short Description"), header),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                format!("{status:<STATUS_W$}"),
+                if on_description { blurred } else { focused },
+            ),
+            Span::styled(SEP, fg),
+            Span::styled(
+                format!("{description:<DESC_W$}"),
+                if on_description { focused } else { blurred },
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Enter: Yes    Esc: No    Tab: switch field",
+            fg,
+        )),
+    ];
+    let title = if editing {
+        " edit response "
+    } else {
+        " new response "
+    };
+    let dialog = Paragraph::new(content).block(
+        Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(fg)
+            .padding(Padding::new(2, 1, 1, 1)),
+    );
+    frame.render_widget(dialog, popup);
+
+    // Cursor on the values row (content row 2). Content starts inside the border
+    // (1) + left/top padding (2/1); the Status column starts at content_x, the
+    // Short Description column after the status width + separator.
+    let content_x = popup.x + 1 + 2;
+    let values_y = popup.y + 1 + 1 + 2;
+    let x = if on_description {
+        content_x + (STATUS_W + SEP.chars().count() + description.chars().count()) as u16
+    } else {
+        content_x + status.chars().count() as u16
+    };
+    if x < popup.x + popup.width && values_y < popup.y + popup.height {
+        frame.set_cursor_position((x, values_y));
+    }
 }
 
 /// A centered rect `pct_x`% × `pct_y`% of `area`.
@@ -746,7 +982,8 @@ mod tests {
         assert!(text.contains("User management")); // description
         assert!(text.contains("https://api.example.com/user")); // url string
         assert!(text.contains("HEADERS"));
-        assert!(text.contains("RESPONSE 200 — ok"));
+        assert!(text.contains("RESPONSE")); // section title
+        assert!(text.contains("200 - ok")); // response tab: `code - title`
         // The body renders its raw JSON example.
         assert!(text.contains("access_token"));
         // No box borders.
@@ -756,7 +993,8 @@ mod tests {
     }
 
     #[test]
-    fn empty_request_body_renders_editable_example_row() {
+    fn empty_request_body_keeps_a_reachable_example_row() {
+        use crate::tui::rows::{BodyLoc, Field};
         let c = json_get(
             r#"{ "name":"t","method":"POST",
                  "url":"https://h/x",
@@ -768,19 +1006,35 @@ mod tests {
         .unwrap();
         let m = EditModel::from_contract(c);
         let state = UiState::new(&m);
+        // An empty body still exposes an example row (no placeholder text) so it
+        // stays reachable and editable.
+        let has_example = state.sections.iter().flat_map(|s| &s.rows).any(|r| {
+            r.kind == RowKind::Example
+                && matches!(&r.cells[0].field, Field::BodyExample(BodyLoc::Request))
+        });
+        assert!(
+            has_example,
+            "empty body should keep an editable example row"
+        );
+    }
+
+    #[test]
+    fn no_request_body_renders_none() {
+        let c = json_get(
+            r#"{ "name":"t","method":"GET","url":"https://h/x","headers":[],"responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let m = EditModel::from_contract(c);
+        let state = UiState::new(&m);
         let backend = TestBackend::new(100, 50);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, &state)).unwrap();
         let buf = terminal.backend().buffer().clone();
         let text: String = buf.content().iter().map(|c| c.symbol()).collect();
-        // An empty body still renders its `Example:` row (showing the empty
-        // placeholder) so the example stays reachable and editable — you can
-        // write an example first, then generate the schema from it.
-        assert!(text.contains("REQUEST"), "REQUEST section present");
-        assert!(
-            text.contains("no example provided"),
-            "empty body should render the editable example row"
-        );
+        // A REQUEST with no body renders ` (none)`, like an empty RESPONSE.
+        assert!(text.contains("REQUEST"));
+        assert!(text.contains("(none)"));
     }
 
     #[test]
