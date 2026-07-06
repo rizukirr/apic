@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-06
+
+A large release: a simplified, breaking contract format plus full redesigns of
+both the TUI and the desktop GUI editors around it.
+
+### Changed
+
+- **Contract format (breaking).** The request URL is now a single free-form
+  string (`"url": "https://api.example.com/v1/users/{id}"`) with inline `{name}`
+  path tokens, replacing the old structured URL object. Query parameters are
+  `{ name, value, description, required }`, both query parameters and headers
+  gain a `required` flag, and each response can carry its own `headers`. Contracts
+  that still include the old `type`/`schema` body keys load fine, those keys are
+  ignored.
+- **TUI editing, redesigned.** The endpoint header is one inline-editable
+  ` METHOD url` line; the method is chosen from a picker popup instead of cycling.
+  `QUERY` and `HEADERS` are `NAME/VALUE(/DESCRIPTION)` tables. `RESPONSE` is a
+  `code - title` tab strip: `a` opens a `Status / Short Description` form and then
+  the JSON editor, `e` edits a tab's status/title (or opens the editor on its
+  body), and `d` removes a response. The JSON editor saves with `Ctrl-S`, cancels
+  with `Esc`, and pretty-prints with `Ctrl-P`; saving an empty body removes its
+  response.
+- **Desktop GUI, redesigned.** A single tabbed editor (Overview, Headers, Query,
+  Request, Response) with a line-numbered JSON editor, metadata tables carrying a
+  Required/Optional chip, editable response-code tabs, frameless inline inputs,
+  and a calmer green theme.
+
+### Added
+
+- The HTTP method is selected from a **dropdown** in the GUI (and a picker popup
+  in the TUI) listing all methods, rather than cycling one click at a time.
+- A `required` flag on request headers and query parameters, surfaced across the
+  CLI/TUI/GUI, the Postman converter, and the project template.
+- Response-level `headers`, editable in both the TUI and the GUI.
+- Refreshed bundled `example/` project (`authentication/` and `profile/` sets).
+
+### Removed
+
+- The structured body schema, `type`, field `schema`, typed fields, `properties`,
+  `file`/`accept` parts, and `object[]` array bodies, along with the structured
+  URL object. Request and response bodies are now a raw JSON `example` only.
+- `apic read --example` (bodies are already example-only) and the TUI schema
+  generate/infer keys, which no longer have a schema to operate on.
+
+### Fixed
+
+- GUI: the sidebar method badge now refreshes when a contract is saved.
+- GUI: warn when installing a per-user launcher entry would duplicate an existing
+  system-wide `apic` entry.
+- TUI: numerous editing-correctness fixes (method focus on the url line, modal
+  key handling after close, selected response-tab text color, empty-row cleanup).
+- Windows: statically link the MSVC CRT so binaries run without VCRedist, and
+  install `apic-gui.exe` at the MSI root so winget resolves the executable.
+
 ## [0.3.6] - 2026-06-30
 
 ### Added
@@ -256,7 +310,8 @@ Initial beta release.
 - CI (fmt, clippy, build, test) and unit + end-to-end test suites.
 - MIT license.
 
-[Unreleased]: https://github.com/rizukirr/apic/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/rizukirr/apic/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/rizukirr/apic/compare/v0.3.6...v0.4.0
 [0.2.4]: https://github.com/rizukirr/apic/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/rizukirr/apic/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/rizukirr/apic/compare/v0.2.1...v0.2.2
