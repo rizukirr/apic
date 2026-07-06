@@ -1406,18 +1406,32 @@ impl App {
 
                         ui.separator();
 
-                        // Right pane: Response, with its own Body / Header sub-tabs.
+                        // Right pane: a Response / Header tab bar over a shared,
+                        // per-response status strip.
                         ui.allocate_ui_with_layout(
                             egui::vec2(col_w, col_h),
                             egui::Layout::top_down(egui::Align::Min),
                             |right| {
                                 right.horizontal(|ui| {
-                                    // Static pane title, styled like the selected left tab so the
-                                    // separators below both panes line up.
-                                    let _ = ui.selectable_label(
-                                        true,
-                                        RichText::new("Response").color(GREEN),
-                                    );
+                                    let mut t = |ui: &mut egui::Ui, label: &str, which: RespTab| {
+                                        if ui
+                                            .selectable_label(
+                                                *resp_tab_view == which,
+                                                RichText::new(label).color(
+                                                    if *resp_tab_view == which {
+                                                        GREEN
+                                                    } else {
+                                                        DIM
+                                                    },
+                                                ),
+                                            )
+                                            .clicked()
+                                        {
+                                            *resp_tab_view = which;
+                                        }
+                                    };
+                                    t(ui, "Response", RespTab::Body);
+                                    t(ui, "Header", RespTab::Headers);
                                 });
                                 right.separator();
                                 // One scroll per pane (distinct id) starting under
@@ -1435,8 +1449,9 @@ impl App {
                                                 .responses
                                                 .push(apic_core::edit::EditResponse::blank());
                                         }
-                                        // Response-code tab strip, then a Body|Header
-                                        // sub-tab bar.
+                                        // Per-response status strip; its `code -
+                                        // title` tabs select the response whose
+                                        // body/headers the tab bar above shows.
                                         response_code_selector(ui, model, resp_tab, *editing);
                                         if model.responses.is_empty() {
                                             ui.label(RichText::new("(no responses)").color(DIM));
@@ -1446,29 +1461,6 @@ impl App {
                                             *resp_tab = 0;
                                         }
                                         ui.add_space(SPACE_SMALL);
-                                        ui.horizontal(|ui| {
-                                            let mut t =
-                                                |ui: &mut egui::Ui, label: &str, which: RespTab| {
-                                                    if ui
-                                                        .selectable_label(
-                                                            *resp_tab_view == which,
-                                                            RichText::new(label).color(
-                                                                if *resp_tab_view == which {
-                                                                    GREEN
-                                                                } else {
-                                                                    DIM
-                                                                },
-                                                            ),
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        *resp_tab_view = which;
-                                                    }
-                                                };
-                                            t(ui, "Body", RespTab::Body);
-                                            t(ui, "Header", RespTab::Headers);
-                                        });
-                                        ui.separator();
                                         let idx = *resp_tab;
                                         match *resp_tab_view {
                                             RespTab::Body => {

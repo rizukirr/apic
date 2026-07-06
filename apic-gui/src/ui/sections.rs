@@ -10,7 +10,7 @@ use egui::RichText;
 use apic_core::edit::{EditAction, EditBody, EditModel, Field, apply};
 use apic_core::json::method_str;
 
-use crate::ui::theme::{AMBER, SPACE_LARGE};
+use crate::ui::theme::AMBER;
 
 use super::theme::{
     CYAN, DIM, GREEN, RED, SPACE_MEDIUM, SPACE_SMALL, TEXT, method_badge, method_color,
@@ -385,55 +385,69 @@ pub(crate) fn response_code_selector(
     // Set when the active response changes this frame so the code field takes
     // focus on the next frame (when it renders as the editable, active tab).
     let mut focus_code = false;
-    ui.horizontal_wrapped(|ui| {
-        for i in 0..model.responses.len() {
-            let selected = i == *resp_tab;
-            let code_ok = model.responses[i].code.trim().parse::<u16>().is_ok();
-            let color = if !code_ok {
-                RED
-            } else if selected {
-                GREEN
-            } else {
-                DIM
-            };
-            if editing && selected {
-                // The active tab's code is edited in place, no bordered box.
-                ui.add(
-                    egui::TextEdit::singleline(&mut model.responses[i].code)
-                        .id(code_edit_id)
-                        .frame(false)
-                        .desired_width(46.0)
-                        .text_color(color),
-                );
-                if delete_button(ui) {
-                    actions.push(EditAction::Delete {
-                        field: Field::ResponseCode(i),
+    // The strip scrolls horizontally rather than wrapping, so many response
+    // codes stay on one line with the tabs' `code - title` labels intact.
+    egui::ScrollArea::horizontal()
+        .id_salt("resp_code_strip")
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for i in 0..model.responses.len() {
+                    let selected = i == *resp_tab;
+                    let code_ok = model.responses[i].code.trim().parse::<u16>().is_ok();
+                    let color = if !code_ok {
+                        RED
+                    } else if selected {
+                        GREEN
+                    } else {
+                        DIM
+                    };
+                    if editing && selected {
+                        // The active tab is edited in place, no bordered box:
+                        // `[code] - [title] x`, code first so focus lands there.
+                        ui.add(
+                            egui::TextEdit::singleline(&mut model.responses[i].code)
+                                .id(code_edit_id)
+                                .frame(false)
+                                .desired_width(40.0)
+                                .text_color(color),
+                        );
+                        ui.label(RichText::new("-").color(DIM));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut model.responses[i].description)
+                                .frame(false)
+                                .desired_width(150.0)
+                                .hint_text("title")
+                                .text_color(DIM),
+                        );
+                        if delete_button(ui) {
+                            actions.push(EditAction::Delete {
+                                field: Field::ResponseCode(i),
+                            });
+                        }
+                    } else {
+                        let label = status_tab_label(
+                            &model.responses[i].code,
+                            &model.responses[i].description,
+                        );
+                        if ui
+                            .selectable_label(selected, RichText::new(label).color(color).strong())
+                            .clicked()
+                        {
+                            *resp_tab = i;
+                            focus_code = true;
+                        }
+                    }
+                }
+                if editing && add_button(ui, "+ new response") {
+                    // Focus the new tab's code so the user can type it straight away.
+                    *resp_tab = model.responses.len();
+                    focus_code = true;
+                    actions.push(EditAction::Add {
+                        field: Field::ResponseAdd,
                     });
                 }
-            } else {
-                let label = if model.responses[i].code.is_empty() {
-                    "?".to_string()
-                } else {
-                    model.responses[i].code.clone()
-                };
-                if ui
-                    .selectable_label(selected, RichText::new(label).color(color).strong())
-                    .clicked()
-                {
-                    *resp_tab = i;
-                    focus_code = true;
-                }
-            }
-        }
-        if editing && add_button(ui, "+ new response") {
-            // Focus the new tab's code so the user can type the status straight away.
-            *resp_tab = model.responses.len();
-            focus_code = true;
-            actions.push(EditAction::Add {
-                field: Field::ResponseAdd,
             });
-        }
-    });
+        });
     if editing && focus_code {
         ui.ctx().memory_mut(|m| m.request_focus(code_edit_id));
     }
@@ -442,25 +456,32 @@ pub(crate) fn response_code_selector(
     }
 }
 
-/// Renders the selected response's description, schema, and example. The caller
-/// (the Response tab) has already drawn the code-tab strip and guarantees `idx`
-/// is a valid response index.
+/// The status-tab label: `code - title`, or just `code` when the response has no
+/// title, truncated to 30 characters (with an ellipsis) so long titles never
+/// stretch a tab off the strip.
+fn status_tab_label(code: &str, title: &str) -> String {
+    let code = if code.trim().is_empty() { "?" } else { code };
+    let full = if title.trim().is_empty() {
+        code.to_string()
+    } else {
+        format!("{code} - {title}")
+    };
+    if full.chars().count() > 30 {
+        let head: String = full.chars().take(29).collect();
+        format!("{head}…")
+    } else {
+        full
+    }
+}
+
+/// Renders the selected response's JSON example body. The caller (the Response
+/// tab) has already drawn the code-tab strip, which now also owns the response's
+/// title, and guarantees `idx` is a valid response index.
 pub(crate) fn response_body(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editing: bool) {
     ui.spacing_mut().item_spacing.y = SPACE_SMALL;
     let r = &mut model.responses[idx];
-    // Description: inline, frameless in edit mode; plain text otherwise.
-    if editing {
-        ui.add(
-            egui::TextEdit::singleline(&mut r.description)
-                .frame(false)
-                .hint_text("description")
-                .text_color(DIM)
-                .desired_width(f32::INFINITY),
-        );
-    } else if !r.description.is_empty() {
-        ui.label(RichText::new(&r.description).color(DIM));
-    }
-    ui.add_space(SPACE_LARGE);
+    // The title/description now lives in the status tab, so the body is just
+    // the JSON example (with its Pretty control in edit mode).
     if editing {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
