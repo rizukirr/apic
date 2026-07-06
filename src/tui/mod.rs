@@ -196,6 +196,9 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                             state.dirty = true;
                             state.refresh(&model);
                             modal = None;
+                            // Return to Normal now, so the next key isn't eaten by
+                            // the `Mode::Example` arm before the mode is reset.
+                            state.mode = Mode::Normal;
                         }
                         // Ctrl-P reformats the buffer as pretty-printed JSON.
                         KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
