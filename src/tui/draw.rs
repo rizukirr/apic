@@ -523,8 +523,8 @@ fn push_section(
     }
 }
 
-/// Renders the ` Example:` label + the example payload (or ` (no example
-/// provided)`), tracking the row's selection span over the whole block.
+/// Renders the example payload (or ` (no example provided)`), tracking the row's
+/// selection span over the whole block.
 fn push_example_block(
     state: &UiState,
     row: &TableRow,
@@ -533,13 +533,10 @@ fn push_example_block(
     sel: &mut (usize, usize),
 ) {
     lines.push(Line::raw(""));
-    let example_label = lines.len();
-    lines.push(Line::from(Span::styled(" Example:", dim())));
+    let start = lines.len();
     push_example(state, row, selected, lines);
     if selected {
-        // First line of the block is ` Example:`; last is the final
-        // example-content line just pushed.
-        *sel = (example_label, lines.len().saturating_sub(1));
+        *sel = (start, lines.len().saturating_sub(1));
     }
 }
 

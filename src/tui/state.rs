@@ -235,7 +235,14 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
         (KeyCode::Char('a'), _) => append_here(state, model),
         (KeyCode::Char('e'), _) => edit_example_here(state),
         (KeyCode::Char('d'), _) => {
-            if let Some(f) = delete_field(state)
+            // On an example row `d` clears the JSON; elsewhere it deletes the row.
+            let example_field = state
+                .current_row()
+                .filter(|r| r.kind == RowKind::Example)
+                .map(|r| r.cells[0].field.clone());
+            if let Some(f) = example_field {
+                state.mode = Mode::ConfirmDelete(f);
+            } else if let Some(f) = delete_field(state)
                 && is_deletable(&f)
             {
                 state.mode = Mode::ConfirmDelete(f);
@@ -606,7 +613,15 @@ pub(crate) fn handle_confirm_delete(
     match key.code {
         KeyCode::Char('y') => {
             if let Mode::ConfirmDelete(f) = state.mode.clone() {
-                delete_row(state, model, &f);
+                // An example body is cleared in place; every other field is a row.
+                if matches!(f, Field::BodyExample(_)) {
+                    if clear_example(model, &f) {
+                        state.dirty = true;
+                        state.refresh(model);
+                    }
+                } else {
+                    delete_row(state, model, &f);
+                }
             }
             state.mode = Mode::Normal;
             Action::None
@@ -616,6 +631,22 @@ pub(crate) fn handle_confirm_delete(
             Action::None
         }
         _ => Action::None,
+    }
+}
+
+/// Clears a request/response example body to empty. Returns `false` when the
+/// field is not a body example or the body is missing.
+fn clear_example(model: &mut EditModel, field: &Field) -> bool {
+    match field {
+        Field::BodyExample(BodyLoc::Request) => {
+            model.request.as_mut().map(|b| b.example.clear()).is_some()
+        }
+        Field::BodyExample(BodyLoc::Response(i)) => model
+            .responses
+            .get_mut(*i)
+            .map(|r| r.example.clear())
+            .is_some(),
+        _ => false,
     }
 }
 
@@ -792,6 +823,20 @@ mod tests {
         handle_normal(&mut s, &mut m, key(KeyCode::Char('d')));
         handle_confirm_delete(&mut s, &mut m, key(KeyCode::Char('y')));
         assert_eq!(m.query.len(), 0);
+    }
+
+    #[test]
+    fn d_on_the_example_row_clears_the_body_not_the_response() {
+        let mut m = model();
+        m.responses[0].example = r#"{"status":200}"#.to_string();
+        let mut s = UiState::new(&m);
+        assert!(!m.responses[0].example.trim().is_empty());
+        goto(&mut s, |f| matches!(f, Field::BodyExample(_)));
+        handle_normal(&mut s, &mut m, key(KeyCode::Char('d')));
+        assert!(matches!(s.mode, Mode::ConfirmDelete(_)));
+        handle_confirm_delete(&mut s, &mut m, key(KeyCode::Char('y')));
+        assert!(m.responses[0].example.is_empty(), "the example is cleared");
+        assert_eq!(m.responses.len(), 1, "the response itself stays");
     }
 
     #[test]
