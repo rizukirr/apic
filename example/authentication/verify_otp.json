@@ -1,0 +1,87 @@
+{
+  "name": "Verify OTP",
+  "description": "",
+  "method": "POST",
+  "url": "{{baseUrl}}/{{base_path}}/auth/verify-otp",
+  "query": [],
+  "headers": [
+    {
+      "name": "DeviceID",
+      "value": "{{device_id}}",
+      "required": false
+    },
+    {
+      "name": "AppID",
+      "value": "{{app_id}}",
+      "required": false
+    },
+    {
+      "name": "Content-Type",
+      "value": "application/json",
+      "required": false
+    }
+  ],
+  "request": {
+    "example": {
+      "sessionId": "sess_1234567890abcdef",
+      "otpCode": "4321"
+    }
+  },
+  "responses": [
+    {
+      "code": 200,
+      "description": "OK",
+      "headers": [],
+      "example": {
+        "statusCode": 200,
+        "message": "OTP berhasil diverifikasi",
+        "error": null,
+        "value": {
+          "sessionId": "new_sess_1234567890abcdef"
+        }
+      }
+    },
+    {
+      "code": 400,
+      "description": "Bad Request",
+      "headers": [],
+      "example": {
+        "statusCode": 400,
+        "message": "Kode OTP yang Anda masukkan salah",
+        "error": null,
+        "value": null
+      }
+    },
+    {
+      "code": 400,
+      "description": "Bad Request",
+      "headers": [],
+      "example": {
+        "statusCode": 400,
+        "message": "Kode OTP sudah kedaluwarsa. Silakan kirim ulang kode OTP",
+        "error": null,
+        "value": null
+      }
+    },
+    {
+      "code": 200,
+      "description": "OK",
+      "headers": [],
+      "example": null
+    },
+    {
+      "code": 200,
+      "description": "OK",
+      "headers": [],
+      "example": {
+        "message": "Please go to \"Environmental Management\" in the upper right corner and change the Base URL (https://dev.your-api-server.com) to your own server address."
+      }
+    },
+    {
+      "code": 0,
+      "description": "0",
+      "headers": [],
+      "example": null
+    }
+  ]
+}

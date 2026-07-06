@@ -67,19 +67,25 @@ pub(crate) fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: 
         ui.horizontal(|ui| {
             let method = method_str(&model.method);
             if editing {
-                if ui
-                    .add(
-                        egui::Button::new(
-                            RichText::new(format!(" {method} "))
-                                .color(method_color(&method))
-                                .strong(),
-                        )
-                        .frame(false),
-                    )
-                    .clicked()
-                {
-                    apply(model, &EditAction::CycleMethod { forward: true });
-                }
+                // Pick the HTTP method from a dropdown of all the choices.
+                egui::ComboBox::from_id_salt("method")
+                    .width(90.0)
+                    .selected_text(RichText::new(&method).color(method_color(&method)).strong())
+                    .show_ui(ui, |ui| {
+                        for m in apic_core::json::method_all() {
+                            let name = method_str(&m);
+                            let selected = name == method;
+                            if ui
+                                .selectable_label(
+                                    selected,
+                                    RichText::new(&name).color(method_color(&name)).strong(),
+                                )
+                                .clicked()
+                            {
+                                model.method = m;
+                            }
+                        }
+                    });
             } else {
                 method_badge(ui, &method);
             }

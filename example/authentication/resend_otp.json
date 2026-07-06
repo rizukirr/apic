@@ -1,0 +1,56 @@
+{
+    "name": "Resend OTP",
+    "method": "POST",
+    "url": "{{baseUrl}}/{{base_path}}/auth/resend-otp",
+    "headers": [
+        {
+            "name": "DeviceID",
+            "value": "{{device_id}}",
+            "required": false
+        },
+        {
+            "name": "AppID",
+            "value": "{{app_id}}",
+            "required": false
+        },
+        {
+            "name": "Content-Type",
+            "value": "application/json",
+            "required": false
+        }
+    ],
+    "request": {
+        "example": {
+            "sessionId": "sess_1234567890abcdef"
+        }
+    },
+    "responses": [
+        {
+            "code": 200,
+            "description": "OK",
+            "example": {
+                "statusCode": 200,
+                "message": "OTP baru telah dikirim ke email Anda",
+                "error": null,
+                "value": {
+                    "emailMasked": "leo****ak@example.co.id",
+                    "nextResendAvailableIn": 60,
+                    "unit": "seconds"
+                }
+            }
+        },
+        {
+            "code": 429,
+            "description": "Too Many Requests",
+            "example": {
+                "statusCode": 429,
+                "message": "Anda telah melebihi batas kirim ulang OTP. Coba lagi dalam ",
+                "error": null,
+                "value": {
+                    "coolingDownIn": 300,
+                    "unit": "seconds"
+                }
+            }
+        }
+    ]
+}

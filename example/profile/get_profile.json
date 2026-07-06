@@ -1,0 +1,57 @@
+{
+    "name": "Get Profile",
+    "method": "GET",
+    "url": "{{baseUrl}}/{{base_path}}/profile",
+    "headers": [
+        {
+            "name": "DeviceID",
+            "value": "{{device_id}}",
+            "required": false
+        },
+        {
+            "name": "AppID",
+            "value": "{{app_id}}",
+            "required": false
+        },
+        {
+            "name": "Content-Type",
+            "value": "application/json",
+            "required": false
+        },
+        {
+            "name": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "required": false
+        }
+    ],
+    "responses": [
+        {
+            "code": 200,
+            "description": "OK",
+            "example": {
+                "statusCode": 200,
+                "message": "Data berhasil diambil",
+                "error": null,
+                "value": {
+                    "personalInfo": {
+                        "name": "Ahmad Rizki Maulana",
+                        "agentCode": "79009901",
+                        "level": "Senior Agent",
+                        "phoneNumber": "+62812345678",
+                        "email": "ahmad.rizki@example.co.id"
+                    },
+                    "license": {
+                        "licenseNumber": "LIC-2024-001234",
+                        "validFrom": "22 Januari 2024",
+                        "validUntil": "22 Januari 2026"
+                    },
+                    "branchPlacement": {
+                        "branchCode": "JKT-001",
+                        "branchName": "Kantor Cabang Jakarta Pusat",
+                        "regionalOffice": "Kanwil Jakarta"
+                    }
+                }
+            }
+        }
+    ]
+}
