@@ -7,18 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- `apic convert --postman` gains a `--force` flag to overwrite contracts that
-  already exist. The default still refuses (erroring on an existing file), and
-  the error now points to `--force`.
-
-### Changed
-- **Contract format (breaking).** A request body is now the raw JSON payload
-  written directly under `request` (no `example` wrapper), and a response body is
-  written under the response's `schema` key (renamed from `example`). Contracts
-  using the previous `{ "example": ... }` body shape must be updated.
-- User-facing messages use commas instead of semicolons and em-dashes.
-
 ## [0.4.0] - 2026-07-06
 
 A large release: a simplified, breaking contract format plus full redesigns of
@@ -30,9 +18,12 @@ both the TUI and the desktop GUI editors around it.
   string (`"url": "https://api.example.com/v1/users/{id}"`) with inline `{name}`
   path tokens, replacing the old structured URL object. Query parameters are
   `{ name, value, description, required }`, both query parameters and headers
-  gain a `required` flag, and each response can carry its own `headers`. Contracts
-  that still include the old `type`/`schema` body keys load fine, those keys are
-  ignored.
+  gain a `required` flag, and each response can carry its own `headers`. A
+  request body is the raw JSON payload written directly under `request`, and a
+  response body is written under the response's `schema` key. The old
+  `type`/`schema` field-level model and the `{ "example": ... }` body wrapper are
+  gone.
+- User-facing messages use commas instead of semicolons and em-dashes.
 - **TUI editing, redesigned.** The endpoint header is one inline-editable
   ` METHOD url` line; the method is chosen from a picker popup instead of cycling.
   `QUERY` and `HEADERS` are `NAME/VALUE(/DESCRIPTION)` tables. `RESPONSE` is a
@@ -53,13 +44,17 @@ both the TUI and the desktop GUI editors around it.
 - A `required` flag on request headers and query parameters, surfaced across the
   CLI/TUI/GUI, the Postman converter, and the project template.
 - Response-level `headers`, editable in both the TUI and the GUI.
+- `apic convert --postman` gains a `--force` flag to overwrite contracts that
+  already exist. The default still refuses (erroring on an existing file), and
+  the error now points to `--force`.
 - Refreshed bundled `example/` project (`authentication/` and `profile/` sets).
 
 ### Removed
 
 - The structured body schema, `type`, field `schema`, typed fields, `properties`,
   `file`/`accept` parts, and `object[]` array bodies, along with the structured
-  URL object. Request and response bodies are now a raw JSON `example` only.
+  URL object. Request and response bodies are now raw JSON payloads (the request
+  written directly under `request`, a response under `schema`).
 - `apic read --example` (bodies are already example-only) and the TUI schema
   generate/infer keys, which no longer have a schema to operate on.
 
