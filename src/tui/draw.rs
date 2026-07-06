@@ -808,7 +808,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
             "Move between cells · switch response tabs",
         ]),
         Row::new(vec!["Enter", "Edit cell · open example"]),
-        Row::new(vec!["i", "Insert — edit the focused text cell"]),
+        Row::new(vec!["i", "Insert, edit the focused text cell"]),
         Row::new(vec!["Esc", "Back · cancel"]),
         Row::new(vec![
             "a",
@@ -816,7 +816,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ]),
         Row::new(vec![
             "e",
-            "Edit — response tab: status/title · body: JSON example",
+            "Edit, response tab: status/title · body: JSON example",
         ]),
         Row::new(vec!["d", "Delete the selected row"]),
         Row::new(vec!["Ctrl-S", "Save"]),

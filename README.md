@@ -364,11 +364,13 @@ v1.0.0, v2.0.0, and v2.1.0 (auto-detected).
 - `--destination <dir>`, where to write the contracts, relative to the working
   directory (created if missing). **Optional**, defaults to the working
   directory itself. The path is confined to the working directory (`..`/absolute
-  escapes are rejected) and existing files are never overwritten.
+  escapes are rejected). An existing contract is left untouched (the import
+  errors) unless `--force` is passed.
+- `--force`, overwrite contracts that already exist instead of erroring.
 
 Each Postman folder becomes a directory and each request becomes
 `folder/request_name.json`. Only the fields apic models are imported (method,
-URL, headers, request/response bodies); Postman-specific data (auth blocks,
+URL, headers, request/response bodies), Postman-specific data (auth blocks,
 scripts, events, variables) is ignored. A request whose HTTP method apic does
 not model (anything other than `GET`/`POST`/`PUT`/`PATCH`/`DELETE`/`HEAD`/
 `OPTIONS`) is imported as `GET` with a warning, so nothing is downgraded
@@ -378,6 +380,7 @@ silently.
 apic init                                   # an apic project is required
 apic convert --postman MyAPI.postman.json   # writes into the working directory
 apic convert --postman MyAPI.postman.json --destination imported
+apic convert --postman MyAPI.postman.json --force   # overwrite existing contracts
 ```
 
 ```text

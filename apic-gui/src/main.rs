@@ -552,7 +552,9 @@ impl App {
             self.status = "no project to import into".into();
             return;
         };
-        match apic_core::convert::run(&src, &root) {
+        // The GUI import never overwrites; existing contracts must be removed
+        // first (or edited), matching the CLI default.
+        match apic_core::convert::run(&src, &root, false) {
             Ok(out) => {
                 self.reload_project();
                 let warn = if out.warnings.is_empty() {
@@ -706,7 +708,7 @@ impl App {
 
         if !is_folder {
             if dest.exists() {
-                self.status = format!("{rel} already exists; not overwriting");
+                self.status = format!("{rel} already exists, not overwriting");
                 return;
             }
             // Seed from the chosen template (merged onto the built-in default),
@@ -775,7 +777,7 @@ impl App {
                 }
                 ui.add_space(SPACE_EXTRA_SMALL);
                 ui.label(
-                    RichText::new("end with .json for a contract (auth/logout.json); a bare name makes a folder")
+                    RichText::new("end with .json for a contract (auth/logout.json), a bare name makes a folder")
                         .color(DIM)
                         .size(10.0),
                 );
@@ -1261,7 +1263,7 @@ impl App {
                 ui.add_space(SPACE_SMALL);
                 if rep.error.is_empty() {
                     ui.label(
-                        RichText::new("Valid — opening editor…")
+                        RichText::new("Valid, opening editor…")
                             .color(GREEN)
                             .strong(),
                     );
@@ -1578,7 +1580,7 @@ impl TreeNode {
             ui.horizontal(|ui| {
                 if *invalid {
                     ui.label(RichText::new("●").color(RED))
-                        .on_hover_text("Invalid contract — click to repair");
+                        .on_hover_text("Invalid contract, click to repair");
                 }
                 ui.label(RichText::new(method).color(method_color(method)).size(11.0));
                 // Reserve the delete button on the right, then let the file name

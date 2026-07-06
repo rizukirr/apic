@@ -178,7 +178,7 @@ fn method_warning(method: &str, name: &str) -> Option<String> {
         None
     } else {
         Some(format!(
-            "request {name:?} uses method {upper}, unsupported by apic — imported as GET"
+            "request {name:?} uses method {upper}, unsupported by apic, imported as GET"
         ))
     }
 }
@@ -456,15 +456,20 @@ fn map(collection: &PostmanCollection) -> Vec<MappedContract> {
 
 /// Write mapped contracts under `dest_base`. Each contract's `rel_path` is
 /// confined under `dest_base` (rejecting `..` escapes), its parent directories
-/// are created, and the pretty-printed JSON is written. Existing files are not
-/// overwritten. Returns the number of files written.
-fn write_contracts(dest_base: &Path, mapped: &[MappedContract]) -> Result<usize, String> {
+/// are created, and the pretty-printed JSON is written. An existing file is left
+/// untouched (erroring) unless `overwrite` is set. Returns the number of files
+/// written.
+fn write_contracts(
+    dest_base: &Path,
+    mapped: &[MappedContract],
+    overwrite: bool,
+) -> Result<usize, String> {
     let mut written = 0usize;
     for item in mapped {
         let path = confine_to_dir(dest_base, &item.rel_path)?;
-        if path.exists() {
+        if !overwrite && path.exists() {
             return Err(format!(
-                "{} already exists; refusing to overwrite",
+                "{} already exists, pass --force to overwrite",
                 path.display()
             ));
         }
@@ -490,13 +495,17 @@ pub struct ConvertOutcome {
 
 /// Parses the collection at `collection_path`, maps it, writes contracts under
 /// `dest_base`, and returns what happened. Does not print — the caller reports.
-pub fn run(collection_path: &Path, dest_base: &Path) -> Result<ConvertOutcome, String> {
+pub fn run(
+    collection_path: &Path,
+    dest_base: &Path,
+    overwrite: bool,
+) -> Result<ConvertOutcome, String> {
     let collection = converter::from_path(collection_path)?;
     let mapped = map(&collection);
     if mapped.is_empty() {
         return Err("collection contained no convertible requests".to_string());
     }
-    let written = write_contracts(dest_base, &mapped)?;
+    let written = write_contracts(dest_base, &mapped, overwrite)?;
     let warnings: Vec<String> = mapped.iter().filter_map(|m| m.warning.clone()).collect();
     Ok(ConvertOutcome {
         written,
@@ -821,13 +830,18 @@ mod tests {
             warning: None,
         }];
 
-        let n = write_contracts(&base, &mapped).unwrap();
+        let n = write_contracts(&base, &mapped, false).unwrap();
         assert_eq!(n, 1);
         assert!(base.join("users").join("get_user.json").is_file());
 
-        // Second write to the same path is refused.
-        let err = write_contracts(&base, &mapped).unwrap_err();
+        // Second write to the same path is refused, and points to --force.
+        let err = write_contracts(&base, &mapped, false).unwrap_err();
         assert!(err.contains("already exists"));
+        assert!(err.contains("--force"));
+
+        // With overwrite, the same path is rewritten instead of erroring.
+        let n = write_contracts(&base, &mapped, true).unwrap();
+        assert_eq!(n, 1);
 
         std::fs::remove_dir_all(&base).unwrap();
     }
