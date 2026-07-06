@@ -214,10 +214,8 @@ mod tests {
                  "url":"/x",
                  "query":[{"name":"page","value":"1","description":"d"}],
                  "headers":[{"name":"A","value":"B"}],
-                 "request":{"type":"object","schema":[
-                    {"name":"status","type":"int","default":null,"description":"d","required":true}
-                 ]},
-                 "responses":[{"code":200,"description":"ok","schema":[]}] }"#,
+                 "request":{"status":0},
+                 "responses":[{"code":200,"description":"ok"}] }"#,
             None,
         )
         .unwrap();

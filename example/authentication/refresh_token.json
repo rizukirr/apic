@@ -1,57 +1,55 @@
 {
-  "name": "Refresh Token",
-  "description": "",
-  "method": "POST",
-  "url": "{{baseUrl}}/{{base_path}}/auth/refresh-token",
-  "query": [],
-  "headers": [
-    {
-      "name": "DeviceID",
-      "value": "{{device_id}}",
-      "required": false
-    },
-    {
-      "name": "AppID",
-      "value": "{{app_id}}",
-      "required": false
-    },
-    {
-      "name": "Content-Type",
-      "value": "application/json",
-      "required": false
-    }
-  ],
-  "request": {
-    "example": {
-      "refreshToken": "{{refresh_token}}"
-    }
-  },
-  "responses": [
-    {
-      "code": 200,
-      "description": "OK",
-      "headers": [],
-      "example": {
-        "statusCode": 200,
-        "message": "Token refreshed successfully",
-        "error": null,
-        "value": {
-          "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-          "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-          "tokenType": "Bearer"
+    "name": "Refresh Token",
+    "description": "",
+    "method": "POST",
+    "url": "{{baseUrl}}/{{base_path}}/auth/refresh-token",
+    "query": [],
+    "headers": [
+        {
+            "name": "DeviceID",
+            "value": "{{device_id}}",
+            "required": false
+        },
+        {
+            "name": "AppID",
+            "value": "{{app_id}}",
+            "required": false
+        },
+        {
+            "name": "Content-Type",
+            "value": "application/json",
+            "required": false
         }
-      }
+    ],
+    "request": {
+        "refreshToken": "{{refresh_token}}"
     },
-    {
-      "code": 401,
-      "description": "Unauthorized",
-      "headers": [],
-      "example": {
-        "statusCode": 401,
-        "message": "Sesi anda sudah kadaluwarsa",
-        "error": null,
-        "value": null
-      }
-    }
-  ]
+    "responses": [
+        {
+            "code": 200,
+            "description": "OK",
+            "headers": [],
+            "schema": {
+                "statusCode": 200,
+                "message": "Token refreshed successfully",
+                "error": null,
+                "value": {
+                    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                    "tokenType": "Bearer"
+                }
+            }
+        },
+        {
+            "code": 401,
+            "description": "Unauthorized",
+            "headers": [],
+            "schema": {
+                "statusCode": 401,
+                "message": "Sesi anda sudah kadaluwarsa",
+                "error": null,
+                "value": null
+            }
+        }
+    ]
 }

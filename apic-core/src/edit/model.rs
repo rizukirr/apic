@@ -68,7 +68,7 @@ impl EditResponse {
     }
 }
 
-use crate::json::{Header, JsonContent, Query, RequestBody, Response};
+use crate::json::{Header, JsonContent, Query, Response};
 use serde_json::Value;
 
 /// Pretty-prints a JSON example value to raw text (4-space indent), or empty
@@ -111,8 +111,8 @@ impl EditModel {
                     required: h.required,
                 })
                 .collect(),
-            request: c.request.map(|r: RequestBody| EditBody {
-                example: example_to_text(r.example.as_ref()),
+            request: c.request.map(|body: Value| EditBody {
+                example: example_to_text(Some(&body)),
             }),
             responses: c
                 .responses
@@ -129,7 +129,7 @@ impl EditModel {
                             required: h.required,
                         })
                         .collect(),
-                    example: example_to_text(r.example.as_ref()),
+                    example: example_to_text(r.schema.as_ref()),
                 })
                 .collect(),
         }
@@ -210,14 +210,12 @@ impl EditModel {
             ),
         );
 
-        // request (optional): only written when it carries an example, so an
-        // empty body (the GUI always shows an editable one) is not persisted.
+        // request (optional): the raw body value written directly under
+        // `request`, only when there is one (an empty buffer is not persisted).
         if let Some(req) = &self.request
-            && let Some(ex) = parse_example(&req.example, "request")?
+            && let Some(body) = parse_example(&req.example, "request")?
         {
-            let mut m = serde_json::Map::new();
-            m.insert("example".into(), ex);
-            root.insert("request".into(), Value::Object(m));
+            root.insert("request".into(), body);
         }
 
         // responses (always present, possibly empty)
@@ -250,8 +248,8 @@ impl EditModel {
                     ),
                 );
             }
-            if let Some(ex) = parse_example(&r.example, &format!("response {code}"))? {
-                m.insert("example".into(), ex);
+            if let Some(body) = parse_example(&r.example, &format!("response {code}"))? {
+                m.insert("schema".into(), body);
             }
             responses.push(Value::Object(m));
         }
@@ -288,17 +286,8 @@ mod tests {
         "url": "https://api.example.com/auth/{id}",
         "query": [{ "name": "page", "value": "1", "description": "Page", "required": true }],
         "headers": [{ "name": "Content-Type", "value": "application/json", "required": true }],
-        "request": {
-            "type": "object",
-            "schema": [{ "name": "user", "type": "object", "default": null,
-                         "description": "wrap", "required": true, "properties": [
-                { "name": "email", "type": "string", "default": null, "description": "Email", "required": true }
-            ] }],
-            "example": { "user": { "email": "a@b.c" } }
-        },
-        "responses": [{ "code": 200, "description": "ok", "type": "object",
-            "schema": [{ "name": "token", "type": "string", "default": null, "description": "JWT", "required": true }],
-            "example": { "token": "x" } }]
+        "request": { "user": { "email": "a@b.c" } },
+        "responses": [{ "code": 200, "description": "ok", "schema": { "token": "x" } }]
     }"#;
 
     #[test]
@@ -335,10 +324,7 @@ mod tests {
         assert!(back.headers[0].required);
         assert!(back.query[0].required);
         assert_eq!(back.responses[0].code, 200);
-        assert_eq!(
-            back.request.unwrap().example.unwrap()["user"]["email"],
-            "a@b.c"
-        );
+        assert_eq!(back.request.unwrap()["user"]["email"], "a@b.c");
     }
 
     #[test]

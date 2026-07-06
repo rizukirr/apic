@@ -28,7 +28,7 @@
         {
             "code": 200,
             "description": "OK",
-            "example": {
+            "schema": {
                 "statusCode": 200,
                 "message": "Data berhasil diambil",
                 "error": null,
@@ -53,5 +53,6 @@
                 }
             }
         }
-    ]
+    ],
+    "request": null
 }

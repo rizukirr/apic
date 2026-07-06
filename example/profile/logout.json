@@ -1,45 +1,43 @@
 {
-  "name": "Logout",
-  "description": "",
-  "method": "POST",
-  "url": "{{baseUrl}}/{{base_path}}/auth/logout",
-  "query": [],
-  "headers": [
-    {
-      "name": "DeviceID",
-      "value": "{{device_id}}",
-      "required": false
-    },
-    {
-      "name": "AppID",
-      "value": "{{app_id}}",
-      "required": false
-    },
-    {
-      "name": "Content-Type",
-      "value": "application/json",
-      "required": false
-    },
-    {
-      "name": "Authorization",
-      "value": "Bearer {{access_token}}",
-      "required": false
-    }
-  ],
-  "request": {
-    "example": {}
-  },
-  "responses": [
-    {
-      "code": 200,
-      "description": "OK",
-      "headers": [],
-      "example": {
-        "statusCode": 200,
-        "message": "Logout berhasil",
-        "error": null,
-        "value": null
-      }
-    }
-  ]
+    "name": "Logout",
+    "description": "",
+    "method": "POST",
+    "url": "{{baseUrl}}/{{base_path}}/auth/logout",
+    "query": [],
+    "headers": [
+        {
+            "name": "DeviceID",
+            "value": "{{device_id}}",
+            "required": false
+        },
+        {
+            "name": "AppID",
+            "value": "{{app_id}}",
+            "required": false
+        },
+        {
+            "name": "Content-Type",
+            "value": "application/json",
+            "required": false
+        },
+        {
+            "name": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "required": false
+        }
+    ],
+    "request": {},
+    "responses": [
+        {
+            "code": 200,
+            "description": "OK",
+            "headers": [],
+            "schema": {
+                "statusCode": 200,
+                "message": "Logout berhasil",
+                "error": null,
+                "value": null
+            }
+        }
+    ]
 }

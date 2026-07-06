@@ -29,16 +29,11 @@ pub struct JsonContent {
     #[serde(default)]
     pub query: Vec<Query>,
     pub headers: Vec<Header>,
-    pub request: Option<RequestBody>,
-    pub responses: Vec<Response>,
-}
-
-/// The request body: a raw JSON example payload. `None` inside a `Some(request)`
-/// means the body exists but has no example yet.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct RequestBody {
+    /// The request body: the raw JSON payload directly (no wrapper key). `None`
+    /// when the endpoint has no request body.
     #[serde(default)]
-    pub example: Option<serde_json::Value>,
+    pub request: Option<serde_json::Value>,
+    pub responses: Vec<Response>,
 }
 
 /// A documented query parameter: `name` is the key, `value` an example value,
@@ -70,9 +65,9 @@ pub struct Response {
     #[serde(default)]
     pub headers: Vec<Header>,
 
-    /// Raw JSON example payload for this response.
+    /// The response body: the raw JSON payload for this response.
     #[serde(default)]
-    pub example: Option<serde_json::Value>,
+    pub schema: Option<serde_json::Value>,
 }
 
 pub fn method_str(method: &Method) -> String {
@@ -341,54 +336,32 @@ mod tests {
     }
 
     #[test]
-    fn request_and_response_parse_example_json() {
+    fn request_and_response_parse_body_json() {
         let json = r#"{
             "name": "login", "method": "POST",
             "url": "https://api.example.com/l",
             "headers": [],
-            "request": {
-                "example": { "username": "rizukirr", "password": "123qweA@" }
-            },
+            "request": { "username": "rizukirr", "password": "123qweA@" },
             "responses": [
                 { "code": 200, "description": "ok",
-                  "example": { "status": 200, "message": "welcome" } }
+                  "schema": { "status": 200, "message": "welcome" } }
             ]
         }"#;
         let c = json_get(json, None).unwrap();
-        let request = c.request.unwrap();
-        assert_eq!(request.example.unwrap()["username"], "rizukirr");
-        assert_eq!(c.responses[0].example.as_ref().unwrap()["status"], 200);
+        // The request body is the raw JSON directly; a response body is under `schema`.
+        assert_eq!(c.request.unwrap()["username"], "rizukirr");
+        assert_eq!(c.responses[0].schema.as_ref().unwrap()["status"], 200);
     }
 
     #[test]
-    fn body_example_defaults_to_none_when_absent() {
+    fn bodies_default_to_none_when_absent() {
         let json = r#"{
             "name": "t", "method": "POST", "url": "/x", "headers": [],
-            "request": {},
             "responses": [ { "code": 200, "description": "ok" } ]
         }"#;
         let c = json_get(json, None).unwrap();
-        assert!(c.request.as_ref().unwrap().example.is_none());
-        assert!(c.responses[0].example.is_none());
-    }
-
-    #[test]
-    fn legacy_schema_and_type_keys_are_ignored() {
-        // Old contracts still load; the removed `type`/`schema` keys are dropped.
-        let json = r#"{
-            "name": "t", "method": "POST", "url": "/x", "headers": [],
-            "request": { "type": "object[]", "schema": [
-                { "name": "id", "type": "string", "default": null, "description": "d", "required": true }
-            ], "example": { "id": "1" } },
-            "responses": [ { "code": 200, "description": "ok", "type": "object",
-                "schema": [], "example": { "ok": true } } ]
-        }"#;
-        let c = json_get(json, None).unwrap();
-        assert_eq!(
-            c.request.as_ref().unwrap().example.as_ref().unwrap()["id"],
-            "1"
-        );
-        assert_eq!(c.responses[0].example.as_ref().unwrap()["ok"], true);
+        assert!(c.request.is_none());
+        assert!(c.responses[0].schema.is_none());
     }
 
     #[test]

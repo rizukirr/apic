@@ -68,7 +68,7 @@ impl Printer {
 
         self.section("REQUEST");
         match &c.request {
-            Some(request) => self.example(request.example.as_ref()),
+            Some(body) => self.example(Some(body)),
             None => self.none(),
         }
 
@@ -78,7 +78,7 @@ impl Printer {
         } else {
             for response in &c.responses {
                 self.response_title(response.code, &response.description);
-                self.example(response.example.as_ref());
+                self.example(response.schema.as_ref());
             }
         }
     }

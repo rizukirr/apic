@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::converter;
 use crate::converter::{PostmanCollection, v1_0_0, v2_0_0, v2_1_0};
 use crate::file::confine_to_dir;
-use crate::json::{Header, JsonContent, Query, RequestBody, Response, method_from_str};
+use crate::json::{Header, JsonContent, Query, Response, method_from_str};
 
 /// Convert a human request/folder name into a filesystem-safe slug using
 /// underscores: lowercase, runs of non-alphanumeric characters collapse to a
@@ -127,11 +127,10 @@ fn build_contract(raw: RawRequest) -> JsonContent {
         })
         .collect();
 
-    let request = raw.body.as_deref().and_then(|text| {
-        body_example(Some(text)).map(|example| RequestBody {
-            example: Some(example),
-        })
-    });
+    let request = raw
+        .body
+        .as_deref()
+        .and_then(|text| body_example(Some(text)));
 
     let responses = raw
         .responses
@@ -140,7 +139,7 @@ fn build_contract(raw: RawRequest) -> JsonContent {
             code,
             description: status,
             headers: Vec::new(),
-            example: body_example(body.as_deref()),
+            schema: body_example(body.as_deref()),
         })
         .collect();
 
@@ -578,7 +577,7 @@ mod tests {
         assert_eq!(c.headers[0].name, "Accept");
         assert_eq!(c.responses.len(), 1);
         assert_eq!(c.responses[0].code, 200);
-        assert!(c.responses[0].example.is_some());
+        assert!(c.responses[0].schema.is_some());
         assert!(c.request.is_none());
     }
 

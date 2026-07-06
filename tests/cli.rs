@@ -348,12 +348,10 @@ fn read_shows_raw_json_body_examples() {
         "method": "POST",
         "url": "https://api.example.com/auth/login",
         "headers": [],
-        "request": {
-            "example": { "username": "rizukirr", "password": "123qweA@" }
-        },
+        "request": { "username": "rizukirr", "password": "123qweA@" },
         "responses": [
             { "code": 200, "description": "ok",
-              "example": { "status": 200, "message": "welcome" } },
+              "schema": { "status": 200, "message": "welcome" } },
             { "code": 401, "description": "denied" }
         ]
     }"#;

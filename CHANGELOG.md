@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Contract format (breaking).** A request body is now the raw JSON payload
+  written directly under `request` (no `example` wrapper), and a response body is
+  written under the response's `schema` key (renamed from `example`). Contracts
+  using the previous `{ "example": ... }` body shape must be updated.
+
 ## [0.4.0] - 2026-07-06
 
 A large release: a simplified, breaking contract format plus full redesigns of

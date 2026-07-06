@@ -781,7 +781,7 @@ mod tests {
                  "url":"https://h/x",
                  "query":[{"name":"page","value":"1","description":"d"}],
                  "headers":[{"name":"A","value":"B"}],
-                 "responses":[{"code":200,"description":"ok","schema":[]}] }"#,
+                 "responses":[{"code":200,"description":"ok"}] }"#,
             None,
         )
         .unwrap();
@@ -1122,7 +1122,7 @@ mod tests {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
                  "url":"https://h/x","headers":[],
-                 "request":{"example":{"a":1}},
+                 "request":{"a":1},
                  "responses":[] }"#,
             None,
         )
@@ -1161,7 +1161,7 @@ mod tests {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
                  "url":"https://h/x","headers":[],
-                 "responses":[{"code":200,"description":"ok","example":{"a":1}}] }"#,
+                 "responses":[{"code":200,"description":"ok","schema":{"a":1}}] }"#,
             None,
         )
         .unwrap();
@@ -1333,7 +1333,7 @@ mod tests {
     fn clearing_the_request_example_drops_the_body_to_none() {
         let c = json_get(
             r#"{ "name":"t","method":"POST","url":"https://h/x","headers":[],
-                 "request":{"example":{"a":1}},"responses":[] }"#,
+                 "request":{"a":1},"responses":[] }"#,
             None,
         )
         .unwrap();
