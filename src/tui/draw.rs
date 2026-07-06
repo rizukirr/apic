@@ -803,29 +803,25 @@ pub(crate) fn draw_example_modal(frame: &mut Frame, textarea: &TextArea) {
     frame.render_widget(textarea, area);
 }
 
-/// The two-field "new response" dialog (status + short description). The focused
-/// field carries a real terminal cursor at the end of its text.
+/// The "new response" dialog, laid out as a two-column table (`Status` and
+/// `Short Description`) with the values editable underneath. The focused column
+/// carries a real terminal cursor at the end of its text.
 pub(crate) fn draw_new_response_form(
     frame: &mut Frame,
     status: &str,
     description: &str,
     on_description: bool,
 ) {
-    const LABEL_W: usize = 19; // aligns "Status:" and "Short Description:"
+    const STATUS_W: usize = 12; // status column width; the header sets the layout
+    const SEP: &str = " │ ";
     let popup = centered(frame.area(), 50, 30);
     frame.render_widget(Clear, popup);
 
-    let field = |label: &str, value: &str| {
-        Line::from(vec![
-            Span::styled(format!("{label:<LABEL_W$}"), dim()),
-            Span::raw(value.to_string()),
-        ])
-    };
+    let row = |a: &str, b: &str| format!("{a:<STATUS_W$}{SEP}{b}");
     let content = vec![
         Line::from(""),
-        field("Status:", status),
-        Line::from(""),
-        field("Short Description:", description),
+        Line::from(Span::styled(row("Status", "Short Description"), dim())),
+        Line::from(row(status, description)),
         Line::from(""),
         Line::from(Span::styled(
             "Enter: Yes    Esc: No    Tab: switch field",
@@ -840,20 +836,18 @@ pub(crate) fn draw_new_response_form(
     );
     frame.render_widget(dialog, popup);
 
-    // Place the cursor at the end of the focused field. Content starts inside the
-    // border (1) + left/top padding (2/1); the Status line is content row 1 and
-    // the Description line is content row 3.
+    // Cursor on the values row (content row 2). Content starts inside the border
+    // (1) + left/top padding (2/1); the Status column starts at content_x, the
+    // Short Description column after the status width + separator.
     let content_x = popup.x + 1 + 2;
-    let content_y = popup.y + 1 + 1;
-    let (row, text) = if on_description {
-        (3u16, description)
+    let values_y = popup.y + 1 + 1 + 2;
+    let x = if on_description {
+        content_x + (STATUS_W + SEP.chars().count() + description.chars().count()) as u16
     } else {
-        (1u16, status)
+        content_x + status.chars().count() as u16
     };
-    let x = content_x + (LABEL_W + text.chars().count()) as u16;
-    let y = content_y + row;
-    if x < popup.x + popup.width && y < popup.y + popup.height {
-        frame.set_cursor_position((x, y));
+    if x < popup.x + popup.width && values_y < popup.y + popup.height {
+        frame.set_cursor_position((x, values_y));
     }
 }
 
