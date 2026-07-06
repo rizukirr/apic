@@ -1321,6 +1321,12 @@ impl App {
                                     *status = format!("saved {}", p.display());
                                     *editing = false; // back to read-only on success
                                     *original_model = None; // commit: drop the snapshot
+                                    // Refresh this contract's sidebar method badge.
+                                    if let Some(e) =
+                                        entries.iter_mut().find(|e| e.path.as_path() == p)
+                                    {
+                                        e.method = method_str(&model.method);
+                                    }
                                 }
                                 Err(e) => *status = format!("save error: {e}"),
                             },
