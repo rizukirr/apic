@@ -20,16 +20,14 @@
         }
     ],
     "request": {
-        "example": {
-            "agentCode": "79009901",
-            "password": "newPassword123!"
-        }
+        "agentCode": "79009901",
+        "password": "newPassword123!"
     },
     "responses": [
         {
             "code": 200,
             "description": "OK",
-            "example": {
+            "schema": {
                 "statusCode": 200,
                 "message": "Login berhasil",
                 "error": null,
@@ -44,7 +42,7 @@
         {
             "code": 200,
             "description": "OK",
-            "example": {
+            "schema": {
                 "statusCode": 200,
                 "message": "OTP telah dikirim ke email Anda",
                 "error": null,
@@ -58,7 +56,7 @@
         {
             "code": 401,
             "description": "Unauthorized",
-            "example": {
+            "schema": {
                 "statusCode": 401,
                 "message": "Data yang Anda masukkan tidak sesuai. Silakan periksa kembali dan coba lagi.",
                 "error": null,
@@ -68,7 +66,7 @@
         {
             "code": 429,
             "description": "Too Many Requests",
-            "example": {
+            "schema": {
                 "statusCode": 429,
                 "message": "Anda sudah melakukan kesalahan password sebanyak 5x. Coba lagi dalam ",
                 "error": null,
@@ -81,7 +79,7 @@
         {
             "code": 403,
             "description": "Forbidden",
-            "example": {
+            "schema": {
                 "statusCode": 403,
                 "message": "Akun Anda tidak aktif. Silakan hubungi Admin",
                 "error": null,
@@ -91,7 +89,7 @@
         {
             "code": 400,
             "description": "Bad Request",
-            "example": {
+            "schema": {
                 "statusCode": 400,
                 "message": "Data yang Anda masukkan tidak sesuai. Silakan periksa kembali dan coba lagi.",
                 "error": null,

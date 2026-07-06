@@ -423,9 +423,7 @@ for how to make it your own), or [`example/`](example) for complete projects.
         { "name": "Authorization", "value": "Bearer {token}", "required": true }
     ],
     "request": {
-        "example": {
-            "name": "Rizki Rakasiwi"
-        }
+        "name": "Rizki Rakasiwi"
     },
     "responses": [
         {
@@ -434,7 +432,7 @@ for how to make it your own), or [`example/`](example) for complete projects.
             "headers": [
                 { "name": "X-Request-Id", "value": "abc-123", "required": false }
             ],
-            "example": {
+            "schema": {
                 "status": 200,
                 "message": "OK"
             }
@@ -443,10 +441,12 @@ for how to make it your own), or [`example/`](example) for complete projects.
 }
 ```
 
-A request or response **body is a raw JSON example**, the payload you would
-actually send or receive. There is no separate field-level schema: the example
-is the contract's source of truth for a body's shape, and `apic read` prints it
-verbatim. Omit `request` (or a response's `example`) when there is no body.
+A **body is a raw JSON payload**, the exact thing you would send or receive. The
+request body is written **directly** under `request`; a response body is written
+under the response's **`schema`** key. There is no separate field-level schema:
+the payload is the contract's source of truth for a body's shape, and `apic read`
+prints it verbatim. Omit `request` (or a response's `schema`) when there is no
+body.
 
 ### Fields
 
@@ -458,7 +458,7 @@ verbatim. Omit `request` (or a response's `example`) when there is no body.
 | `url` | yes | Request URL as a single free-form string, e.g. `https://api.example.com/users/{id}`. Path parameters are written inline as `{name}` tokens. |
 | `query` | no | Array of query parameters; see below. |
 | `headers` | yes | Array of request headers; see below. |
-| `request` | no | Request body, `{ "example": <raw JSON> }`. Omit it when the endpoint has no body. |
+| `request` | no | Request body: the raw JSON payload, written directly. Omit it when the endpoint has no body. |
 | `responses` | yes | Array of responses; see below. |
 
 Each **query** parameter:
@@ -485,13 +485,14 @@ Each **response**:
 | `code` | yes | HTTP status code, e.g. `200`. |
 | `description` | yes | Short description, e.g. `OK`. |
 | `headers` | no | Array of response headers (same shape as request headers). |
-| `example` | no | Raw JSON example payload for this response. |
+| `schema` | no | The response body: the raw JSON payload for this response. |
 
 Path parameters are not a separate section: write them inline in the `url`
 string as `{name}` (e.g. `{id}` in `.../users/{id}`).
 
-> Contracts that still carry the old `type`/`schema` fields on a body load fine,
-> those keys are ignored and only `example` is read.
+> The request body has no wrapper key, it is the JSON value itself. A response's
+> body lives under `schema` (not `example`). Contracts written for the older
+> `{ "example": ... }` body shape do not carry over and must be updated.
 
 ## Configuration
 

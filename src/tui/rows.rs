@@ -285,10 +285,7 @@ mod tests {
                  "url":"https://api.example.com/user",
                  "query":[{"name":"id","value":"1","description":"User ID"}],
                  "headers":[{"name":"Content-Type","value":"application/json"}],
-                 "responses":[{"code":200,"description":"ok","schema":[
-                    {"name":"data","type":"object","default":null,"description":"d","required":false,
-                     "properties":[{"name":"id","type":"int","default":null,"description":"d","required":true}]}
-                 ],"example":{"status":200}}] }"#,
+                 "responses":[{"code":200,"description":"ok","schema":{"status":200}}] }"#,
             None,
         )
         .unwrap();

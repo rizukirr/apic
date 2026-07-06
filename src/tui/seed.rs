@@ -24,16 +24,16 @@ fn seed_value(overlay: Option<&str>) -> Result<Value, String> {
 }
 
 /// Prepares the builtin template as a create seed: keeps scalar default values
-/// (name, description, method, url, types) but EMPTIES every array so
-/// a new contract starts with no leftover items, and clears every `example`.
-/// The project template overlay then replaces any arrays/values it
-/// defines.
+/// (name, description, method, url) but EMPTIES every array so a new contract
+/// starts with no leftover items, and clears every request/response body.
+/// The project template overlay then replaces any arrays/values it defines.
 fn strip_to_seed_defaults(v: &mut Value) {
     match v {
         Value::Array(items) => items.clear(),
         Value::Object(map) => {
             for (k, val) in map.iter_mut() {
-                if k == "example" {
+                // Body payloads: request is a bare body, a response's is `schema`.
+                if k == "request" || k == "schema" {
                     *val = Value::Null;
                 } else {
                     strip_to_seed_defaults(val);

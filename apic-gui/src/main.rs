@@ -1671,14 +1671,8 @@ mod tests {
             "url": "https://example.com/users/{id}",
             "query": [{"name":"page","value":"","description":""}],
             "headers": [{"name":"Authorization","value":"Bearer x"}],
-            "request": { "type": "json", "example": {"name":"a"}, "schema": [
-                {"name":"name","type":"string","default":null,"description":"n","required":true,"properties":null},
-                {"name":"meta","type":"object","default":null,"description":"m","required":false,"properties":[
-                    {"name":"age","type":"int","default":null,"description":"a","required":false,"properties":null}
-                ]}
-            ] },
-            "responses": [ { "code": 200, "description": "ok", "example": {"id":"x"},
-                "schema": [{"name":"id","type":"string","default":null,"description":"i","required":true,"properties":null}] } ]
+            "request": { "name": "a", "meta": { "age": 1 } },
+            "responses": [ { "code": 200, "description": "ok", "schema": {"id":"x"} } ]
         }"#;
         let contract = apic_core::json::json_get(json, None).expect("valid contract");
         let mut app = App::new();

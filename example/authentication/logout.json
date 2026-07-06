@@ -1,43 +1,43 @@
 {
-  "name": "Logout",
-  "description": "",
-  "method": "POST",
-  "url": "{{baseUrl}}/{{base_path}}/auth/logout",
-  "query": [],
-  "headers": [
-    {
-      "name": "DeviceID",
-      "value": "{{device_id}}",
-      "required": false
-    },
-    {
-      "name": "AppID",
-      "value": "{{app_id}}",
-      "required": false
-    },
-    {
-      "name": "Content-Type",
-      "value": "application/json",
-      "required": false
-    },
-    {
-      "name": "Authorization",
-      "value": "Bearer xyz",
-      "required": false
-    }
-  ],
-  "request": null,
-  "responses": [
-    {
-      "code": 200,
-      "description": "OK",
-      "headers": [],
-      "example": {
-        "statusCode": 200,
-        "message": "Sesi anda telah kadaluwarsa",
-        "error": null,
-        "value": null
-      }
-    }
-  ]
+    "name": "Logout",
+    "description": "",
+    "method": "POST",
+    "url": "{{baseUrl}}/{{base_path}}/auth/logout",
+    "query": [],
+    "headers": [
+        {
+            "name": "DeviceID",
+            "value": "{{device_id}}",
+            "required": false
+        },
+        {
+            "name": "AppID",
+            "value": "{{app_id}}",
+            "required": false
+        },
+        {
+            "name": "Content-Type",
+            "value": "application/json",
+            "required": false
+        },
+        {
+            "name": "Authorization",
+            "value": "Bearer xyz",
+            "required": false
+        }
+    ],
+    "request": null,
+    "responses": [
+        {
+            "code": 200,
+            "description": "OK",
+            "headers": [],
+            "schema": {
+                "statusCode": 200,
+                "message": "Sesi anda telah kadaluwarsa",
+                "error": null,
+                "value": null
+            }
+        }
+    ]
 }

@@ -967,7 +967,7 @@ mod tests {
                  "url":"https://api.example.com/user",
                  "headers":[{"name":"Content-Type","value":"application/json"}],
                  "responses":[{"code":200,"description":"ok",
-                    "example":{"access_token":"abc"}}] }"#,
+                    "schema":{"access_token":"abc"}}] }"#,
             None,
         )
         .unwrap();
@@ -999,7 +999,7 @@ mod tests {
             r#"{ "name":"t","method":"POST",
                  "url":"https://h/x",
                  "headers":[],
-                 "request":{"type":"object","schema":[]},
+                 "request":{"foo":"bar"},
                  "responses":[] }"#,
             None,
         )
@@ -1095,8 +1095,7 @@ mod tests {
                  "url":"https://h/x",
                  "headers":[{headers}],
                  "responses":[{{"code":200,"description":"ok",
-                    "schema":[{{"name":"f","type":"int","default":null,"description":"d","required":false}}],
-                    "example":{{"unique_marker_xyz":1}} }}] }}"#
+                    "schema":{{"unique_marker_xyz":1}} }}] }}"#
         );
         let c = json_get(&json, None).unwrap();
         let m = EditModel::from_contract(c);
