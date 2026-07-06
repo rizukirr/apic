@@ -353,6 +353,16 @@ pub(crate) fn update_response(
     }
 }
 
+/// Removes response `idx` entirely (used when its JSON is saved empty). The
+/// active tab and cursor are clamped by `refresh`.
+pub(crate) fn remove_response(state: &mut UiState, model: &mut EditModel, idx: usize) {
+    if idx < model.responses.len() {
+        model.responses.remove(idx);
+        state.dirty = true;
+        state.refresh(model);
+    }
+}
+
 /// The "name" field of the just-added entity for `target`, used to auto-focus
 /// and enter insert mode after `add_row`. Returns `None` for `RequestToggle`
 /// (no name) or when the add did not produce a row.
@@ -1182,6 +1192,17 @@ mod tests {
         assert_eq!(m.responses[0].code, "404");
         assert_eq!(m.responses[0].description, "gone");
         assert_eq!(s.resp, 0);
+    }
+
+    #[test]
+    fn remove_response_drops_it_and_clamps_the_active_tab() {
+        let mut m = model();
+        m.responses.push(EditResponse::blank());
+        let mut s = UiState::new(&m);
+        s.resp = 1;
+        remove_response(&mut s, &mut m, 1);
+        assert_eq!(m.responses.len(), 1);
+        assert_eq!(s.resp, 0, "active tab clamps back into range");
     }
 
     #[test]
