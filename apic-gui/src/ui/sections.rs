@@ -413,10 +413,25 @@ pub(crate) fn response_code_selector(
                                 .text_color(color),
                         );
                         ui.label(RichText::new("-").color(DIM));
+                        // Size the title field to its text (30-char cap) so the
+                        // `x` sits right after the title instead of a fixed gap.
+                        let title_w = {
+                            let title = &model.responses[i].description;
+                            let shown: String = if title.is_empty() {
+                                "title".to_string()
+                            } else {
+                                title.chars().take(30).collect()
+                            };
+                            let font = egui::TextStyle::Body.resolve(ui.style());
+                            ui.painter()
+                                .layout_no_wrap(shown, font, egui::Color32::PLACEHOLDER)
+                                .size()
+                                .x
+                        };
                         ui.add(
                             egui::TextEdit::singleline(&mut model.responses[i].description)
                                 .frame(false)
-                                .desired_width(150.0)
+                                .desired_width(title_w + 6.0)
                                 .hint_text("title")
                                 .text_color(DIM),
                         );
