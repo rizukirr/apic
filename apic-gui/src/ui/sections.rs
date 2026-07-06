@@ -405,11 +405,28 @@ pub(crate) fn response_code_selector(
                     if editing && selected {
                         // The active tab is edited in place, no bordered box:
                         // `[code] - [title] x`, code first so focus lands there.
+                        // Tight spacing so the fields read as one label, not a row.
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        // Size the code field to its text (min 3 digits) so the
+                        // `-` hugs the code instead of sitting past a fixed width.
+                        let code_w = {
+                            let code = &model.responses[i].code;
+                            let shown: String = if code.chars().count() < 3 {
+                                "000".to_string()
+                            } else {
+                                code.chars().take(6).collect()
+                            };
+                            let font = egui::TextStyle::Body.resolve(ui.style());
+                            ui.painter()
+                                .layout_no_wrap(shown, font, egui::Color32::PLACEHOLDER)
+                                .size()
+                                .x
+                        };
                         ui.add(
                             egui::TextEdit::singleline(&mut model.responses[i].code)
                                 .id(code_edit_id)
                                 .frame(false)
-                                .desired_width(40.0)
+                                .desired_width(code_w + 10.0)
                                 .text_color(color),
                         );
                         ui.label(RichText::new("-").color(DIM));
