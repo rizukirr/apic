@@ -812,26 +812,51 @@ pub(crate) fn draw_new_response_form(
     description: &str,
     on_description: bool,
 ) {
-    const STATUS_W: usize = 12; // status column width; the header sets the layout
+    const STATUS_W: usize = 12; // status column width
+    const DESC_W: usize = 20; // description column width (input box)
     const SEP: &str = " │ ";
     let popup = centered(frame.area(), 50, 30);
     frame.render_widget(Clear, popup);
 
-    let row = |a: &str, b: &str| format!("{a:<STATUS_W$}{SEP}{b}");
+    let header = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let focused = Style::default()
+        .fg(Color::White)
+        .bg(Color::Blue)
+        .add_modifier(Modifier::BOLD);
+    let blurred = Style::default().fg(Color::White).bg(Color::DarkGray);
+    let sep = Style::default().fg(Color::DarkGray);
+
     let content = vec![
         Line::from(""),
-        Line::from(Span::styled(row("Status", "Short Description"), dim())),
-        Line::from(row(status, description)),
+        Line::from(vec![
+            Span::styled(format!("{:<STATUS_W$}", "Status"), header),
+            Span::styled(SEP, sep),
+            Span::styled(format!("{:<DESC_W$}", "Short Description"), header),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                format!("{status:<STATUS_W$}"),
+                if on_description { blurred } else { focused },
+            ),
+            Span::styled(SEP, sep),
+            Span::styled(
+                format!("{description:<DESC_W$}"),
+                if on_description { focused } else { blurred },
+            ),
+        ]),
         Line::from(""),
         Line::from(Span::styled(
             "Enter: Yes    Esc: No    Tab: switch field",
-            dim(),
+            Style::default().fg(Color::Gray),
         )),
     ];
     let dialog = Paragraph::new(content).block(
         Block::default()
             .title(" new response ")
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
             .padding(Padding::new(2, 2, 1, 1)),
     );
     frame.render_widget(dialog, popup);
