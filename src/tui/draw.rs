@@ -195,7 +195,7 @@ fn push_header(
                 record_cursor(cursor, lines.len(), col);
                 lines.push(line);
             }
-            RowKind::Title | RowKind::Example => {}
+            RowKind::Title | RowKind::Example | RowKind::RespTabs => {}
         }
     }
 }
@@ -271,6 +271,80 @@ fn url_line(state: &UiState, row: &TableRow, selected: bool) -> (Line<'static>, 
         spans.push(Span::styled(url.value.clone(), url_style));
     }
     (Line::from(spans), cursor_col)
+}
+
+/// The RESPONSE tab strip: ` 200 - ok   400   201 - created`. Cells come in
+/// (code, desc) pairs per response; the active tab (`state.resp`) is emphasized,
+/// the focused cell highlights, and the ` - ` separator is dropped when a title
+/// is empty (unless that title cell is being edited).
+fn resp_tabs_line(
+    state: &UiState,
+    row: &TableRow,
+    selected: bool,
+) -> (Line<'static>, Option<usize>) {
+    let base = sel_style(state, selected);
+    let mut spans = vec![Span::styled(" ", base)];
+    let mut emitted = 1usize; // leading space
+    let mut cursor_col = None;
+
+    let nresp = row.cells.len() / 2;
+    for r in 0..nresp {
+        let code = &row.cells[r * 2];
+        let desc = &row.cells[r * 2 + 1];
+        let active = r == state.resp;
+        let code_focused = selected && state.cell == Some(r * 2);
+        let desc_focused = selected && state.cell == Some(r * 2 + 1);
+
+        if r > 0 {
+            spans.push(Span::styled("   ", base));
+            emitted += 3;
+        }
+
+        // Code.
+        if code_focused && let Mode::Insert(buf) = &state.mode {
+            cursor_col = Some(emitted + buf.chars().count());
+            emitted += buf.chars().count();
+            spans.push(Span::styled(buf.clone(), base.add_modifier(Modifier::BOLD)));
+        } else {
+            emitted += code.value.chars().count();
+            spans.push(Span::styled(
+                code.value.clone(),
+                tab_style(base, code_focused, active),
+            ));
+        }
+
+        // ` - title`, shown when the title is set or its cell is being edited.
+        if !desc.value.is_empty() || desc_focused {
+            spans.push(Span::styled(" - ", base));
+            emitted += 3;
+            if desc_focused && let Mode::Insert(buf) = &state.mode {
+                cursor_col = Some(emitted + buf.chars().count());
+                emitted += buf.chars().count();
+                spans.push(Span::styled(buf.clone(), base.add_modifier(Modifier::BOLD)));
+            } else {
+                let shown = if desc.value.is_empty() {
+                    " ".to_string()
+                } else {
+                    desc.value.clone()
+                };
+                emitted += shown.chars().count();
+                spans.push(Span::styled(shown, tab_style(base, desc_focused, active)));
+            }
+        }
+    }
+    (Line::from(spans), cursor_col)
+}
+
+/// Style for a tab cell: yellow highlight when focused, cyan-bold when it is the
+/// active tab, dim otherwise.
+fn tab_style(base: Style, focused: bool, active: bool) -> Style {
+    if focused {
+        cell_hl()
+    } else if active {
+        base.fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    } else {
+        base.fg(Color::DarkGray)
+    }
 }
 
 /// A ` label  value` key/value line (table / key-value rows). The label is dim;
@@ -382,6 +456,14 @@ fn push_section(
                         *sel = (lines.len(), lines.len());
                     }
                     let (line, col) = kv_line(state, row, selected);
+                    record_cursor(cursor, lines.len(), col);
+                    lines.push(line);
+                }
+                RowKind::RespTabs => {
+                    if selected {
+                        *sel = (lines.len(), lines.len());
+                    }
+                    let (line, col) = resp_tabs_line(state, row, selected);
                     record_cursor(cursor, lines.len(), col);
                     lines.push(line);
                 }
@@ -671,13 +753,16 @@ fn draw_confirm(frame: &mut Frame, area: Rect, title: &str, prompt: &str, keys: 
 fn draw_help(frame: &mut Frame, area: Rect) {
     let rows = vec![
         Row::new(vec!["↑/↓  j/k", "Select a row"]),
-        Row::new(vec!["←/→  h/l", "Move between cells"]),
-        Row::new(vec!["Enter", "Edit cell · expand response · open example"]),
+        Row::new(vec![
+            "←/→  h/l",
+            "Move between cells · switch response tabs",
+        ]),
+        Row::new(vec!["Enter", "Edit cell · open example"]),
         Row::new(vec!["i", "Insert — edit the focused text cell"]),
-        Row::new(vec!["Esc", "Back · collapse · cancel"]),
+        Row::new(vec!["Esc", "Back · cancel"]),
         Row::new(vec![
             "a",
-            "Add field/member · on '+ add response' adds a response",
+            "Add row · REQUEST writes JSON · RESPONSE adds a tab",
         ]),
         Row::new(vec!["e", "Edit the example (create one when empty)"]),
         Row::new(vec!["d", "Delete the selected row"]),
@@ -758,7 +843,8 @@ mod tests {
         assert!(text.contains("User management")); // description
         assert!(text.contains("https://api.example.com/user")); // url string
         assert!(text.contains("HEADERS"));
-        assert!(text.contains("RESPONSE 200 — ok"));
+        assert!(text.contains("RESPONSE")); // section title
+        assert!(text.contains("200 - ok")); // response tab: `code - title`
         // The body renders its raw JSON example.
         assert!(text.contains("access_token"));
         // No box borders.

@@ -37,21 +37,16 @@ pub(crate) enum SectionKind {
     Body,
 }
 
-/// Which collapsible region (if any) is currently expanded.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum Expand {
-    Response(usize),
-}
-
 /// Row behavior / how a row is drawn.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum RowKind {
-    Name,    // header name line (drawn uppercased)
-    Desc,    // header description line (drawn only when non-empty)
-    UrlLine, // ` METHOD url`; Enter edits the url, h reaches the method enum
-    Title,   // a Body section's bold title line; Enter expands code/description
-    Field,   // an editable table / key-value row
-    Example, // inline ` Example:` + raw JSON; Enter opens the modal
+    Name,     // header name line (drawn uppercased)
+    Desc,     // header description line (drawn only when non-empty)
+    UrlLine,  // ` METHOD url`; Enter edits the url, h reaches the method enum
+    Title,    // a section's bold title line
+    RespTabs, // the RESPONSE tab strip: `code - title` per response, inline-edit
+    Field,    // an editable table / key-value row
+    Example,  // inline ` Example:` + raw JSON; Enter opens the modal
 }
 
 /// One displayable table row.
@@ -74,16 +69,8 @@ pub(crate) struct Section {
     pub headers: Option<Vec<&'static str>>,
     pub rows: Vec<TableRow>,
     pub add: Option<Field>,
-    pub expand: Option<Expand>,
 }
 
-fn label(text: &str) -> Cell {
-    Cell {
-        field: Field::SectionHeader,
-        kind: CellKind::Label,
-        value: text.to_string(),
-    }
-}
 fn text(field: Field, value: String) -> Cell {
     Cell {
         field,
@@ -145,8 +132,9 @@ fn body_rows(lead: Vec<TableRow>, loc: BodyLoc, example: &str) -> Vec<TableRow> 
     rows
 }
 
-/// Flattens the model into read-shaped display sections.
-pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
+/// Flattens the model into read-shaped display sections. `resp` is the active
+/// response tab, whose example the RESPONSE section shows.
+pub(crate) fn flatten(m: &EditModel, resp: usize) -> Vec<Section> {
     let mut out = Vec::new();
 
     // Header block: name, description, URL.
@@ -186,7 +174,6 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
         headers: None,
         rows: head_rows,
         add: head_add,
-        expand: None,
     });
 
     // QUERY
@@ -204,7 +191,6 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
         headers: Some(vec!["NAME", "VALUE", "DESCRIPTION"]),
         rows: q_rows,
         add: Some(Field::QueryAdd),
-        expand: None,
     });
 
     // HEADERS (no column header, like read)
@@ -221,11 +207,10 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
         headers: None,
         rows: h_rows,
         add: Some(Field::HeaderAdd),
-        expand: None,
     });
 
-    // REQUEST. `a` toggles the body on/off (RequestToggle); the body itself is
-    // just the inline example JSON.
+    // REQUEST. `a` opens the JSON editor (creating the body first if absent);
+    // the body itself is just the inline example JSON.
     match &m.request {
         Some(req) => {
             let lead = vec![title_row("REQUEST".to_string())];
@@ -235,7 +220,6 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
                 headers: None,
                 rows: body_rows(lead, BodyLoc::Request, &req.example),
                 add: Some(Field::RequestToggle),
-                expand: None,
             });
         }
         None => out.push(Section {
@@ -244,11 +228,11 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
             headers: None,
             rows: vec![title_row("REQUEST".to_string())],
             add: Some(Field::RequestToggle),
-            expand: None,
         }),
     }
 
-    // RESPONSE(s)
+    // RESPONSE: a single section with a `code - title` tab strip over the active
+    // response's inline example. `a` adds a new tab; there is no expansion.
     if m.responses.is_empty() {
         out.push(Section {
             title: "RESPONSE".into(),
@@ -256,43 +240,34 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
             headers: None,
             rows: vec![title_row("RESPONSE".to_string())],
             add: Some(Field::ResponseAdd),
-            expand: None,
         });
     } else {
+        let active = resp.min(m.responses.len() - 1);
+        let mut tab_cells = Vec::with_capacity(m.responses.len() * 2);
         for (i, r) in m.responses.iter().enumerate() {
-            let title = format!("RESPONSE {} — {}", r.code, r.description);
-            let mut lead = vec![title_row(title)];
-            if expanded == Some(Expand::Response(i)) {
-                lead.push(field_row(vec![
-                    label("code"),
-                    text(Field::ResponseCode(i), r.code.clone()),
-                ]));
-                lead.push(field_row(vec![
-                    label("description"),
-                    text(Field::ResponseDesc(i), r.description.clone()),
-                ]));
-            }
-            out.push(Section {
-                title: String::new(),
-                kind: SectionKind::Body,
-                headers: None,
-                rows: body_rows(lead, BodyLoc::Response(i), &r.example),
-                add: Some(Field::ResponseAdd),
-                expand: Some(Expand::Response(i)),
-            });
+            tab_cells.push(text(Field::ResponseCode(i), r.code.clone()));
+            tab_cells.push(text(Field::ResponseDesc(i), r.description.clone()));
         }
+        let tabs = TableRow {
+            kind: RowKind::RespTabs,
+            indent: 0,
+            cells: tab_cells,
+            raw: String::new(),
+            prefix: String::new(),
+        };
+        let rows = body_rows(
+            vec![title_row("RESPONSE".to_string()), tabs],
+            BodyLoc::Response(active),
+            &m.responses[active].example,
+        );
+        out.push(Section {
+            title: String::new(),
+            kind: SectionKind::Body,
+            headers: None,
+            rows,
+            add: Some(Field::ResponseAdd),
+        });
     }
-
-    // A trailing "+ add response" affordance so the cursor can land on it and
-    // `a` appends a new response at any time (not just when there are zero).
-    out.push(Section {
-        title: String::new(),
-        kind: SectionKind::Table,
-        headers: None,
-        rows: vec![field_row(vec![label("+ add response")])],
-        add: Some(Field::ResponseAdd),
-        expand: None,
-    });
 
     out
 }
@@ -330,7 +305,7 @@ mod tests {
 
     #[test]
     fn header_block_has_name_desc_and_collapsed_url() {
-        let secs = flatten(&model(), None);
+        let secs = flatten(&model(), 0);
         let head = &secs[0];
         assert_eq!(head.kind, SectionKind::Header);
         assert!(head.rows.iter().any(|r| r.kind == RowKind::Name));
@@ -350,7 +325,7 @@ mod tests {
 
     #[test]
     fn url_line_carries_editable_method_and_url_cells() {
-        let head = &flatten(&model(), None)[0];
+        let head = &flatten(&model(), 0)[0];
         let url = head
             .rows
             .iter()
@@ -366,34 +341,33 @@ mod tests {
 
     #[test]
     fn section_titles_match_read() {
-        let secs = flatten(&model(), None);
+        let secs = flatten(&model(), 0);
         let titles: Vec<String> = secs.iter().map(shown_title).collect();
         assert!(titles.iter().any(|t| t == "QUERY"));
         assert!(titles.iter().any(|t| t == "HEADERS"));
         assert!(titles.iter().any(|t| t == "REQUEST"));
-        assert!(titles.iter().any(|t| t.starts_with("RESPONSE 200 — ok")));
+        assert!(titles.iter().any(|t| t == "RESPONSE"));
     }
 
+    /// The RESPONSE section carries a single tab-strip row with an inline-
+    /// editable code + description cell for every response.
     #[test]
-    fn response_title_expands_to_editable_code_desc() {
-        let secs = flatten(&model(), Some(Expand::Response(0)));
-        let resp = secs
+    fn response_tab_strip_has_editable_code_and_desc_cells() {
+        let secs = flatten(&model(), 0);
+        let tabs = secs
             .iter()
-            .find(|s| s.expand == Some(Expand::Response(0)))
+            .flat_map(|s| &s.rows)
+            .find(|r| r.kind == RowKind::RespTabs)
             .unwrap();
-        assert!(resp.rows.iter().any(|r| matches!(
-            r.cells.last().map(|c| &c.field),
-            Some(Field::ResponseCode(0))
-        )));
-        assert!(resp.rows.iter().any(|r| matches!(
-            r.cells.last().map(|c| &c.field),
-            Some(Field::ResponseDesc(0))
-        )));
+        assert_eq!(tabs.cells[0].field, Field::ResponseCode(0));
+        assert_eq!(tabs.cells[0].kind, CellKind::Text);
+        assert_eq!(tabs.cells[1].field, Field::ResponseDesc(0));
+        assert_eq!(tabs.cells[1].kind, CellKind::Text);
     }
 
     #[test]
     fn add_targets_are_set() {
-        let secs = flatten(&model(), None);
+        let secs = flatten(&model(), 0);
         let q = secs.iter().find(|s| s.title == "QUERY").unwrap();
         assert_eq!(q.add, Some(Field::QueryAdd));
         let h = secs.iter().find(|s| s.title == "HEADERS").unwrap();
@@ -401,13 +375,15 @@ mod tests {
         assert!(h.headers.is_none()); // HEADERS has no column header, like read
     }
 
+    /// The active response's example is shown inline under the tab strip.
     #[test]
-    fn response_has_inline_example_row() {
-        let secs = flatten(&model(), None);
+    fn response_section_shows_active_example_inline() {
+        let secs = flatten(&model(), 0);
         let resp = secs
             .iter()
-            .find(|s| s.expand == Some(Expand::Response(0)))
+            .find(|s| s.rows.iter().any(|r| r.kind == RowKind::RespTabs))
             .unwrap();
+        assert_eq!(resp.add, Some(Field::ResponseAdd));
         assert!(
             resp.rows
                 .iter()
@@ -417,7 +393,7 @@ mod tests {
 
     #[test]
     fn table_sections_have_selectable_title_rows() {
-        let secs = flatten(&model(), None);
+        let secs = flatten(&model(), 0);
         for t in ["QUERY", "HEADERS"] {
             let s = secs.iter().find(|s| s.title == t).unwrap();
             assert!(
@@ -428,23 +404,5 @@ mod tests {
                 "{t} should start with a Title row"
             );
         }
-    }
-
-    #[test]
-    fn trailing_add_response_affordance_present() {
-        let secs = flatten(&model(), None);
-        let aff = secs
-            .iter()
-            .find(|s| {
-                s.add == Some(Field::ResponseAdd)
-                    && s.rows.iter().any(|r| {
-                        r.cells
-                            .first()
-                            .map(|c| c.value == "+ add response")
-                            .unwrap_or(false)
-                    })
-            })
-            .expect("a '+ add response' affordance section exists");
-        assert_eq!(aff.add, Some(Field::ResponseAdd));
     }
 }

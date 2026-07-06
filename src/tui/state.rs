@@ -5,7 +5,7 @@
 //! `cell: None` selects a whole table row; `cell: Some(c)` edits a cell.
 
 use crate::tui::model::EditModel;
-use crate::tui::rows::{CellKind, Expand, Field, RowKind, Section, TableRow, flatten};
+use crate::tui::rows::{BodyLoc, CellKind, Field, RowKind, Section, TableRow, flatten};
 use apic_core::edit::{EditAction, apply};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -40,7 +40,10 @@ pub(crate) struct UiState {
     pub mode: Mode,
     pub dirty: bool,
     pub status: String,
-    pub expanded: Option<Expand>,
+
+    /// The active RESPONSE tab: which response's example the section shows and
+    /// which tab is highlighted. Clamped to the response count on refresh.
+    pub resp: usize,
 
     /// Baseline snapshot (last loaded/saved model) against which `dirty` is
     /// computed, so the unsaved indicator reflects real differences.
@@ -49,7 +52,7 @@ pub(crate) struct UiState {
 
 impl UiState {
     pub(super) fn new(model: &EditModel) -> Self {
-        let sections = flatten(model, None);
+        let sections = flatten(model, 0);
         let mut s = UiState {
             sections,
             sec: 0,
@@ -58,7 +61,7 @@ impl UiState {
             mode: Mode::Normal,
             dirty: false,
             status: HINT.to_string(),
-            expanded: None,
+            resp: 0,
             original: model.clone(),
         };
         s.snap_to_first_row();
@@ -68,7 +71,9 @@ impl UiState {
     /// Rebuilds sections after a mutation, clamping the cursor; drops cell focus
     /// if it no longer addresses a valid cell.
     pub(super) fn refresh(&mut self, model: &EditModel) {
-        self.sections = flatten(model, self.expanded);
+        // Keep the active response tab in range as responses are added/deleted.
+        self.resp = self.resp.min(model.responses.len().saturating_sub(1));
+        self.sections = flatten(model, self.resp);
         if self.sec >= self.sections.len() {
             self.sec = self.sections.len().saturating_sub(1);
         }
@@ -169,6 +174,10 @@ impl UiState {
 /// else the first cell.
 fn delete_field(state: &UiState) -> Option<Field> {
     let row = state.current_row()?;
+    // On the response tab strip `d` removes the active tab, not always the first.
+    if row.kind == RowKind::RespTabs {
+        return Some(Field::ResponseCode(state.resp));
+    }
     row.cells
         .iter()
         .find(|c| c.kind != CellKind::Label)
@@ -202,12 +211,6 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
         return handle_cell(state, model, key);
     }
     match (key.code, key.modifiers) {
-        // Esc first collapses any expanded region, before the quit flow.
-        (KeyCode::Esc, _) if state.expanded.is_some() => {
-            state.expanded = None;
-            state.refresh(model);
-            Action::None
-        }
         (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => {
             if state.dirty {
                 state.mode = Mode::ConfirmQuit;
@@ -229,10 +232,7 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
             Action::None
         }
         (KeyCode::Enter, _) => begin_row(state, model),
-        (KeyCode::Char('a'), _) => {
-            append_here(state, model);
-            Action::None
-        }
+        (KeyCode::Char('a'), _) => append_here(state, model),
         (KeyCode::Char('e'), _) => edit_example_here(state),
         (KeyCode::Char('d'), _) => {
             if let Some(f) = delete_field(state)
@@ -262,28 +262,34 @@ fn edit_example_here(state: &UiState) -> Action {
     Action::None
 }
 
-/// Appends a row near the focused schema field — a child under an object field,
-/// a sibling otherwise — falling back to the current section's `add` target.
-/// After the add, focuses the new row's name cell and enters insert mode so the
-/// user can start typing immediately (except `RequestToggle`, which has no name).
-fn append_here(state: &mut UiState, model: &mut EditModel) {
+/// Handles `a` for the current section. QUERY/HEADERS append a row and focus its
+/// name in insert mode. REQUEST opens the JSON editor (creating the body first if
+/// absent). RESPONSE adds a new tab, makes it active, and drops the cursor into
+/// its code cell in insert mode so the status can be typed straight away.
+fn append_here(state: &mut UiState, model: &mut EditModel) -> Action {
     let Some(target) = state.sections.get(state.sec).and_then(|s| s.add.clone()) else {
-        return;
+        return Action::None;
     };
+    if target == Field::RequestToggle {
+        // `a` writes the request JSON; create an empty body if there isn't one.
+        if model.request.is_none() {
+            add_row(state, model, &Field::RequestToggle);
+        }
+        return Action::OpenExample(Field::BodyExample(BodyLoc::Request), String::new());
+    }
     add_row(state, model, &target);
     if target == Field::ResponseAdd {
-        // The new response starts collapsed; expand it so its code row exists,
-        // then drop the cursor into that code cell in insert mode.
         if let Some(idx) = model.responses.len().checked_sub(1) {
-            state.expanded = Some(Expand::Response(idx));
+            state.resp = idx;
             state.refresh(model);
             focus_and_insert(state, &Field::ResponseCode(idx));
         }
-        return;
+        return Action::None;
     }
     if let Some(nf) = new_name_field(model, &target) {
         focus_and_insert(state, &nf);
     }
+    Action::None
 }
 
 /// The "name" field of the just-added entity for `target`, used to auto-focus
@@ -326,20 +332,12 @@ fn handle_cell(state: &mut UiState, model: &mut EditModel, key: KeyEvent) -> Act
             state.cell = None;
             Action::None
         }
-        KeyCode::Left => {
-            state.move_cell(-1);
+        KeyCode::Left | KeyCode::Char('h') => {
+            move_cell_synced(state, model, -1);
             Action::None
         }
-        KeyCode::Right => {
-            state.move_cell(1);
-            Action::None
-        }
-        KeyCode::Char('h') => {
-            state.move_cell(-1);
-            Action::None
-        }
-        KeyCode::Char('l') => {
-            state.move_cell(1);
+        KeyCode::Right | KeyCode::Char('l') => {
+            move_cell_synced(state, model, 1);
             Action::None
         }
         KeyCode::Char(' ') => {
@@ -372,6 +370,24 @@ fn handle_cell(state: &mut UiState, model: &mut EditModel, key: KeyEvent) -> Act
     }
 }
 
+/// Moves the focused cell, and — on the response tab strip — makes the tab under
+/// the new cell active so the example beneath the strip follows the selection.
+fn move_cell_synced(state: &mut UiState, model: &mut EditModel, dir: isize) {
+    state.move_cell(dir);
+    if matches!(
+        state.current_row().map(|r| &r.kind),
+        Some(RowKind::RespTabs)
+    ) && let Some(c) = state.cell
+    {
+        // Cells are [code, desc] per response, so the tab index is `c / 2`.
+        let tab = c / 2;
+        if tab != state.resp {
+            state.resp = tab;
+            state.refresh(model);
+        }
+    }
+}
+
 /// Enter on a selected row (row-select mode). For editable rows this selects
 /// the first cell and begins editing it immediately (no second keypress).
 fn begin_row(state: &mut UiState, model: &mut EditModel) -> Action {
@@ -388,19 +404,16 @@ fn begin_row(state: &mut UiState, model: &mut EditModel) -> Action {
             }
             Action::None
         }
-        RowKind::Title => {
-            // Title rows on table sections (VARIABLE/QUERY/HEADERS/empty RESPONSE)
-            // have no expand target — Enter does nothing there.
-            let Some(tgt) = state.sections[state.sec].expand else {
-                return Action::None;
-            };
-            state.expanded = if state.expanded == Some(tgt) {
-                None
-            } else {
-                Some(tgt)
-            };
-            state.cell = None;
-            state.refresh(model);
+        RowKind::Title => Action::None,
+        RowKind::RespTabs => {
+            // Focus the active response's code cell (highlighted, not editing);
+            // `h`/`l` switch tabs, Enter/i edits the focused code or title.
+            let cell = row
+                .cells
+                .iter()
+                .position(|c| c.field == Field::ResponseCode(state.resp))
+                .or(Some(0));
+            state.cell = cell;
             Action::None
         }
         RowKind::Example => Action::OpenExample(row.cells[0].field.clone(), String::new()),
@@ -647,9 +660,8 @@ mod tests {
         let mut s = UiState::new(&m);
         goto(&mut s, |f| matches!(f, Field::Method)); // url line carries Method + Url
         handle_normal(&mut s, &mut m, key(KeyCode::Enter));
-        // No expansion: Enter focuses the method cell without cycling it, so the
-        // method is unchanged until a further Enter.
-        assert_eq!(s.expanded, None);
+        // Enter focuses the method cell without cycling it, so the method is
+        // unchanged until a further Enter.
         assert!(matches!(s.focused_field_pub(), Some(Field::Method)));
         assert_eq!(s.mode, Mode::Normal);
         assert_eq!(method_str(&m.method), "GET");
@@ -730,39 +742,21 @@ mod tests {
     }
 
     #[test]
-    fn response_title_expands_and_code_is_editable() {
+    fn response_code_is_editable_inline_on_the_tab_strip() {
         let mut m = model();
         let mut s = UiState::new(&m);
-        // find the RESPONSE title row (RowKind::Title in a Response section)
-        let (si, ri) = s
-            .sections
-            .iter()
-            .enumerate()
-            .find_map(|(si, sec)| {
-                sec.rows
-                    .iter()
-                    .position(|r| r.kind == RowKind::Title)
-                    .filter(|_| matches!(sec.expand, Some(Expand::Response(_))))
-                    .map(|ri| (si, ri))
-            })
-            .unwrap();
-        s.sec = si;
-        s.row = ri;
-        s.cell = None;
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // expand
-        assert!(matches!(s.expanded, Some(Expand::Response(_))));
-        // a code row now exists and is editable
-        s.refresh(&m);
-        goto(&mut s, |f| matches!(f, Field::ResponseCode(_)));
+        // The code cell lives on the RESPONSE tab strip — no expansion needed.
+        goto(&mut s, |f| matches!(f, Field::ResponseCode(0)));
+        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // focus the code cell
+        assert!(matches!(
+            s.focused_field_pub(),
+            Some(Field::ResponseCode(0))
+        ));
         handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // insert (prefilled "200")
         handle_insert(&mut s, &mut m, key(KeyCode::Backspace));
         handle_insert(&mut s, &mut m, key(KeyCode::Char('1')));
         handle_insert(&mut s, &mut m, key(KeyCode::Enter));
         assert_eq!(m.responses[0].code, "201");
-        // first esc exits cell-edit, second esc collapses
-        handle_normal(&mut s, &mut m, key(KeyCode::Esc));
-        handle_normal(&mut s, &mut m, key(KeyCode::Esc));
-        assert_eq!(s.expanded, None);
     }
 
     #[test]
@@ -1021,7 +1015,7 @@ mod tests {
     }
 
     #[test]
-    fn add_response_expands_and_focuses_code() {
+    fn a_adds_a_response_tab_and_focuses_its_code() {
         let c = json_get(
             r#"{ "name":"t","method":"GET",
                  "url":"https://h/x","headers":[],
@@ -1031,33 +1025,12 @@ mod tests {
         .unwrap();
         let mut m = EditModel::from_contract(c);
         let mut s = UiState::new(&m);
-        // land on the "+ add response" affordance row
-        let (si, ri) = s
-            .sections
-            .iter()
-            .enumerate()
-            .find_map(|(si, sec)| {
-                (sec.add == Some(Field::ResponseAdd)
-                    && sec
-                        .rows
-                        .iter()
-                        .any(|r| r.cells.iter().any(|c| c.value == "+ add response")))
-                .then(|| {
-                    (
-                        si,
-                        sec.rows
-                            .iter()
-                            .position(|r| r.cells.iter().any(|c| c.value == "+ add response"))
-                            .unwrap(),
-                    )
-                })
-            })
-            .unwrap();
-        s.sec = si;
-        s.row = ri;
-        s.cell = None;
+        // Anywhere in the RESPONSE section, `a` adds a new tab.
+        goto(&mut s, |f| matches!(f, Field::ResponseCode(0)));
         handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
         assert_eq!(m.responses.len(), 2);
+        // the new tab is active and its code cell is focused in insert mode
+        assert_eq!(s.resp, 1);
         assert!(matches!(s.mode, Mode::Insert(_)));
         assert!(matches!(
             s.focused_field_pub(),
@@ -1074,6 +1047,33 @@ mod tests {
         handle_insert(&mut s, &mut m, key(KeyCode::Char('9')));
         handle_insert(&mut s, &mut m, key(KeyCode::Enter));
         assert_eq!(m.responses[1].code, "429");
+    }
+
+    #[test]
+    fn a_on_request_creates_body_and_opens_example_editor() {
+        let c = json_get(
+            r#"{ "name":"t","method":"POST","url":"https://h/x","headers":[],"responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        assert!(m.request.is_none());
+        let mut s = UiState::new(&m);
+        // Land on the REQUEST section and press `a`.
+        let si = s
+            .sections
+            .iter()
+            .position(|sec| sec.add == Some(Field::RequestToggle))
+            .unwrap();
+        s.sec = si;
+        s.row = 0;
+        s.cell = None;
+        let action = handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
+        assert!(m.request.is_some(), "an empty request body is created");
+        assert_eq!(
+            action,
+            Action::OpenExample(Field::BodyExample(BodyLoc::Request), String::new())
+        );
     }
 
     #[test]
