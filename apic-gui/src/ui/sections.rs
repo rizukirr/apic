@@ -431,7 +431,7 @@ pub(crate) fn response_code_selector(
                         ui.add(
                             egui::TextEdit::singleline(&mut model.responses[i].description)
                                 .frame(false)
-                                .desired_width(title_w + 6.0)
+                                .desired_width(title_w + 18.0)
                                 .hint_text("title")
                                 .text_color(DIM),
                         );
