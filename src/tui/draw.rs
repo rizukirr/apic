@@ -2,7 +2,7 @@
 //! (see `crate::render::Printer`) with the selection / cell-edit overlaid.
 //! Borderless throughout.
 
-use crate::tui::rows::{Cell, CellKind, Field, RowKind, Section, SectionKind, TableRow};
+use crate::tui::rows::{Cell, CellKind, RowKind, Section, SectionKind, TableRow};
 use crate::tui::state::{Mode, UiState};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -114,16 +114,6 @@ fn title_style() -> Style {
 
 fn dim() -> Style {
     Style::default().fg(Color::DarkGray)
-}
-
-/// The placeholder shown in an empty input cell so the user knows what to type.
-fn field_hint(field: &Field) -> &'static str {
-    match field {
-        Field::QueryName(_) | Field::HeaderName(_) | Field::ResponseHeaderName(_, _) => "name",
-        Field::QueryValue(_) | Field::HeaderValue(_) | Field::ResponseHeaderValue(_, _) => "value",
-        Field::QueryDesc(_) => "description",
-        _ => "",
-    }
 }
 
 /// The color of an HTTP method label, per `render::Printer::method`.
@@ -419,38 +409,23 @@ fn kv_line(state: &UiState, row: &TableRow, selected: bool) -> (Line<'static>, O
     for (i, c) in row.cells.iter().enumerate() {
         let focused = selected && state.cell == Some(i);
         if focused && let Mode::Insert(buf) = &state.mode {
-            // Plain text + real cursor while typing; an empty buffer shows the
-            // field's hint as a dim placeholder with the cursor at its start.
-            if buf.is_empty() {
-                let hint = field_hint(&c.field);
-                cursor_col = Some(emitted);
-                emitted += hint.chars().count();
-                spans.push(Span::styled(hint, dim()));
-            } else {
-                spans.push(Span::styled(buf.clone(), base.add_modifier(Modifier::BOLD)));
-                cursor_col = Some(emitted + buf.chars().count());
-                emitted += buf.chars().count();
-            }
+            // Plain text + real cursor while typing (no yellow highlight).
+            spans.push(Span::styled(buf.clone(), base.add_modifier(Modifier::BOLD)));
+            cursor_col = Some(emitted + buf.chars().count());
+            emitted += buf.chars().count();
         } else {
             let val = cell_text(state, c, focused);
-            if focused && val.is_empty() {
-                // Focused empty cell: show the hint instead of a blank highlight.
-                let hint = field_hint(&c.field);
-                emitted += hint.chars().count();
-                spans.push(Span::styled(hint, dim()));
+            let style = if focused {
+                cell_hl()
+            } else if c.kind == CellKind::Label && !selected {
+                // Labels are dim only when the row is not selected; when the
+                // cursor is on the row, keep the consistent white-bold highlight.
+                base.fg(Color::DarkGray)
             } else {
-                let style = if focused {
-                    cell_hl()
-                } else if c.kind == CellKind::Label && !selected {
-                    // Labels are dim only when the row is not selected; when the
-                    // cursor is on the row, keep the consistent white-bold highlight.
-                    base.fg(Color::DarkGray)
-                } else {
-                    base
-                };
-                emitted += val.chars().count();
-                spans.push(Span::styled(val, style));
-            }
+                base
+            };
+            emitted += val.chars().count();
+            spans.push(Span::styled(val, style));
         }
         if i + 1 < row.cells.len() {
             spans.push(Span::styled("  ", base));
@@ -652,16 +627,10 @@ fn table_line(
             let focused = editing_here && state.cell == Some(i);
             // Column 0 carries the tree prefix at display time only.
             let prefix = if i == 0 { row.prefix.as_str() } else { "" };
-            let hint = field_hint(&c.field);
             if focused && let Mode::Insert(buf) = &state.mode {
-                // Plain text + real cursor; an empty buffer shows the field hint
-                // as a dim placeholder with the cursor at the buffer's start.
-                let show_hint = buf.is_empty() && !hint.is_empty();
-                let shown = if show_hint {
-                    format!("{prefix}{hint}")
-                } else {
-                    format!("{prefix}{buf}")
-                };
+                // Plain text + real cursor (no yellow highlight). The prefix is
+                // shown but the cursor sits after the buffer.
+                let shown = format!("{prefix}{buf}");
                 let cell_str = if i == last {
                     shown
                 } else {
@@ -669,22 +638,7 @@ fn table_line(
                 };
                 cursor_col = Some(emitted + prefix.chars().count() + buf.chars().count());
                 emitted += cell_str.chars().count();
-                let style = if show_hint {
-                    dim()
-                } else {
-                    base.add_modifier(Modifier::BOLD)
-                };
-                spans.push(Span::styled(cell_str, style));
-            } else if focused && cell_text(state, c, focused).is_empty() && !hint.is_empty() {
-                // Focused empty cell: show the hint instead of a blank highlight.
-                let shown = format!("{prefix}{hint}");
-                let cell_str = if i == last {
-                    shown
-                } else {
-                    pad(&shown, widths[i])
-                };
-                emitted += cell_str.chars().count();
-                spans.push(Span::styled(cell_str, dim()));
+                spans.push(Span::styled(cell_str, base.add_modifier(Modifier::BOLD)));
             } else {
                 let mut val = cell_text(state, c, focused);
                 if i == 0 && !prefix.is_empty() {

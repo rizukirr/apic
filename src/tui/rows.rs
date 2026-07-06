@@ -193,7 +193,7 @@ pub(crate) fn flatten(m: &EditModel, resp: usize) -> Vec<Section> {
         add: Some(Field::QueryAdd),
     });
 
-    // HEADERS (no column header, like read)
+    // HEADERS: a NAME/VALUE table, same shape as QUERY.
     let mut h_rows = vec![title_row("HEADERS".to_string())];
     for (i, h) in m.headers.iter().enumerate() {
         h_rows.push(field_row(vec![
@@ -204,7 +204,7 @@ pub(crate) fn flatten(m: &EditModel, resp: usize) -> Vec<Section> {
     out.push(Section {
         title: "HEADERS".into(),
         kind: SectionKind::Table,
-        headers: None,
+        headers: Some(vec!["NAME", "VALUE"]),
         rows: h_rows,
         add: Some(Field::HeaderAdd),
     });
@@ -374,7 +374,7 @@ mod tests {
         assert_eq!(q.add, Some(Field::QueryAdd));
         let h = secs.iter().find(|s| s.title == "HEADERS").unwrap();
         assert_eq!(h.add, Some(Field::HeaderAdd));
-        assert!(h.headers.is_none()); // HEADERS has no column header, like read
+        assert_eq!(h.headers, Some(vec!["NAME", "VALUE"])); // NAME/VALUE table
     }
 
     /// The active response's example is shown inline under the tab strip.
