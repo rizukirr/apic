@@ -86,6 +86,18 @@ fn set_example(model: &mut EditModel, field: &Field, text: String) {
     }
 }
 
+/// Builds the bordered JSON-example modal editor seeded with `text`.
+fn example_textarea(text: &str) -> TextArea<'static> {
+    let mut ta = TextArea::from(text.lines().map(|l| l.to_string()).collect::<Vec<_>>());
+    ta.set_block(
+        Block::bordered()
+            .title(" JSON Example ")
+            .title_bottom(" Ctrl-P Pretty • Esc Save & Close "),
+    );
+    ta.set_line_number_style(Style::default());
+    ta
+}
+
 /// Runs the authoring TUI on `model`, writing to `path` on save.
 pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
     let _guard = TermGuard::enter()?;
@@ -118,7 +130,7 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
             {
                 // Modal editor takes all keys until closed.
                 if let Some((field, ta)) = &mut modal {
-                    use ratatui::crossterm::event::KeyCode;
+                    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
                     match key.code {
                         KeyCode::Esc => {
                             let text = ta.lines().join("\n");
@@ -126,6 +138,11 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                             state.dirty = true;
                             state.refresh(&model);
                             modal = None;
+                        }
+                        // Ctrl-P reformats the buffer as pretty-printed JSON.
+                        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            let text = ta.lines().join("\n");
+                            *ta = example_textarea(&apic_core::json::pretty_json(&text));
                         }
                         _ => {
                             ta.input(key);
@@ -150,16 +167,7 @@ pub(crate) fn run(mut model: EditModel, path: &Path) -> Result<(), String> {
                         Action::None => {}
                         Action::OpenExample(field, _) => {
                             let text = example_text(&model, &field);
-                            let mut ta = TextArea::from(
-                                text.lines().map(|l| l.to_string()).collect::<Vec<_>>(),
-                            );
-                            ta.set_block(
-                                Block::bordered()
-                                    .title(" JSON Example ")
-                                    .title_bottom(" Ctrl-S Save • Esc Close "),
-                            );
-                            ta.set_line_number_style(Style::default());
-                            modal = Some((field, ta));
+                            modal = Some((field, example_textarea(&text)));
                             state.mode = Mode::Example;
                         }
                         Action::Save => {
