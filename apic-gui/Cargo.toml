@@ -1,6 +1,6 @@
 [package]
 name = "apic-gui"
-version = "0.3.6"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Rizki Rakasiwi"]
@@ -13,7 +13,7 @@ name = "apic-gui"
 path = "src/main.rs"
 
 [dependencies]
-apic-core = { path = "../apic-core", version = "0.3.6" }
+apic-core = { path = "../apic-core", version = "0.4.0" }
 eframe = "0.33.3"
 egui_extras = "0.33"
 rfd = "0.17.2"

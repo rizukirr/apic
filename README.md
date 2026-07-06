@@ -116,18 +116,22 @@ place:
 
 - **Navigate:** `↑/↓` (or `j/k`) select a row; `Enter` steps into the row's cells;
   `←/→` (or `h/l`) move between cells; `Esc` steps back out.
-- **Edit a cell:** `Enter` or `i` edits a text cell; `Enter` cycles the method,
-  toggles a `required` flag, or toggles a body `type` between `object` and
-  `object[]`. While typing, `Enter` commits and `Esc` cancels.
-- **Expand:** `Enter` on the `METHOD url` line reveals the editable URL string;
-  `Enter` on a `REQUEST`/`RESPONSE` title reveals its code, description, and
-  type. `Esc` collapses either.
-- **Add / delete:** `a` adds a row to the current section, a nested field when
-  you're on an `object` field, or a new response on the `+ add response` line;
-  `d` deletes the selected row after a confirmation.
-- **Examples:** `Enter` on an example edits its JSON in a pop-up; `g` generates a
-  sample example from the body's schema (an array for `object[]` bodies).
-- **Save / quit:** `Ctrl-S` saves; `Esc`/`q` exits; `?` shows the full key map.
+- **Method + URL:** the header shows one ` METHOD url` line. `Enter` on it focuses
+  the method; `Enter` there opens a **method picker** (`j/k` to choose, `Enter`
+  to select, `Esc` to cancel). `l` moves to the URL, edited inline with `Enter`/`i`.
+- **Query / headers:** `QUERY` and `HEADERS` are `NAME/VALUE(/DESCRIPTION)` tables.
+  `a` adds a row and drops you into it; `d` deletes the selected row after a
+  confirmation. A row you add and then cancel while still empty is discarded.
+- **Request body:** `a` in `REQUEST` opens the JSON editor (creating the body);
+  an empty body reads as `(none)`.
+- **Responses:** `RESPONSE` is a `code - title` tab strip. `a` opens a small
+  `Status / Short Description` form, then the JSON editor for the new response.
+  `e` on a tab re-opens that form to edit its status/title; `e` (or `Enter`) on
+  the JSON opens the editor. `d` removes the whole response.
+- **JSON editor:** type the example payload; `Ctrl-P` pretty-prints it, `Ctrl-S`
+  saves, `Esc` cancels. Saving an empty body removes its response.
+- **Save / quit:** `Ctrl-S` saves the contract; `Esc`/`q` exits; `?` shows the
+  full key map.
 
 Prefer your own editor? Pass `--editor` to open the file in `$VISUAL`/`$EDITOR`
 (or a specific one, e.g. `apic open login --editor "code --wait"`).
@@ -145,17 +149,58 @@ apic-gui
 
 What it does:
 
-- **Open / New**, `[ Open ]` picks a project folder (`[ New ]` creates one); the
+- **Open / New**, **Open** picks a project folder (**New** creates one); the
   last project is remembered between launches.
 - **Browse**, a sidebar lists every contract (with its HTTP method badge) and
   every template; a search box filters them.
-- **Read / Edit**, selecting a contract renders it like `apic read`, and you
-  edit fields in place through the same model as the TUI, saving to the file.
+- **Read / Edit**, selecting a contract renders it, and **Edit** lets you change
+  fields in place through the same model as the TUI, saving to the file. The
+  method is a dropdown, the request/response bodies are tabs with a
+  line-numbered JSON editor, and metadata (headers, query, response headers) are
+  editable tables.
 - **Repair**, invalid contracts are flagged; fix the raw JSON and the GUI
   switches back to the structured view automatically.
-- **Import**, bring in a Postman collection from the `[ Import ]` menu.
+- **Import**, bring in a Postman collection from the **Import** menu.
 - **Manage**, scaffold new contracts and templates, or delete them with a
   confirmation.
+
+## Templates
+
+A **template** is a starter contract that `apic create -f <file>` copies from
+when you scaffold a new endpoint. `apic init` seeds one at
+`.apic/template/convention.json` from the built-in default; a project can hold
+several named templates (`apic create --template <name>` authors more), and
+`--use-template <name>` chooses which one seeds a new contract (`apic create`
+prompts when several exist). A template is never overwritten once it exists.
+
+The project template is **overlaid onto the built-in default**, so it only needs
+to carry the fields you want to standardize, it can be a small partial contract.
+It lives in `.apic/template/`, committed to the repo like everything else, so the
+whole team scaffolds from the same starting point.
+
+### Put your general API design in the template
+
+The template is the single thing every new contract inherits from, so it is where
+a team's shared API conventions belong. Encode the *general* design once and every
+endpoint starts consistent, with none of the boilerplate re-typed:
+
+- **Base URL and versioning**, e.g. `https://api.example.com/v1/...` (or a
+  `{{baseUrl}}/{{base_path}}/...` placeholder), so every endpoint targets the same
+  host and version.
+- **Standing headers**, the ones every request carries, `Content-Type`,
+  `Authorization: Bearer {token}`, a `DeviceID`/`AppID`, each with its `required`
+  flag set the way your API expects.
+- **A house response envelope**, if your API always wraps responses (e.g.
+  `{ "statusCode", "message", "error", "value" }`), put that shape in the
+  template's example responses so new endpoints follow it by default.
+- **Common query parameters**, pagination (`page`, `limit`) or filter keys that
+  most list endpoints share.
+
+Because scaffolding always starts from these defaults, the template turns your API
+design guidelines into something executable: consistency becomes the path of least
+resistance, drift shows up as a diff in review, and adding an endpoint is "edit
+what's different" instead of "remember every convention". When the convention
+itself changes, you edit one file and every *new* contract picks it up.
 
 ## Commands
 
@@ -224,27 +269,25 @@ apic read -f user/user.json   # exact path
 apic read -f auth/login       # extension optional
 apic read -f login            # fuzzy
 apic read -f login -s 401     # show only the 401 response
-apic read -f login --example  # show raw JSON example payloads
+apic read --template          # render the project template
 ```
 
-By default each schema table is followed by its example payload (when the
-contract provides one), labeled `Example:`, so structure and a concrete
-payload read together. With `--example` (or `-e`) the schema tables are
-skipped entirely and only the raw JSON payloads print, the compact
-copy-paste view:
+It prints the endpoint header (name, description, and the ` METHOD url` line),
+the `QUERY` and `HEADERS` tables, and the request/response bodies as their inline
+JSON example payloads:
 
 ```text
  REQUEST
  {
-   "username": "rizukirr",
-   "password": "123qweA@"
+   "agentCode": "79009901",
+   "password": "newPassword123!"
  }
 
- RESPONSE 200 — Successful login
+ RESPONSE 200 — OK
  {
-   "status": 200,
-   "message": "Login successful",
-   "data": { "access_token": "..." }
+   "statusCode": 200,
+   "message": "Login berhasil",
+   "value": { "accessToken": "...", "tokenType": "Bearer" }
  }
 ```
 
@@ -290,7 +333,7 @@ apic remove --template mobile   # remove a project template
 ```
 
 ### `apic validate [-f <query>] [--template]`
-Checks that contracts parse and conform to the schema. With no `-f`, every
+Checks that contracts parse and match the required contract format. With no `-f`, every
 contract under the working directory is checked. A query ending in `/` (e.g.
 `auth/`) validates every contract under that folder, recursively; otherwise the
 query resolves to a single contract like `read` (path, extensionless, or fuzzy).
@@ -358,15 +401,8 @@ against contracts from any source:
 
 A contract is a single JSON object describing one endpoint. See
 [`apic-core/src/templates/contract.json`](apic-core/src/templates/contract.json)
-for the full template that `apic create` writes.
-
-`apic init` writes a starter template to `.apic/template/convention.json`. Edit
-it to set a project-wide convention, for example a standing `device-id` header,
-and every `apic create` reuses it. The directory can hold several templates
-(author more with `apic create --template <name>`); when more than one exists,
-`apic create` prompts you to pick (or use `--use-template <name>`). A template
-is never overwritten once it exists; if none is usable, `apic create` falls back
-to the built-in default.
+for the built-in template `apic create` seeds from (and [Templates](#templates)
+for how to make it your own), or [`example/`](example) for complete projects.
 
 ```json
 {
@@ -378,23 +414,15 @@ to the built-in default.
         {
             "name": "notify",
             "value": "true",
-            "description": "Send a notification email"
+            "description": "Send a notification email",
+            "required": false
         }
     ],
     "headers": [
-        { "name": "Content-Type", "value": "application/json" },
-        { "name": "Authorization", "value": "Bearer {token}" }
+        { "name": "Content-Type", "value": "application/json", "required": true },
+        { "name": "Authorization", "value": "Bearer {token}", "required": true }
     ],
     "request": {
-        "schema": [
-            {
-                "name": "name",
-                "type": "string",
-                "default": null,
-                "description": "Display name",
-                "required": true
-            }
-        ],
         "example": {
             "name": "Rizki Rakasiwi"
         }
@@ -404,25 +432,7 @@ to the built-in default.
             "code": 200,
             "description": "User updated",
             "headers": [
-                { "name": "X-Request-Id", "value": "abc-123" }
-            ],
-            "schema": [
-                {
-                    "name": "status",
-                    "type": "int",
-                    "default": "200",
-                    "description": "Status code",
-                    "required": true,
-                    "properties": null
-                },
-                {
-                    "name": "message",
-                    "type": "string",
-                    "default": null,
-                    "description": "Human-readable message",
-                    "required": true,
-                    "properties": null
-                }
+                { "name": "X-Request-Id", "value": "abc-123", "required": false }
             ],
             "example": {
                 "status": 200,
@@ -433,11 +443,10 @@ to the built-in default.
 }
 ```
 
-Both `schema` (field-level detail, rendered as tables) and `example` (a raw
-JSON payload) are optional in the request and in each response, early-stage
-contracts often start with just an example, formal ones with just a schema.
-The default view shows the example beneath its schema table (or alone when
-there is no schema), and `read --example` shows only the payloads.
+A request or response **body is a raw JSON example**, the payload you would
+actually send or receive. There is no separate field-level schema: the example
+is the contract's source of truth for a body's shape, and `apic read` prints it
+verbatim. Omit `request` (or a response's `example`) when there is no body.
 
 ### Fields
 
@@ -447,143 +456,42 @@ there is no schema), and `read --example` shows only the payloads.
 | `description` | no | Short description of the endpoint. |
 | `method` | yes | HTTP method: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, or `OPTIONS`. |
 | `url` | yes | Request URL as a single free-form string, e.g. `https://api.example.com/users/{id}`. Path parameters are written inline as `{name}` tokens. |
-| `query` | no | Array of query parameters (`name`, `value`, `description`); see below. |
-| `headers` | yes | Array of headers (`name`, `value`). |
-| `request` | no | Request body: `{ "type": <body shape>, "schema": [fields], "example": <raw JSON> }`, all parts optional; `type` defaults to `"object"` (see [Array bodies](#array-bodies)). |
-| `responses` | yes | Array of responses (`code`, `description`, optional `headers`, optional `type`, optional `schema`, optional `example`). |
+| `query` | no | Array of query parameters; see below. |
+| `headers` | yes | Array of request headers; see below. |
+| `request` | no | Request body, `{ "example": <raw JSON> }`. Omit it when the endpoint has no body. |
+| `responses` | yes | Array of responses; see below. |
 
-Each entry in the top-level `query` array has:
+Each **query** parameter:
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | yes | Parameter key, e.g. `page`. |
 | `value` | no | Example value, e.g. `2`. |
 | `description` | no | What the parameter is for. |
+| `required` | no | Whether the parameter is required (default `false`). |
+
+Each **header** (request or response):
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Header name, e.g. `Authorization`. |
+| `value` | yes | Example value, e.g. `Bearer {token}`. |
+| `required` | no | Whether the header is required (default `false`). |
+
+Each **response**:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `code` | yes | HTTP status code, e.g. `200`. |
+| `description` | yes | Short description, e.g. `OK`. |
+| `headers` | no | Array of response headers (same shape as request headers). |
+| `example` | no | Raw JSON example payload for this response. |
 
 Path parameters are not a separate section: write them inline in the `url`
 string as `{name}` (e.g. `{id}` in `.../users/{id}`).
 
-A **field** (in the request `schema` and response `schema`) has:
-
-| Field | Description |
-|-------|-------------|
-| `name` | Field name. |
-| `type` | Data type (`string`, `int`, `file`, `object`, …). Append `[]` for a list, `string[]`, `object[]` (see [Array bodies](#array-bodies)). |
-| `default` | Default value as a string, or `null`. |
-| `description` | Field description. |
-| `required` | Whether the field is required. |
-| `accept` | Allowed MIME types for `file` fields, e.g. `"image/png, image/jpeg"`; omit for ordinary fields. |
-| `properties` | Nested fields for `object` (or `object[]`) types, or `null`. |
-
-Request and response fields share the same shape, so request bodies can nest
-objects via `properties` just like responses.
-
-### Multipart / file uploads
-
-For `multipart/form-data` endpoints, declare the encoding in the
-`Content-Type` header as usual and use `"type": "file"` for file parts. The
-optional `accept` field documents which MIME types the part allows, and
-`apic read` shows it in an extra ACCEPT column:
-
-```json
-{
-    "name": "upload-avatar",
-    "method": "POST",
-    "url": "https://api.example.com/user/avatar",
-    "headers": [
-        { "name": "Content-Type", "value": "multipart/form-data" }
-    ],
-    "request": {
-        "schema": [
-            {
-                "name": "avatar",
-                "type": "file",
-                "default": null,
-                "description": "Avatar image, max 2MB",
-                "required": true,
-                "accept": "image/png, image/jpeg"
-            },
-            {
-                "name": "caption",
-                "type": "string",
-                "default": null,
-                "description": "Optional caption",
-                "required": false
-            }
-        ]
-    },
-    "responses": []
-}
-```
-
-```text
-REQUEST
- NAME     TYPE    REQ  ACCEPT                 DESCRIPTION
- avatar   file    ✓    image/png, image/jpeg  Avatar image, max 2MB
- caption  string                              Optional caption
-```
-
-### Array bodies
-
-A request or response body can be a JSON **array** instead of a single object , 
-useful for bulk requests and list endpoints. Set the body-level `"type"` to an
-array form, and `apic` reads the `schema` fields as a description of **each
-element**:
-
-- `"object"`, a single object (the default when `type` is omitted).
-- `"object[]"`, an array of objects; `schema` describes each element's fields.
-- A field's own `"type"` may carry the same `[]` suffix: `"string[]"` is a list
-  of scalars (e.g. `["a", "b"]`), `"object[]"` a list of objects whose fields go
-  in `properties`.
-
-`apic read` marks an array body with a `· <type>` suffix on the section title
-and shows the raw `string[]`/`object[]` in the TYPE column. See
-[`example/items/bulk-create.json`](example/items/bulk-create.json) (an array
-request **and** an array response) and
-[`example/items/list.json`](example/items/list.json) (an array response).
-
-```json
-{
-    "name": "bulk-create-items",
-    "method": "POST",
-    "url": "https://api.example.com/items/bulk",
-    "headers": [{ "name": "Content-Type", "value": "application/json" }],
-    "request": {
-        "type": "object[]",
-        "schema": [
-            { "name": "name", "type": "string",   "default": null, "description": "Item name",        "required": true },
-            { "name": "tags", "type": "string[]", "default": null, "description": "Free-form labels", "required": false }
-        ],
-        "example": [
-            { "name": "Widget", "tags": ["new", "featured"] },
-            { "name": "Gadget", "tags": [] }
-        ]
-    },
-    "responses": [
-        {
-            "code": 201,
-            "type": "object[]",
-            "description": "Items created",
-            "schema": [
-                { "name": "id",   "type": "string", "default": null, "description": "Generated id", "required": true, "properties": null },
-                { "name": "name", "type": "string", "default": null, "description": "Item name",     "required": true, "properties": null }
-            ]
-        }
-    ]
-}
-```
-
-```text
- REQUEST · object[]
- NAME  TYPE      REQ  DESCRIPTION
- name  string    ✓    Item name
- tags  string[]       Free-form labels
-
- RESPONSE 201 — Items created · object[]
- NAME  TYPE    REQ  DESCRIPTION
- id    string  ✓    Generated id
- name  string  ✓    Item name
-```
+> Contracts that still carry the old `type`/`schema` fields on a body load fine,
+> those keys are ignored and only `example` is read.
 
 ## Configuration
 
