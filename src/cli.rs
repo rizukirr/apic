@@ -86,11 +86,6 @@ enum Commands {
         #[arg(long, short = 's', value_name = "CODE")]
         status: Option<u16>,
 
-        /// Show the raw JSON example payloads for the request and responses
-        /// instead of the schema tables.
-        #[arg(long, short = 'e')]
-        example: bool,
-
         /// Show the project template (in `.apic/template/`) instead of a
         /// contract, seeding it from the default if it does not exist.
         #[arg(long)]
@@ -603,7 +598,7 @@ fn read_template_cmd() -> Result<(), String> {
 
     match classify_template("", &templates) {
         Resolution::One(path) => match read_file(&path) {
-            Ok(content) => read(&content, None, false),
+            Ok(content) => read(&content, None),
             Err(err) => {
                 eprintln!(
                     "Failed to read {}: {}",
@@ -628,7 +623,7 @@ fn read_template_cmd() -> Result<(), String> {
             let prompt = format!("{} templates match \"\":", candidates.len(),);
             match picker::pick(&prompt, &labels).map_err(|err| format!("picker failed: {}", err))? {
                 Some(idx) => match read_file(&templates[idx]) {
-                    Ok(content) => read(&content, None, false),
+                    Ok(content) => read(&content, None),
                     Err(_) => Err(no_template_error("", &templates, root)),
                 },
                 None => Ok(()),
@@ -638,12 +633,7 @@ fn read_template_cmd() -> Result<(), String> {
 }
 
 /// Handles `apic read`: resolve to one contract, read it, render it.
-fn read_cmd(
-    filename: Option<&str>,
-    status: Option<u16>,
-    example: bool,
-    template: bool,
-) -> Result<(), String> {
+fn read_cmd(filename: Option<&str>, status: Option<u16>, template: bool) -> Result<(), String> {
     if template {
         return read_template_cmd();
     }
@@ -652,7 +642,7 @@ fn read_cmd(
     let filename = filename.expect("a find query is required without --template");
     match resolve_one(filename)? {
         Resolved::Path(path) => match read_file(&path) {
-            Ok(content) => read(&content, status, example),
+            Ok(content) => read(&content, status),
             Err(err) => {
                 eprintln!(
                     "Failed to read {}: {}",
@@ -673,16 +663,15 @@ fn read_cmd(
 
 /// Parses `content` as a JSON contract, keeps only the responses whose code
 /// matches `status` (or all responses when `status` is `None`), and renders
-/// the resulting contract as formatted text. With `example`, the request and
-/// response sections show their raw JSON example payloads instead of tables.
+/// the resulting contract as formatted text.
 ///
 /// Parse errors are printed rather than returned. When a `status` filter
 /// matches no response, a note is printed so the empty output is not mistaken
 /// for a contract without responses.
-fn read(content: &str, status: Option<u16>, example: bool) -> Result<(), String> {
+fn read(content: &str, status: Option<u16>) -> Result<(), String> {
     match json_get(content, status) {
         Ok(contract) => {
-            render(&contract, example);
+            render(&contract);
             if let Some(status) = status
                 && contract.responses.is_empty()
             {
@@ -1293,9 +1282,8 @@ pub(crate) fn run() {
         Commands::Read {
             find,
             status,
-            example,
             template,
-        } => read_cmd(find.as_deref(), status, example, template),
+        } => read_cmd(find.as_deref(), status, template),
         Commands::Validate { find, template } => validate_cmd(template, find.as_deref()),
         Commands::Open {
             find,

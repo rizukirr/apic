@@ -4,27 +4,16 @@
     "method": "POST",
     "url": "https://api.example.com/user/avatar",
     "headers": [
-        { "name": "Content-Type", "value": "multipart/form-data" },
-        { "name": "Authorization", "value": "Bearer {token}" }
+        {
+            "name": "Content-Type",
+            "value": "multipart/form-data"
+        },
+        {
+            "name": "Authorization",
+            "value": "Bearer {token}"
+        }
     ],
     "request": {
-        "schema": [
-            {
-                "name": "avatar",
-                "type": "file",
-                "default": null,
-                "description": "Avatar image, max 2MB",
-                "required": true,
-                "accept": "image/png, image/jpeg"
-            },
-            {
-                "name": "file",
-                "type": "string",
-                "default": null,
-                "description": "Optional caption",
-                "required": false
-            }
-        ],
         "example": {
             "avatar": "<file: avatar.png>",
             "caption": "My new avatar"
@@ -33,11 +22,7 @@
     "responses": [
         {
             "code": 200,
-            "description": "Avatar updated",
-            "schema": [
-                { "name": "status", "type": "int", "default": "200",
-                  "description": "Status code", "required": true, "properties": null }
-            ]
+            "description": "Avatar updated"
         }
     ]
 }

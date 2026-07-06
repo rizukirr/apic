@@ -4,8 +4,8 @@
 //! they are unit-testable without a terminal. The cursor is two-level:
 //! `cell: None` selects a whole table row; `cell: Some(c)` edits a cell.
 
-use crate::tui::model::{EditModel, EditSchema};
-use crate::tui::rows::{BodyLoc, CellKind, Expand, Field, RowKind, Section, TableRow, flatten};
+use crate::tui::model::EditModel;
+use crate::tui::rows::{CellKind, Expand, Field, RowKind, Section, TableRow, flatten};
 use apic_core::edit::{EditAction, apply};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -177,7 +177,7 @@ fn delete_field(state: &UiState) -> Option<Field> {
 }
 
 /// Whether `delete_row` would actually remove a row for this field — matching
-/// exactly the variants it handles (query/header/response/schema).
+/// exactly the variants it handles (query/header/response).
 fn is_deletable(field: &Field) -> bool {
     matches!(
         field,
@@ -190,11 +190,6 @@ fn is_deletable(field: &Field) -> bool {
             | Field::ResponseDesc(_)
             | Field::ResponseHeaderName(_, _)
             | Field::ResponseHeaderValue(_, _)
-            | Field::SchemaName(_, _)
-            | Field::SchemaType(_, _)
-            | Field::SchemaDesc(_, _)
-            | Field::SchemaRequired(_, _)
-            | Field::SchemaAccept(_, _)
     )
 }
 
@@ -238,14 +233,6 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
             append_here(state, model);
             Action::None
         }
-        (KeyCode::Char('g'), _) => {
-            generate_example_here(state, model);
-            Action::None
-        }
-        (KeyCode::Char('G'), _) => {
-            infer_schema_here(state, model);
-            Action::None
-        }
         (KeyCode::Char('e'), _) => edit_example_here(state),
         (KeyCode::Char('d'), _) => {
             if let Some(f) = delete_field(state)
@@ -259,51 +246,20 @@ pub(crate) fn handle_normal(state: &mut UiState, model: &mut EditModel, key: Key
     }
 }
 
-/// Generates an example JSON for the request/response body the cursor is in,
-/// from that body's schema fields, filling its example buffer.
-fn generate_example_here(state: &mut UiState, model: &mut EditModel) {
-    let loc = match state.sections.get(state.sec).and_then(|s| s.expand) {
-        Some(Expand::Request) => BodyLoc::Request,
-        Some(Expand::Response(i)) => BodyLoc::Response(i),
-        _ => return,
-    };
-    if apply(model, &EditAction::GenerateExample { loc }) {
-        state.dirty = true;
-        state.refresh(model);
-    }
-}
-
-/// Fills the schema of the request/response body the cursor is in from that
-/// body's example buffer (inverse of `generate_example_here`). On a parse/shape
-/// error the message is shown on the status line; on success the rows are
-/// refreshed and no status message is shown.
-fn infer_schema_here(state: &mut UiState, model: &mut EditModel) {
-    let loc = match state.sections.get(state.sec).and_then(|s| s.expand) {
-        Some(Expand::Request) => BodyLoc::Request,
-        Some(Expand::Response(i)) => BodyLoc::Response(i),
-        _ => return,
-    };
-    if apply(model, &EditAction::InferSchema { loc }) {
-        state.dirty = true;
-        state.refresh(model);
-    } else if let Some((_, msg)) = &model.last_error {
-        state.status = format!("schema error: {msg}");
-    }
-}
-
 /// Opens the JSON example editor for the request/response body the cursor is in,
-/// so an example can be written even when it (and the schema) are empty. Returns
-/// `Action::None` when the cursor is not inside a body.
+/// so an example can be written even when it is empty. Finds the body from the
+/// current section's inline example row. Returns `Action::None` when the cursor
+/// is not inside a body.
 fn edit_example_here(state: &UiState) -> Action {
-    match state.sections.get(state.sec).and_then(|s| s.expand) {
-        Some(Expand::Request) => {
-            Action::OpenExample(Field::BodyExample(BodyLoc::Request), String::new())
+    let Some(section) = state.sections.get(state.sec) else {
+        return Action::None;
+    };
+    for row in &section.rows {
+        if let Some(Field::BodyExample(loc)) = row.cells.first().map(|c| &c.field) {
+            return Action::OpenExample(Field::BodyExample(loc.clone()), String::new());
         }
-        Some(Expand::Response(i)) => {
-            Action::OpenExample(Field::BodyExample(BodyLoc::Response(i)), String::new())
-        }
-        _ => Action::None,
     }
+    Action::None
 }
 
 /// Appends a row near the focused schema field — a child under an object field,
@@ -311,17 +267,7 @@ fn edit_example_here(state: &UiState) -> Action {
 /// After the add, focuses the new row's name cell and enters insert mode so the
 /// user can start typing immediately (except `RequestToggle`, which has no name).
 fn append_here(state: &mut UiState, model: &mut EditModel) {
-    let target = if let Some((loc, path, is_object)) = focused_schema_target(state) {
-        if is_object {
-            Field::SchemaAdd(loc, path)
-        } else {
-            let mut parent = path;
-            parent.pop();
-            Field::SchemaAdd(loc, parent)
-        }
-    } else if let Some(field) = state.sections.get(state.sec).and_then(|s| s.add.clone()) {
-        field
-    } else {
+    let Some(target) = state.sections.get(state.sec).and_then(|s| s.add.clone()) else {
         return;
     };
     add_row(state, model, &target);
@@ -352,33 +298,7 @@ fn new_name_field(model: &EditModel, target: &Field) -> Option<Field> {
             .len()
             .checked_sub(1)
             .map(Field::ResponseCode),
-        Field::SchemaAdd(loc, path) => {
-            let len = schema_children_len(model, loc, path)?;
-            let new_index = len.checked_sub(1)?;
-            let mut p = path.clone();
-            p.push(new_index);
-            Some(Field::SchemaName(loc.clone(), p))
-        }
         _ => None,
-    }
-}
-
-/// Number of children at `path` for `loc` (the vector a `SchemaAdd` appends to),
-/// after the add. `None` if the path does not resolve.
-fn schema_children_len(model: &EditModel, loc: &BodyLoc, path: &[usize]) -> Option<usize> {
-    let root = match loc {
-        BodyLoc::Request => model.request.as_ref()?.schema.as_slice(),
-        BodyLoc::Response(r) => model.responses.get(*r)?.schema.as_slice(),
-    };
-    schema_children_len_at(root, path)
-}
-
-/// Walks `fields` along `path`, returning the length of the child vector to
-/// append into ([] = the top-level `fields`). Mirrors `model::schema_node_mut`.
-fn schema_children_len_at(fields: &[EditSchema], path: &[usize]) -> Option<usize> {
-    match path.split_first() {
-        None => Some(fields.len()),
-        Some((&first, rest)) => schema_children_len_at(&fields.get(first)?.properties, rest),
     }
 }
 
@@ -397,27 +317,6 @@ fn focus_and_insert(state: &mut UiState, name_field: &Field) {
             }
         }
     }
-}
-
-/// If the focused row is a schema field, returns its (loc, path) and whether its
-/// declared type is an object (so `a` adds a child rather than a sibling).
-fn focused_schema_target(state: &UiState) -> Option<(BodyLoc, Vec<usize>, bool)> {
-    let row = state.current_row()?;
-    let (loc, path) = row.cells.iter().find_map(|c| match &c.field {
-        Field::SchemaName(l, p)
-        | Field::SchemaType(l, p)
-        | Field::SchemaRequired(l, p)
-        | Field::SchemaAccept(l, p)
-        | Field::SchemaDesc(l, p) => Some((l.clone(), p.clone())),
-        _ => None,
-    })?;
-    let dtype = row
-        .cells
-        .iter()
-        .find_map(|c| matches!(&c.field, Field::SchemaType(_, _)).then(|| c.value.clone()))
-        .unwrap_or_default();
-    let is_object = apic_core::json::parse_type(&dtype).0 == "object";
-    Some((loc, path, is_object))
 }
 
 /// Keys while a cell is focused (cell-edit mode).
@@ -523,10 +422,8 @@ fn begin_cell_edit(state: &mut UiState, model: &mut EditModel) -> Action {
             Action::None
         }
         CellKind::Enum => {
-            match &cell.field {
-                Field::BodyDtype(loc) => toggle_body_type(state, model, loc),
-                _ => cycle_method(state, model, true),
-            }
+            // Method is the only enum field today.
+            cycle_method(state, model, true);
             Action::None
         }
         CellKind::Bool => {
@@ -547,13 +444,6 @@ fn begin_cell_edit(state: &mut UiState, model: &mut EditModel) -> Action {
 /// Cycles the method enum forward/back (the only enum field today).
 fn cycle_method(state: &mut UiState, model: &mut EditModel, forward: bool) {
     apply(model, &EditAction::CycleMethod { forward });
-    state.dirty = true;
-    state.refresh(model);
-}
-
-/// Toggles a request/response body type between `object` and `object[]`.
-fn toggle_body_type(state: &mut UiState, model: &mut EditModel, loc: &BodyLoc) {
-    apply(model, &EditAction::ToggleBodyType { loc: loc.clone() });
     state.dirty = true;
     state.refresh(model);
 }
@@ -710,6 +600,7 @@ pub(crate) fn handle_confirm_delete(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::rows::BodyLoc;
     use apic_core::json::{json_get, method_str};
 
     fn model() -> EditModel {
@@ -1019,156 +910,21 @@ mod tests {
     }
 
     #[test]
-    fn a_adds_child_under_object_field() {
-        let c = json_get(
-            r#"{ "name":"t","method":"POST",
-                 "url":"https://h/x","headers":[],
-                 "request":{"type":"object","schema":[
-                    {"name":"wrap","type":"object","default":null,"description":"d","required":true,
-                     "properties":[{"name":"a","type":"string","default":null,"description":"d","required":false}]}
-                 ]},
-                 "responses":[] }"#,
-            None,
-        ).unwrap();
-        let mut m = EditModel::from_contract(c);
-        let mut s = UiState::new(&m);
-        // focus the object field "wrap" (top-level schema field, path [0])
-        goto(
-            &mut s,
-            |f| matches!(f, Field::SchemaName(BodyLoc::Request, p) if p == &vec![0]),
-        );
-        let before = m.request.as_ref().unwrap().schema[0].properties.len();
-        handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
-        assert_eq!(
-            m.request.as_ref().unwrap().schema[0].properties.len(),
-            before + 1
-        );
-    }
-
-    #[test]
-    fn g_generates_example_for_request_body() {
-        let c = json_get(
-            r#"{ "name":"t","method":"POST",
-                 "url":"https://h/x","headers":[],
-                 "request":{"type":"object","schema":[
-                    {"name":"status","type":"int","default":null,"description":"d","required":true}
-                 ]},
-                 "responses":[] }"#,
-            None,
-        )
-        .unwrap();
-        let mut m = EditModel::from_contract(c);
-        let mut s = UiState::new(&m);
-        // focus a row in the REQUEST body section (its schema field)
-        goto(&mut s, |f| {
-            matches!(f, Field::SchemaName(BodyLoc::Request, _))
-        });
-        s.cell = None;
-        handle_normal(&mut s, &mut m, key(KeyCode::Char('g')));
-        assert!(m.request.as_ref().unwrap().example.contains("\"status\""));
-    }
-
-    /// Builds a model whose request body carries `example` and a `UiState`
-    /// parked on a request schema row, ready for a `G` keypress.
-    fn request_example_state(example: &str) -> (UiState, EditModel) {
-        let c = json_get(
-            r#"{ "name":"t","method":"POST",
-                 "url":"https://h/x","headers":[],
-                 "request":{"type":"object","schema":[
-                    {"name":"placeholder","type":"int","default":null,"description":"d","required":true}
-                 ]},
-                 "responses":[] }"#,
-            None,
-        )
-        .unwrap();
-        let mut m = EditModel::from_contract(c);
-        m.request.as_mut().unwrap().example = example.to_string();
-        let mut s = UiState::new(&m);
-        goto(&mut s, |f| {
-            matches!(f, Field::SchemaName(BodyLoc::Request, _))
-        });
-        s.cell = None;
-        (s, m)
-    }
-
-    #[test]
-    fn cap_g_infers_schema_from_request_example() {
-        let (mut s, mut m) = request_example_state(r#"{"name":"john","age":1}"#);
-        handle_normal(&mut s, &mut m, key(KeyCode::Char('G')));
-        let schema = &m.request.as_ref().unwrap().schema;
-        assert_eq!(
-            schema.iter().find(|f| f.name == "name").unwrap().dtype,
-            "string"
-        );
-        assert_eq!(
-            schema.iter().find(|f| f.name == "age").unwrap().dtype,
-            "int"
-        );
-        assert!(m.last_error.is_none());
-    }
-
-    #[test]
-    fn cap_g_reports_schema_error_on_invalid_example() {
-        let (mut s, mut m) = request_example_state("{bad");
-        handle_normal(&mut s, &mut m, key(KeyCode::Char('G')));
-        assert!(m.last_error.is_some());
-        assert!(
-            s.status.starts_with("schema error"),
-            "status was: {}",
-            s.status
-        );
-    }
-
-    #[test]
-    fn cap_g_infers_schema_from_response_example() {
-        let c = json_get(
-            r#"{ "name":"t","method":"POST",
-                 "url":"https://h/x","headers":[],
-                 "responses":[{"code":200,"description":"ok","type":"object","schema":[
-                    {"name":"placeholder","type":"int","default":null,"description":"d","required":true}
-                 ]}] }"#,
-            None,
-        )
-        .unwrap();
-        let mut m = EditModel::from_contract(c);
-        m.responses[0].example = r#"{"token":"abc"}"#.to_string();
-        let mut s = UiState::new(&m);
-        s.expanded = Some(Expand::Response(0));
-        s.refresh(&m);
-        goto(&mut s, |f| {
-            matches!(f, Field::SchemaName(BodyLoc::Response(0), _))
-        });
-        s.cell = None;
-        handle_normal(&mut s, &mut m, key(KeyCode::Char('G')));
-        let schema = &m.responses[0].schema;
-        assert_eq!(
-            schema.iter().find(|f| f.name == "token").unwrap().dtype,
-            "string"
-        );
-        assert!(m.last_error.is_none());
-    }
-
-    #[test]
-    fn cap_g_is_a_noop_when_cursor_not_in_a_body() {
-        // No body under the cursor (default focus on the endpoint section):
-        // `G` resolves no `BodyLoc` and must do nothing.
-        let c = json_get(
-            r#"{ "name":"t","method":"POST",
-                 "url":"https://h/x","headers":[],
-                 "responses":[] }"#,
-            None,
-        )
-        .unwrap();
-        let mut m = EditModel::from_contract(c);
-        let mut s = UiState::new(&m);
-        handle_normal(&mut s, &mut m, key(KeyCode::Char('G')));
-        assert!(m.request.is_none());
-        assert!(m.last_error.is_none());
-    }
-
-    #[test]
     fn e_key_opens_example_editor_for_request_body() {
-        let (mut s, mut m) = request_example_state("");
+        let c = json_get(
+            r#"{ "name":"t","method":"POST",
+                 "url":"https://h/x","headers":[],
+                 "request":{"example":{"a":1}},
+                 "responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let mut m = EditModel::from_contract(c);
+        let mut s = UiState::new(&m);
+        goto(&mut s, |f| {
+            matches!(f, Field::BodyExample(BodyLoc::Request))
+        });
+        s.cell = None;
         let action = handle_normal(&mut s, &mut m, key(KeyCode::Char('e')));
         assert_eq!(
             action,
@@ -1197,18 +953,14 @@ mod tests {
         let c = json_get(
             r#"{ "name":"t","method":"POST",
                  "url":"https://h/x","headers":[],
-                 "responses":[{"code":200,"description":"ok","type":"object","schema":[
-                    {"name":"placeholder","type":"int","default":null,"description":"d","required":true}
-                 ]}] }"#,
+                 "responses":[{"code":200,"description":"ok","example":{"a":1}}] }"#,
             None,
         )
         .unwrap();
         let mut m = EditModel::from_contract(c);
         let mut s = UiState::new(&m);
-        s.expanded = Some(Expand::Response(0));
-        s.refresh(&m);
         goto(&mut s, |f| {
-            matches!(f, Field::SchemaName(BodyLoc::Response(0), _))
+            matches!(f, Field::BodyExample(BodyLoc::Response(0)))
         });
         s.cell = None;
         let action = handle_normal(&mut s, &mut m, key(KeyCode::Char('e')));
@@ -1216,64 +968,6 @@ mod tests {
             action,
             Action::OpenExample(Field::BodyExample(BodyLoc::Response(0)), String::new())
         );
-    }
-
-    #[test]
-    fn g_wraps_array_body_example_in_an_array() {
-        let c = json_get(
-            r#"{ "name":"t","method":"POST",
-                 "url":"https://h/x","headers":[],
-                 "request":{"type":"object[]","schema":[
-                    {"name":"id","type":"int","default":null,"description":"d","required":true}
-                 ]},
-                 "responses":[] }"#,
-            None,
-        )
-        .unwrap();
-        let mut m = EditModel::from_contract(c);
-        let mut s = UiState::new(&m);
-        goto(&mut s, |f| {
-            matches!(f, Field::SchemaName(BodyLoc::Request, _))
-        });
-        s.cell = None;
-        handle_normal(&mut s, &mut m, key(KeyCode::Char('g')));
-        let ex = m.request.as_ref().unwrap().example.clone();
-        let v: serde_json::Value = serde_json::from_str(&ex).unwrap();
-        assert!(
-            v.is_array(),
-            "object[] body should generate an array example"
-        );
-        assert_eq!(v[0]["id"], serde_json::json!(0));
-    }
-
-    #[test]
-    fn body_type_toggles_between_object_and_array() {
-        let c = json_get(
-            r#"{ "name":"t","method":"POST",
-                 "url":"https://h/x","headers":[],
-                 "request":{"type":"object","schema":[]},
-                 "responses":[] }"#,
-            None,
-        )
-        .unwrap();
-        let mut m = EditModel::from_contract(c);
-        let mut s = UiState::new(&m);
-        // Expand the REQUEST title so the `type` row exists, focus its enum cell.
-        s.expanded = Some(Expand::Request);
-        s.refresh(&m);
-        goto(&mut s, |f| matches!(f, Field::BodyDtype(BodyLoc::Request)));
-        let ti = s
-            .current_row()
-            .unwrap()
-            .cells
-            .iter()
-            .position(|c| matches!(c.field, Field::BodyDtype(_)))
-            .unwrap();
-        s.cell = Some(ti);
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // object -> object[]
-        assert_eq!(m.request.as_ref().unwrap().dtype, "object[]");
-        handle_normal(&mut s, &mut m, key(KeyCode::Enter)); // object[] -> object
-        assert_eq!(m.request.as_ref().unwrap().dtype, "object");
     }
 
     #[test]
@@ -1409,28 +1103,5 @@ mod tests {
         s.refresh(&m);
         assert!(!s.dirty);
         std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_adds_sibling_for_non_object_field() {
-        let c = json_get(
-            r#"{ "name":"t","method":"POST",
-                 "url":"https://h/x","headers":[],
-                 "request":{"type":"object","schema":[
-                    {"name":"s","type":"string","default":null,"description":"d","required":false}
-                 ]},
-                 "responses":[] }"#,
-            None,
-        )
-        .unwrap();
-        let mut m = EditModel::from_contract(c);
-        let mut s = UiState::new(&m);
-        goto(
-            &mut s,
-            |f| matches!(f, Field::SchemaName(BodyLoc::Request, p) if p == &vec![0]),
-        );
-        let before = m.request.as_ref().unwrap().schema.len();
-        handle_normal(&mut s, &mut m, key(KeyCode::Char('a')));
-        assert_eq!(m.request.as_ref().unwrap().schema.len(), before + 1); // sibling at top level
     }
 }

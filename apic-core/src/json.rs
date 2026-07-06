@@ -33,23 +33,12 @@ pub struct JsonContent {
     pub responses: Vec<Response>,
 }
 
-/// The request body section: a field-level schema, a raw JSON example payload,
-/// or both. Either part may be omitted — early-stage contracts often have only
-/// an example, formal ones only a schema.
+/// The request body: a raw JSON example payload. `None` inside a `Some(request)`
+/// means the body exists but has no example yet.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RequestBody {
-    /// Body shape: `"object"` (default) or an array form like `"object[]"`.
-    #[serde(rename = "type", default = "default_body_type")]
-    pub dtype: String,
-    #[serde(default)]
-    pub schema: Option<Vec<Schema>>,
     #[serde(default)]
     pub example: Option<serde_json::Value>,
-}
-
-/// Request/response bodies default to a single `object` when `type` is omitted.
-fn default_body_type() -> String {
-    "object".to_string()
 }
 
 /// A documented query parameter: `name` is the key, `value` an example value,
@@ -81,34 +70,9 @@ pub struct Response {
     #[serde(default)]
     pub headers: Vec<Header>,
 
-    /// Body shape: `"object"` (default) or an array form like `"object[]"`.
-    #[serde(rename = "type", default = "default_body_type")]
-    pub dtype: String,
-
-    /// Field-level schema; may be omitted when only an example is provided.
-    #[serde(default)]
-    pub schema: Vec<Schema>,
-
     /// Raw JSON example payload for this response.
     #[serde(default)]
     pub example: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Schema {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub dtype: String,
-    pub default: Option<String>,
-    pub description: String,
-    pub required: bool,
-    #[serde(default)]
-    pub properties: Option<Vec<Schema>>,
-
-    /// Accepted MIME types for `file` fields in multipart requests, e.g.
-    /// `"image/png, image/jpeg"`. Omitted for ordinary fields.
-    #[serde(default)]
-    pub accept: Option<String>,
 }
 
 pub fn method_str(method: &Method) -> String {
@@ -134,15 +98,6 @@ pub fn method_all() -> [Method; 7] {
         Method::HEAD,
         Method::OPTIONS,
     ]
-}
-
-/// Splits a type string into its base type and array-ness:
-/// `"object[]" -> ("object", true)`, `"string" -> ("string", false)`.
-pub fn parse_type(dtype: &str) -> (&str, bool) {
-    match dtype.strip_suffix("[]") {
-        Some(base) => (base, true),
-        None => (dtype, false),
-    }
 }
 
 /// Pretty-prints a JSON string with four-space indentation, reformatting only
@@ -216,14 +171,6 @@ pub fn pretty_json(input: &str) -> String {
     }
     // `out` is the input bytes plus ASCII whitespace, so it stays valid UTF-8.
     String::from_utf8(out).unwrap_or_else(|_| input.to_string())
-}
-
-/// True if any field — at any depth via `properties` — declares `accept`.
-/// Shared by the plain-text and TUI field-table renderers.
-pub fn any_accept(fields: &[Schema]) -> bool {
-    fields
-        .iter()
-        .any(|f| f.accept.is_some() || f.properties.as_deref().is_some_and(any_accept))
 }
 
 // Scaffolding for the upcoming `method set` command; not yet wired in.
@@ -369,44 +316,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_type_splits_the_array_suffix() {
-        assert_eq!(parse_type("object[]"), ("object", true));
-        assert_eq!(parse_type("string[]"), ("string", true));
-        assert_eq!(parse_type("object"), ("object", false));
-        assert_eq!(parse_type("string"), ("string", false));
-    }
-
-    #[test]
-    fn any_accept_detects_a_declared_accept_at_any_depth() {
-        // No field declares `accept`.
-        let plain = json_get(
-            r#"{ "name":"t","method":"GET",
-                 "url":"/x","headers":[],
-                 "responses":[{"code":200,"description":"ok","schema":[
-                   {"name":"f","type":"string","default":null,"description":"d","required":true}
-                 ]}] }"#,
-            None,
-        )
-        .unwrap();
-        assert!(!any_accept(&plain.responses[0].schema));
-
-        // A nested `file` field declares `accept`.
-        let nested = json_get(
-            r#"{ "name":"t","method":"GET",
-                 "url":"/x","headers":[],
-                 "responses":[{"code":200,"description":"ok","schema":[
-                   {"name":"wrap","type":"object","default":null,"description":"d","required":true,
-                    "properties":[
-                      {"name":"avatar","type":"file","default":null,"description":"d","required":true,"accept":"image/png"}
-                    ]}
-                 ]}] }"#,
-            None,
-        )
-        .unwrap();
-        assert!(any_accept(&nested.responses[0].schema));
-    }
-
-    #[test]
     fn json_get_returns_all_responses_when_status_is_none() {
         let c = json_get(CONTRACT, None).unwrap();
         assert_eq!(c.responses.len(), 2);
@@ -432,30 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn request_field_parses_optional_accept_for_multipart() {
-        let json = r#"{
-            "name": "upload", "method": "POST",
-            "url": "https://api.example.com/u",
-            "headers": [],
-            "request": {
-                "schema": [
-                    { "name": "avatar", "type": "file", "default": null,
-                      "description": "Image", "required": true,
-                      "accept": "image/png" },
-                    { "name": "caption", "type": "string", "default": null,
-                      "description": "Text", "required": false }
-                ]
-            },
-            "responses": []
-        }"#;
-        let c = json_get(json, None).unwrap();
-        let schema = c.request.unwrap().schema.unwrap();
-        assert_eq!(schema[0].accept.as_deref(), Some("image/png"));
-        assert_eq!(schema[1].accept, None);
-    }
-
-    #[test]
-    fn request_parses_example_only_without_schema() {
+    fn request_and_response_parse_example_json() {
         let json = r#"{
             "name": "login", "method": "POST",
             "url": "https://api.example.com/l",
@@ -470,58 +356,39 @@ mod tests {
         }"#;
         let c = json_get(json, None).unwrap();
         let request = c.request.unwrap();
-        assert!(request.schema.is_none());
         assert_eq!(request.example.unwrap()["username"], "rizukirr");
-        // Response: schema omitted defaults to empty; example parsed.
-        assert!(c.responses[0].schema.is_empty());
         assert_eq!(c.responses[0].example.as_ref().unwrap()["status"], 200);
     }
 
     #[test]
-    fn body_type_parses_array_and_defaults_to_object() {
+    fn body_example_defaults_to_none_when_absent() {
         let json = r#"{
-            "name": "t", "method": "POST",
-            "url": "/x",
-            "headers": [],
-            "request": { "type": "object[]", "schema": [
-                { "name": "id", "type": "string", "default": null, "description": "d", "required": true }
-            ] },
+            "name": "t", "method": "POST", "url": "/x", "headers": [],
+            "request": {},
             "responses": [ { "code": 200, "description": "ok" } ]
         }"#;
         let c = json_get(json, None).unwrap();
-        assert_eq!(c.request.as_ref().unwrap().dtype, "object[]");
-        // Response omits "type" -> defaults to "object".
-        assert_eq!(c.responses[0].dtype, "object");
+        assert!(c.request.as_ref().unwrap().example.is_none());
+        assert!(c.responses[0].example.is_none());
     }
 
     #[test]
-    fn schema_properties_default_to_none_and_array_type_parses() {
+    fn legacy_schema_and_type_keys_are_ignored() {
+        // Old contracts still load; the removed `type`/`schema` keys are dropped.
         let json = r#"{
-            "name": "t", "method": "GET",
-            "url": "/x",
-            "headers": [],
-            "responses": [ { "code": 200, "description": "ok", "schema": [
-                { "name": "f", "type": "string[]", "default": null, "description": "d", "required": true }
-            ] } ]
+            "name": "t", "method": "POST", "url": "/x", "headers": [],
+            "request": { "type": "object[]", "schema": [
+                { "name": "id", "type": "string", "default": null, "description": "d", "required": true }
+            ], "example": { "id": "1" } },
+            "responses": [ { "code": 200, "description": "ok", "type": "object",
+                "schema": [], "example": { "ok": true } } ]
         }"#;
         let c = json_get(json, None).unwrap();
-        let s = &c.responses[0].schema[0];
-        assert_eq!(s.dtype, "string[]");
-        assert!(s.properties.is_none());
-    }
-
-    #[test]
-    fn schema_accept_defaults_to_none_when_omitted() {
-        let json = r#"{
-            "name": "t", "method": "GET",
-            "url": "/x",
-            "headers": [],
-            "responses": [ { "code": 200, "description": "ok", "schema": [
-                { "name": "f", "type": "string", "default": null, "description": "d", "required": true }
-            ] } ]
-        }"#;
-        let c = json_get(json, None).unwrap();
-        assert!(c.responses[0].schema[0].accept.is_none());
+        assert_eq!(
+            c.request.as_ref().unwrap().example.as_ref().unwrap()["id"],
+            "1"
+        );
+        assert_eq!(c.responses[0].example.as_ref().unwrap()["ok"], true);
     }
 
     #[test]

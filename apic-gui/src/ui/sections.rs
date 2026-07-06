@@ -7,7 +7,7 @@
 use eframe::egui;
 use egui::RichText;
 
-use apic_core::edit::{BodyLoc, EditAction, EditModel, EditSchema, Field, apply};
+use apic_core::edit::{EditAction, EditBody, EditModel, Field, apply};
 use apic_core::json::method_str;
 
 use crate::ui::theme::{AMBER, SPACE_LARGE};
@@ -16,17 +16,16 @@ use super::theme::{
     CYAN, DIM, GREEN, RED, SPACE_MEDIUM, SPACE_SMALL, TEXT, method_badge, method_color,
 };
 use super::widgets::{
-    SCHEMA_TYPES, add_button, cell_edit, cell_key, cell_text, chip_cell, delete_button,
-    json_editor, request_new_row_focus, section_label, table_frame, table_header,
-    take_pending_focus, type_dropdown,
+    TABLE_HEADER_H, TABLE_ROW_H, add_button, delete_button, fill_column, header_label, json_editor,
+    metadata_table, request_new_row_focus, required_chip, section_label, table_frame,
+    take_pending_focus, tcell_edit, text_button,
 };
+use egui_extras::Column;
 
 // egui temp-data keys for the "focus the new row's name field" markers, one per
-// editable list. Schema lists also append the body location so request and
-// response schemas never claim each other's pending focus.
+// editable list.
 const FOCUS_QUERY: &str = "apic.focus.query";
 const FOCUS_HEADER: &str = "apic.focus.header";
-const FOCUS_SCHEMA: &str = "apic.focus.schema";
 
 /// The endpoint name, rendered inline on the toolbar row (left of EDIT/SAVE).
 /// Editable frameless heading in edit mode; a heading label otherwise.
@@ -105,48 +104,80 @@ pub(crate) fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: 
 pub(crate) fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     let mut actions: Vec<EditAction> = Vec::new();
     table_frame(ui, |ui| {
-        table_header(
-            ui,
-            &[
-                ("key", 130.0),
-                ("requirement", 90.0),
-                ("value", 130.0),
-                ("description", f32::INFINITY),
-            ],
-        );
-        for i in 0..model.query.len() {
-            ui.horizontal(|ui| {
-                if editing {
-                    let name = cell_edit(ui, &mut model.query[i].name, 130.0, "name");
-                    take_pending_focus(ui, FOCUS_QUERY, i, &name);
-                    if chip_cell(ui, model.query[i].required, true, 90.0).is_some() {
-                        actions.push(EditAction::ToggleBool {
-                            field: Field::QueryRequired(i),
+        let fixed = if editing {
+            vec![120.0, 88.0, 120.0, 26.0]
+        } else {
+            vec![120.0, 88.0, 120.0]
+        };
+        let stretch = fill_column(ui, &fixed);
+        let mut t = metadata_table(ui)
+            .column(Column::exact(120.0)) // key
+            .column(Column::exact(88.0)) // requirement
+            .column(Column::exact(120.0)) // value
+            .column(stretch); // description
+        if editing {
+            t = t.column(Column::exact(26.0)); // delete
+        }
+        t.header(TABLE_HEADER_H, |mut h| {
+            h.col(|ui| header_label(ui, "key"));
+            h.col(|ui| header_label(ui, "requirement"));
+            h.col(|ui| header_label(ui, "value"));
+            h.col(|ui| header_label(ui, "description"));
+            if editing {
+                h.col(|_| {});
+            }
+        })
+        .body(|mut body| {
+            for i in 0..model.query.len() {
+                body.row(TABLE_ROW_H, |mut row| {
+                    row.col(|ui| {
+                        if editing {
+                            let r = tcell_edit(ui, &mut model.query[i].name, "name");
+                            take_pending_focus(ui, FOCUS_QUERY, i, &r);
+                        } else {
+                            ui.label(RichText::new(&model.query[i].name).color(CYAN));
+                        }
+                    });
+                    row.col(|ui| {
+                        if required_chip(ui, model.query[i].required, editing).is_some() {
+                            actions.push(EditAction::ToggleBool {
+                                field: Field::QueryRequired(i),
+                            });
+                        }
+                    });
+                    row.col(|ui| {
+                        if editing {
+                            tcell_edit(ui, &mut model.query[i].value, "value");
+                        } else {
+                            ui.label(RichText::new(&model.query[i].value).color(TEXT));
+                        }
+                    });
+                    row.col(|ui| {
+                        if editing {
+                            tcell_edit(ui, &mut model.query[i].description, "description");
+                        } else {
+                            ui.label(RichText::new(&model.query[i].description).color(TEXT));
+                        }
+                    });
+                    if editing {
+                        row.col(|ui| {
+                            if delete_button(ui) {
+                                actions.push(EditAction::Delete {
+                                    field: Field::QueryName(i),
+                                });
+                            }
                         });
                     }
-                    cell_edit(ui, &mut model.query[i].value, 130.0, "value");
-                    let w = (ui.available_width() - 24.0).max(60.0);
-                    cell_edit(ui, &mut model.query[i].description, w, "description");
-                    if delete_button(ui) {
-                        actions.push(EditAction::Delete {
-                            field: Field::QueryName(i),
-                        });
-                    }
-                } else {
-                    cell_key(ui, &model.query[i].name, 130.0);
-                    chip_cell(ui, model.query[i].required, false, 90.0);
-                    cell_text(ui, &model.query[i].value, 130.0);
-                    cell_text(ui, &model.query[i].description, ui.available_width());
-                }
-            });
-        }
-        if editing && add_button(ui, "+ query") {
-            request_new_row_focus(ui, FOCUS_QUERY, model.query.len());
-            actions.push(EditAction::Add {
-                field: Field::QueryAdd,
-            });
-        }
+                });
+            }
+        });
     });
+    if editing && add_button(ui, "+ query") {
+        request_new_row_focus(ui, FOCUS_QUERY, model.query.len());
+        actions.push(EditAction::Add {
+            field: Field::QueryAdd,
+        });
+    }
     for a in &actions {
         apply(model, a);
     }
@@ -164,48 +195,74 @@ pub(crate) fn response_headers(
     };
     let mut actions: Vec<EditAction> = Vec::new();
     table_frame(ui, |ui| {
-        table_header(
-            ui,
-            &[
-                ("header", 150.0),
-                ("requirement", 90.0),
-                ("value", f32::INFINITY),
-            ],
-        );
-        let len = model.responses[idx].headers.len();
-        for i in 0..len {
-            ui.horizontal(|ui| {
-                if editing {
-                    cell_edit(ui, &mut model.responses[idx].headers[i].name, 150.0, "name");
-                    if let Some(new) =
-                        chip_cell(ui, model.responses[idx].headers[i].required, true, 90.0)
-                    {
-                        model.responses[idx].headers[i].required = new;
-                    }
-                    let w = (ui.available_width() - 24.0).max(60.0);
-                    cell_edit(ui, &mut model.responses[idx].headers[i].value, w, "value");
-                    if delete_button(ui) {
-                        actions.push(EditAction::Delete {
-                            field: Field::ResponseHeaderName(idx, i),
+        let fixed = if editing {
+            vec![150.0, 88.0, 26.0]
+        } else {
+            vec![150.0, 88.0]
+        };
+        let stretch = fill_column(ui, &fixed);
+        let mut t = metadata_table(ui)
+            .column(Column::exact(150.0)) // header
+            .column(Column::exact(88.0)) // requirement
+            .column(stretch); // value
+        if editing {
+            t = t.column(Column::exact(26.0)); // delete
+        }
+        t.header(TABLE_HEADER_H, |mut h| {
+            h.col(|ui| header_label(ui, "header"));
+            h.col(|ui| header_label(ui, "requirement"));
+            h.col(|ui| header_label(ui, "value"));
+            if editing {
+                h.col(|_| {});
+            }
+        })
+        .body(|mut body| {
+            let len = model.responses[idx].headers.len();
+            for i in 0..len {
+                body.row(TABLE_ROW_H, |mut row| {
+                    row.col(|ui| {
+                        if editing {
+                            tcell_edit(ui, &mut model.responses[idx].headers[i].name, "name");
+                        } else {
+                            ui.label(
+                                RichText::new(&model.responses[idx].headers[i].name).color(CYAN),
+                            );
+                        }
+                    });
+                    row.col(|ui| {
+                        let required = model.responses[idx].headers[i].required;
+                        // Response headers have no toggle action; flip directly.
+                        if let Some(new) = required_chip(ui, required, editing) {
+                            model.responses[idx].headers[i].required = new;
+                        }
+                    });
+                    row.col(|ui| {
+                        if editing {
+                            tcell_edit(ui, &mut model.responses[idx].headers[i].value, "value");
+                        } else {
+                            ui.label(
+                                RichText::new(&model.responses[idx].headers[i].value).color(TEXT),
+                            );
+                        }
+                    });
+                    if editing {
+                        row.col(|ui| {
+                            if delete_button(ui) {
+                                actions.push(EditAction::Delete {
+                                    field: Field::ResponseHeaderName(idx, i),
+                                });
+                            }
                         });
                     }
-                } else {
-                    cell_key(ui, &model.responses[idx].headers[i].name, 150.0);
-                    chip_cell(ui, model.responses[idx].headers[i].required, false, 90.0);
-                    cell_text(
-                        ui,
-                        &model.responses[idx].headers[i].value,
-                        ui.available_width(),
-                    );
-                }
-            });
-        }
-        if editing && add_button(ui, "+ header") {
-            actions.push(EditAction::Add {
-                field: Field::ResponseHeaderAdd(idx),
-            });
-        }
+                });
+            }
+        });
     });
+    if editing && add_button(ui, "+ header") {
+        actions.push(EditAction::Add {
+            field: Field::ResponseHeaderAdd(idx),
+        });
+    }
     for a in &actions {
         apply(model, a);
     }
@@ -214,293 +271,99 @@ pub(crate) fn response_headers(
 pub(crate) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     let mut actions: Vec<EditAction> = Vec::new();
     table_frame(ui, |ui| {
-        table_header(
-            ui,
-            &[
-                ("header", 150.0),
-                ("requirement", 90.0),
-                ("value", f32::INFINITY),
-            ],
-        );
-        for i in 0..model.headers.len() {
-            ui.horizontal(|ui| {
-                if editing {
-                    let name = cell_edit(ui, &mut model.headers[i].name, 150.0, "name");
-                    take_pending_focus(ui, FOCUS_HEADER, i, &name);
-                    if chip_cell(ui, model.headers[i].required, true, 90.0).is_some() {
-                        actions.push(EditAction::ToggleBool {
-                            field: Field::HeaderRequired(i),
-                        });
-                    }
-                    let w = (ui.available_width() - 24.0).max(60.0);
-                    cell_edit(ui, &mut model.headers[i].value, w, "value");
-                    if delete_button(ui) {
-                        actions.push(EditAction::Delete {
-                            field: Field::HeaderName(i),
-                        });
-                    }
-                } else {
-                    cell_key(ui, &model.headers[i].name, 150.0);
-                    chip_cell(ui, model.headers[i].required, false, 90.0);
-                    cell_text(ui, &model.headers[i].value, ui.available_width());
-                }
-            });
+        let fixed = if editing {
+            vec![150.0, 88.0, 26.0]
+        } else {
+            vec![150.0, 88.0]
+        };
+        let stretch = fill_column(ui, &fixed);
+        let mut t = metadata_table(ui)
+            .column(Column::exact(150.0)) // header
+            .column(Column::exact(88.0)) // requirement
+            .column(stretch); // value
+        if editing {
+            t = t.column(Column::exact(26.0)); // delete
         }
-        if editing && add_button(ui, "+ header") {
-            request_new_row_focus(ui, FOCUS_HEADER, model.headers.len());
-            actions.push(EditAction::Add {
-                field: Field::HeaderAdd,
-            });
-        }
-    });
-    for a in &actions {
-        apply(model, a);
-    }
-}
-
-/// Renders a single view-mode schema field as
-/// `name: type [REQUIRED]/[OPTIONAL] desc`, used by the request/response schema
-/// viewer.
-pub(crate) fn field_view_row(
-    ui: &mut egui::Ui,
-    name: &str,
-    dtype: &str,
-    required: bool,
-    description: &str,
-    depth: usize,
-) {
-    ui.horizontal(|ui| {
-        let indent = depth as f32 * 14.0;
-        ui.add_space(indent);
-        cell_key(ui, name, (150.0 - indent).max(60.0));
-        cell_text(ui, dtype, 90.0);
-        chip_cell(ui, required, false, 90.0);
-        cell_text(ui, description, ui.available_width());
-    });
-}
-
-/// Renders schema fields as `name: type [REQUIRED]`, recursing into properties.
-pub(crate) fn schema_fields(ui: &mut egui::Ui, fields: &[EditSchema], depth: usize) {
-    for f in fields {
-        field_view_row(ui, &f.name, &f.dtype, f.required, &f.description, depth);
-        if !f.properties.is_empty() {
-            schema_fields(ui, &f.properties, depth + 1);
-        }
-    }
-}
-
-/// Per-location temp-data key for schema focus, so the request schema and each
-/// response schema never claim each other's pending new-row focus.
-fn schema_focus_key(loc: &BodyLoc) -> String {
-    match loc {
-        BodyLoc::Request => format!("{FOCUS_SCHEMA}.req"),
-        BodyLoc::Response(n) => format!("{FOCUS_SCHEMA}.resp{n}"),
-    }
-}
-
-/// Stable string identity for a (possibly nested) schema field, used to match a
-/// rendered row against the pending focus target.
-fn schema_path_id(path: &[usize]) -> String {
-    path.iter()
-        .map(usize::to_string)
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-/// Renders an add-field button; on click it marks the new row for focus and
-/// queues a `SchemaAdd` under `parent` (the object's path, empty for the root).
-/// `child_count` is how many fields the object already has, i.e. the index the
-/// new field will land at.
-fn schema_add_button(
-    ui: &mut egui::Ui,
-    label: &str,
-    loc: &BodyLoc,
-    parent: &[usize],
-    child_count: usize,
-    actions: &mut Vec<EditAction>,
-) {
-    if add_button(ui, label) {
-        let mut child = parent.to_vec();
-        child.push(child_count);
-        request_new_row_focus(ui, &schema_focus_key(loc), schema_path_id(&child));
-        actions.push(EditAction::Add {
-            field: Field::SchemaAdd(loc.clone(), parent.to_vec()),
-        });
-    }
-}
-
-/// Edit-mode schema editor: binds name/type/required directly and collects
-/// structural add/delete edits into `actions` (applied after the borrow ends).
-/// Recurses into nested object `properties`; an object field gets a `+ field`
-/// button at the bottom of its nested block.
-pub(crate) fn edit_schema_fields(
-    ui: &mut egui::Ui,
-    loc: &BodyLoc,
-    fields: &mut [EditSchema],
-    path: &mut Vec<usize>,
-    actions: &mut Vec<EditAction>,
-) {
-    for (i, f) in fields.iter_mut().enumerate() {
-        path.push(i);
-        ui.horizontal(|ui| {
-            let indent = (path.len() as f32 - 1.0) * 14.0;
-            ui.add_space(indent);
-            let name = cell_edit(ui, &mut f.name, (150.0 - indent).max(60.0), "name");
-            take_pending_focus(ui, &schema_focus_key(loc), schema_path_id(path), &name);
-            let loc_tag = match loc {
-                BodyLoc::Request => "req".to_string(),
-                BodyLoc::Response(n) => format!("resp{n}"),
-            };
-            type_dropdown(
-                ui,
-                ("schema_type", &loc_tag, path.as_slice()),
-                &mut f.dtype,
-                SCHEMA_TYPES,
-            );
-            if let Some(new) = chip_cell(ui, f.required, true, 90.0) {
-                f.required = new;
+        t.header(TABLE_HEADER_H, |mut h| {
+            h.col(|ui| header_label(ui, "header"));
+            h.col(|ui| header_label(ui, "requirement"));
+            h.col(|ui| header_label(ui, "value"));
+            if editing {
+                h.col(|_| {});
             }
-            let width = (ui.available_width() - 24.0).max(60.0);
-            cell_edit(ui, &mut f.description, width, "description");
-            if delete_button(ui) {
-                actions.push(EditAction::Delete {
-                    field: Field::SchemaName(loc.clone(), path.clone()),
+        })
+        .body(|mut body| {
+            for i in 0..model.headers.len() {
+                body.row(TABLE_ROW_H, |mut row| {
+                    row.col(|ui| {
+                        if editing {
+                            let r = tcell_edit(ui, &mut model.headers[i].name, "name");
+                            take_pending_focus(ui, FOCUS_HEADER, i, &r);
+                        } else {
+                            ui.label(RichText::new(&model.headers[i].name).color(CYAN));
+                        }
+                    });
+                    row.col(|ui| {
+                        if required_chip(ui, model.headers[i].required, editing).is_some() {
+                            actions.push(EditAction::ToggleBool {
+                                field: Field::HeaderRequired(i),
+                            });
+                        }
+                    });
+                    row.col(|ui| {
+                        if editing {
+                            tcell_edit(ui, &mut model.headers[i].value, "value");
+                        } else {
+                            ui.label(RichText::new(&model.headers[i].value).color(TEXT));
+                        }
+                    });
+                    if editing {
+                        row.col(|ui| {
+                            if delete_button(ui) {
+                                actions.push(EditAction::Delete {
+                                    field: Field::HeaderName(i),
+                                });
+                            }
+                        });
+                    }
                 });
             }
         });
-        if !f.properties.is_empty() {
-            edit_schema_fields(ui, loc, &mut f.properties, path, actions);
-        }
-        if apic_core::json::parse_type(&f.dtype).0 == "object" {
-            ui.horizontal(|ui| {
-                ui.add_space(path.len() as f32 * 14.0);
-                schema_add_button(
-                    ui,
-                    "+ field",
-                    loc,
-                    path.as_slice(),
-                    f.properties.len(),
-                    actions,
-                );
-            });
-        }
-        path.pop();
+    });
+    if editing && add_button(ui, "+ header") {
+        request_new_row_focus(ui, FOCUS_HEADER, model.headers.len());
+        actions.push(EditAction::Add {
+            field: Field::HeaderAdd,
+        });
+    }
+    for a in &actions {
+        apply(model, a);
     }
 }
 
 pub(crate) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
-    let mut actions: Vec<EditAction> = Vec::new();
-    if let Some(req) = model.request.as_mut() {
-        if editing {
-            ui.horizontal(|ui| {
-                if ui
-                    .button(RichText::new(format!("type: {}", req.dtype)).color(CYAN))
-                    .clicked()
-                {
-                    actions.push(EditAction::ToggleBodyType {
-                        loc: BodyLoc::Request,
-                    });
-                }
-                if ui.button(RichText::new("remove body").color(RED)).clicked() {
-                    actions.push(EditAction::Add {
-                        field: Field::RequestToggle,
-                    });
-                }
-            });
-        }
-        ui.add_space(SPACE_LARGE);
-        egui::CollapsingHeader::new(RichText::new("Schema").color(DIM))
-            .default_open(false)
-            .show(ui, |ui| {
-                // Cap the schema list at half the remaining height so a large
-                // schema scrolls internally instead of pushing the stretched
-                // example off the bottom of the (unscrolled) tab.
-                let schema_cap = (ui.available_height() * 0.5).max(120.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("req_schema_scroll")
-                    .max_height(schema_cap)
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| {
-                        table_frame(ui, |ui| {
-                            table_header(
-                                ui,
-                                &[
-                                    ("name", 150.0),
-                                    ("type", 90.0),
-                                    ("requirement", 90.0),
-                                    ("description", f32::INFINITY),
-                                ],
-                            );
-                            if editing {
-                                let mut path = Vec::new();
-                                edit_schema_fields(
-                                    ui,
-                                    &BodyLoc::Request,
-                                    &mut req.schema,
-                                    &mut path,
-                                    &mut actions,
-                                );
-                                schema_add_button(
-                                    ui,
-                                    "+ field",
-                                    &BodyLoc::Request,
-                                    &[],
-                                    req.schema.len(),
-                                    &mut actions,
-                                );
-                            } else if req.schema.is_empty() {
-                                ui.label(RichText::new("(none)").color(DIM));
-                            } else {
-                                schema_fields(ui, &req.schema, 0);
-                            }
-                        });
-                    });
-            });
-        ui.add_space(SPACE_LARGE);
+    if editing {
+        // The request body is always editable — materialize an empty one so the
+        // JSON editor is shown by default. An untouched (blank) body is dropped
+        // on save (see `EditModel::to_json`), so this never pollutes contracts.
+        let req = model.request.get_or_insert_with(EditBody::empty);
         ui.horizontal(|ui| {
-            section_label(ui, "EXAMPLE");
+            section_label(ui, "JSON");
             ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
             ui.add_space(SPACE_MEDIUM);
-            if editing {
-                if ui
-                    .button(RichText::new("generate from schema").color(GREEN))
-                    .clicked()
-                {
-                    actions.push(EditAction::GenerateExample {
-                        loc: BodyLoc::Request,
-                    });
-                }
-
-                if ui
-                    .button(RichText::new("generate schema from example").color(CYAN))
-                    .clicked()
-                {
-                    actions.push(EditAction::InferSchema {
-                        loc: BodyLoc::Request,
-                    });
-                }
-
-                if ui.button(RichText::new("pretty").color(AMBER)).clicked() {
-                    req.example = apic_core::json::pretty_json(&req.example);
-                }
+            if text_button(ui, "Pretty", AMBER) {
+                req.example = apic_core::json::pretty_json(&req.example);
             }
         });
-        let h = ui.available_height().max(160.0);
-        json_editor(ui, &mut req.example, editing, h);
+        json_editor(ui, &mut req.example, true);
     } else {
-        ui.label(RichText::new("(no request body)").color(DIM));
-        if editing && add_button(ui, "+ request body") {
-            actions.push(EditAction::Add {
-                field: Field::RequestToggle,
-            });
-        }
-    }
-    for a in &actions {
-        apply(model, a);
-    }
-    if let Some((BodyLoc::Request, err)) = &model.last_error {
-        ui.label(RichText::new(err.as_str()).color(RED));
+        let mut empty = String::new();
+        let text = match model.request.as_mut() {
+            Some(req) => &mut req.example,
+            None => &mut empty,
+        };
+        json_editor(ui, text, false);
     }
     ui.add_space(SPACE_MEDIUM);
 }
@@ -516,6 +379,12 @@ pub(crate) fn response_code_selector(
     editing: bool,
 ) {
     let mut actions: Vec<EditAction> = Vec::new();
+    // The active tab's code editor carries a stable id so we can move the caret
+    // to it the instant a tab is selected or a new response is added.
+    let code_edit_id = ui.make_persistent_id("resp_code_edit");
+    // Set when the active response changes this frame so the code field takes
+    // focus on the next frame (when it renders as the editable, active tab).
+    let mut focus_code = false;
     ui.horizontal_wrapped(|ui| {
         for i in 0..model.responses.len() {
             let selected = i == *resp_tab;
@@ -531,6 +400,7 @@ pub(crate) fn response_code_selector(
                 // The active tab's code is edited in place, no bordered box.
                 ui.add(
                     egui::TextEdit::singleline(&mut model.responses[i].code)
+                        .id(code_edit_id)
                         .frame(false)
                         .desired_width(46.0)
                         .text_color(color),
@@ -551,15 +421,22 @@ pub(crate) fn response_code_selector(
                     .clicked()
                 {
                     *resp_tab = i;
+                    focus_code = true;
                 }
             }
         }
         if editing && add_button(ui, "+ new response") {
+            // Focus the new tab's code so the user can type the status straight away.
+            *resp_tab = model.responses.len();
+            focus_code = true;
             actions.push(EditAction::Add {
                 field: Field::ResponseAdd,
             });
         }
     });
+    if editing && focus_code {
+        ui.ctx().memory_mut(|m| m.request_focus(code_edit_id));
+    }
     for a in &actions {
         apply(model, a);
     }
@@ -569,7 +446,6 @@ pub(crate) fn response_code_selector(
 /// (the Response tab) has already drawn the code-tab strip and guarantees `idx`
 /// is a valid response index.
 pub(crate) fn response_body(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editing: bool) {
-    let mut actions: Vec<EditAction> = Vec::new();
     ui.spacing_mut().item_spacing.y = SPACE_SMALL;
     let r = &mut model.responses[idx];
     // Description: inline, frameless in edit mode; plain text otherwise.
@@ -584,100 +460,18 @@ pub(crate) fn response_body(ui: &mut egui::Ui, model: &mut EditModel, idx: usize
     } else if !r.description.is_empty() {
         ui.label(RichText::new(&r.description).color(DIM));
     }
-    egui::CollapsingHeader::new(RichText::new("Schema").color(DIM))
-        .default_open(false)
-        .show(ui, |ui| {
-            // Cap the schema list at half the remaining height so a large schema
-            // scrolls internally instead of pushing the stretched example off the
-            // bottom.
-            let schema_cap = (ui.available_height() * 0.5).max(120.0);
-            egui::ScrollArea::vertical()
-                .id_salt("resp_schema_scroll")
-                .max_height(schema_cap)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    table_frame(ui, |ui| {
-                        table_header(
-                            ui,
-                            &[
-                                ("name", 150.0),
-                                ("type", 90.0),
-                                ("requirement", 90.0),
-                                ("description", f32::INFINITY),
-                            ],
-                        );
-                        if editing {
-                            let mut path = Vec::new();
-                            edit_schema_fields(
-                                ui,
-                                &BodyLoc::Response(idx),
-                                &mut r.schema,
-                                &mut path,
-                                &mut actions,
-                            );
-                            schema_add_button(
-                                ui,
-                                "+ field",
-                                &BodyLoc::Response(idx),
-                                &[],
-                                r.schema.len(),
-                                &mut actions,
-                            );
-                        } else if r.schema.is_empty() {
-                            ui.label(RichText::new("(none)").color(DIM));
-                        } else {
-                            schema_fields(ui, &r.schema, 0);
-                        }
-                    });
-                });
-        });
     ui.add_space(SPACE_LARGE);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
-        section_label(ui, "EXAMPLE");
-        ui.add_space(SPACE_MEDIUM);
-        if editing {
-            if ui
-                .button(RichText::new(format!("type: {}", r.dtype)).color(CYAN))
-                .clicked()
-            {
-                actions.push(EditAction::ToggleBodyType {
-                    loc: BodyLoc::Response(idx),
-                });
-            }
-            if ui
-                .button(RichText::new("generate from schema").color(GREEN))
-                .clicked()
-            {
-                actions.push(EditAction::GenerateExample {
-                    loc: BodyLoc::Response(idx),
-                });
-            }
-            if ui
-                .button(RichText::new("generate schema from example").color(CYAN))
-                .clicked()
-            {
-                actions.push(EditAction::InferSchema {
-                    loc: BodyLoc::Response(idx),
-                });
-            }
-            if ui.button(RichText::new("pretty").color(AMBER)).clicked() {
+    if editing {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
+            section_label(ui, "JSON");
+            ui.add_space(SPACE_MEDIUM);
+            if text_button(ui, "Pretty", AMBER) {
                 r.example = apic_core::json::pretty_json(&r.example);
             }
-        }
-    });
-    let h = ui.available_height().max(160.0);
-    json_editor(ui, &mut r.example, editing, h);
-
-    for a in &actions {
-        apply(model, a);
+        });
     }
-
-    if let Some((BodyLoc::Response(i), err)) = &model.last_error
-        && *i == idx
-    {
-        ui.label(RichText::new(err.as_str()).color(RED));
-    }
+    json_editor(ui, &mut r.example, editing);
     ui.add_space(SPACE_MEDIUM);
 }
 

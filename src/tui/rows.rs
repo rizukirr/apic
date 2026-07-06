@@ -5,10 +5,9 @@
 //! `QUERY`/`HEADERS`/`REQUEST`/`RESPONSE` sections, each carrying an
 //! `add: Option<Field>` so the `a` key knows what to append. Every editable
 //! `Cell` carries a `Field` address that the handlers in `state.rs` use to
-//! locate the target in the model (including the path through nested schema
-//! `properties`).
+//! locate the target in the model.
 
-use crate::tui::model::{EditModel, EditSchema};
+use crate::tui::model::EditModel;
 // The cell-address enums are UI-agnostic and live in core so a GUI can reuse
 // them; re-exported here under the path the TUI already uses.
 pub(crate) use apic_core::edit::{BodyLoc, Field};
@@ -42,7 +41,6 @@ pub(crate) enum SectionKind {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Expand {
     Url,
-    Request,
     Response(usize),
 }
 
@@ -52,7 +50,7 @@ pub(crate) enum RowKind {
     Name,    // header name line (drawn uppercased)
     Desc,    // header description line (drawn only when non-empty)
     UrlLine, // collapsed ` METHOD <built-url>`; Enter expands
-    Title,   // a Body section's bold title line; Enter expands code/desc/type
+    Title,   // a Body section's bold title line; Enter expands code/description
     Field,   // an editable table / key-value row
     Example, // inline ` Example:` + raw JSON; Enter opens the modal
 }
@@ -101,13 +99,6 @@ fn enum_cell(field: Field, value: String) -> Cell {
         value,
     }
 }
-fn bool_cell(field: Field, v: bool) -> Cell {
-    Cell {
-        field,
-        kind: CellKind::Bool,
-        value: if v { "✓".to_string() } else { String::new() },
-    }
-}
 fn field_row(cells: Vec<Cell>) -> TableRow {
     TableRow {
         kind: RowKind::Field,
@@ -115,15 +106,6 @@ fn field_row(cells: Vec<Cell>) -> TableRow {
         cells,
         raw: String::new(),
         prefix: String::new(),
-    }
-}
-fn field_row_i_prefixed(indent: u16, cells: Vec<Cell>, prefix: String) -> TableRow {
-    TableRow {
-        kind: RowKind::Field,
-        indent,
-        cells,
-        raw: String::new(),
-        prefix,
     }
 }
 
@@ -156,80 +138,10 @@ fn example_row(loc: BodyLoc, raw: String) -> TableRow {
     }
 }
 
-/// True if any field at any depth declares `accept`.
-fn any_accept(fields: &[EditSchema]) -> bool {
-    fields
-        .iter()
-        .any(|f| !f.accept.trim().is_empty() || any_accept(&f.properties))
-}
-
-fn schema_columns(has_accept: bool) -> Vec<&'static str> {
-    if has_accept {
-        vec!["NAME", "TYPE", "REQ", "ACCEPT", "DESCRIPTION"]
-    } else {
-        vec!["NAME", "TYPE", "REQ", "DESCRIPTION"]
-    }
-}
-
-/// Pushes schema field rows (recursively) into `rows`, with `├─`/`└─` prefixes
-/// in the NAME cell for nested levels. Mirrors `render::push_field_rows`.
-fn push_schema(
-    rows: &mut Vec<TableRow>,
-    loc: &BodyLoc,
-    fields: &[EditSchema],
-    path: &mut Vec<usize>,
-    depth: usize,
-    has_accept: bool,
-) {
-    for (i, f) in fields.iter().enumerate() {
-        path.push(i);
-        let prefix = if depth == 0 {
-            String::new()
-        } else {
-            let branch = if i + 1 == fields.len() {
-                "└─ "
-            } else {
-                "├─ "
-            };
-            format!("{}{branch}", "  ".repeat(depth - 1))
-        };
-        let mut cells = vec![
-            text(Field::SchemaName(loc.clone(), path.clone()), f.name.clone()),
-            text(
-                Field::SchemaType(loc.clone(), path.clone()),
-                f.dtype.clone(),
-            ),
-            bool_cell(Field::SchemaRequired(loc.clone(), path.clone()), f.required),
-        ];
-        if has_accept {
-            cells.push(text(
-                Field::SchemaAccept(loc.clone(), path.clone()),
-                f.accept.clone(),
-            ));
-        }
-        cells.push(text(
-            Field::SchemaDesc(loc.clone(), path.clone()),
-            f.description.clone(),
-        ));
-        rows.push(field_row_i_prefixed(depth as u16, cells, prefix));
-
-        push_schema(rows, loc, &f.properties, path, depth + 1, has_accept);
-        path.pop();
-    }
-}
-
-/// Builds a body section's rows: `lead` (its Title row + any expanded editable
-/// rows) followed by the schema field rows + the inline example row.
-fn body_rows(
-    lead: Vec<TableRow>,
-    loc: BodyLoc,
-    fields: &[EditSchema],
-    example: &str,
-) -> Vec<TableRow> {
-    let has_accept = any_accept(fields);
+/// Builds a body section's rows: `lead` (its Title row) followed by the inline
+/// example row.
+fn body_rows(lead: Vec<TableRow>, loc: BodyLoc, example: &str) -> Vec<TableRow> {
     let mut rows = lead;
-    let mut path = Vec::new();
-    push_schema(&mut rows, &loc, fields, &mut path, 0, has_accept);
     rows.push(example_row(loc, example.to_string()));
     rows
 }
@@ -327,26 +239,18 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
         expand: None,
     });
 
-    // REQUEST. With no body, `a` toggles one on (RequestToggle); with a body,
-    // `a` appends a top-level schema field (SchemaAdd). The title row expands
-    // into an editable `type` row.
+    // REQUEST. `a` toggles the body on/off (RequestToggle); the body itself is
+    // just the inline example JSON.
     match &m.request {
         Some(req) => {
-            let title = format!("REQUEST{}", crate::render::array_marker(&req.dtype));
-            let mut lead = vec![title_row(title)];
-            if expanded == Some(Expand::Request) {
-                lead.push(field_row(vec![
-                    label("type"),
-                    enum_cell(Field::BodyDtype(BodyLoc::Request), req.dtype.clone()),
-                ]));
-            }
+            let lead = vec![title_row("REQUEST".to_string())];
             out.push(Section {
                 title: String::new(),
                 kind: SectionKind::Body,
-                headers: Some(schema_columns(any_accept(&req.schema))),
-                rows: body_rows(lead, BodyLoc::Request, &req.schema, &req.example),
-                add: Some(Field::SchemaAdd(BodyLoc::Request, Vec::new())),
-                expand: Some(Expand::Request),
+                headers: None,
+                rows: body_rows(lead, BodyLoc::Request, &req.example),
+                add: Some(Field::RequestToggle),
+                expand: None,
             });
         }
         None => out.push(Section {
@@ -355,7 +259,7 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
             headers: None,
             rows: vec![title_row("REQUEST".to_string())],
             add: Some(Field::RequestToggle),
-            expand: Some(Expand::Request),
+            expand: None,
         }),
     }
 
@@ -371,8 +275,7 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
         });
     } else {
         for (i, r) in m.responses.iter().enumerate() {
-            let marker = crate::render::array_marker(&r.dtype);
-            let title = format!("RESPONSE {} — {}{marker}", r.code, r.description);
+            let title = format!("RESPONSE {} — {}", r.code, r.description);
             let mut lead = vec![title_row(title)];
             if expanded == Some(Expand::Response(i)) {
                 lead.push(field_row(vec![
@@ -383,17 +286,13 @@ pub(crate) fn flatten(m: &EditModel, expanded: Option<Expand>) -> Vec<Section> {
                     label("description"),
                     text(Field::ResponseDesc(i), r.description.clone()),
                 ]));
-                lead.push(field_row(vec![
-                    label("type"),
-                    enum_cell(Field::BodyDtype(BodyLoc::Response(i)), r.dtype.clone()),
-                ]));
             }
             out.push(Section {
                 title: String::new(),
                 kind: SectionKind::Body,
-                headers: Some(schema_columns(any_accept(&r.schema))),
-                rows: body_rows(lead, BodyLoc::Response(i), &r.schema, &r.example),
-                add: Some(Field::SchemaAdd(BodyLoc::Response(i), Vec::new())),
+                headers: None,
+                rows: body_rows(lead, BodyLoc::Response(i), &r.example),
+                add: Some(Field::ResponseAdd),
                 expand: Some(Expand::Response(i)),
             });
         }
@@ -488,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn response_title_expands_to_editable_code_desc_type() {
+    fn response_title_expands_to_editable_code_desc() {
         let secs = flatten(&model(), Some(Expand::Response(0)));
         let resp = secs
             .iter()
@@ -501,10 +400,6 @@ mod tests {
         assert!(resp.rows.iter().any(|r| matches!(
             r.cells.last().map(|c| &c.field),
             Some(Field::ResponseDesc(0))
-        )));
-        assert!(resp.rows.iter().any(|r| matches!(
-            r.cells.last().map(|c| &c.field),
-            Some(Field::BodyDtype(BodyLoc::Response(0)))
         )));
     }
 
@@ -519,15 +414,12 @@ mod tests {
     }
 
     #[test]
-    fn nested_field_has_tree_prefix_and_response_has_example_row() {
+    fn response_has_inline_example_row() {
         let secs = flatten(&model(), None);
         let resp = secs
             .iter()
             .find(|s| s.expand == Some(Expand::Response(0)))
             .unwrap();
-        assert!(resp.rows.iter().any(|r| {
-            r.kind == RowKind::Field && (r.prefix.contains("├─") || r.prefix.contains("└─"))
-        }));
         assert!(
             resp.rows
                 .iter()
@@ -566,21 +458,5 @@ mod tests {
             })
             .expect("a '+ add response' affordance section exists");
         assert_eq!(aff.add, Some(Field::ResponseAdd));
-    }
-
-    #[test]
-    fn nested_name_cell_is_bare_with_prefix_on_row() {
-        let secs = flatten(&model(), None);
-        let resp = secs
-            .iter()
-            .find(|s| s.title.starts_with("RESPONSE 200") || s.expand == Some(Expand::Response(0)))
-            .unwrap();
-        let nested = resp
-            .rows
-            .iter()
-            .find(|r| matches!(&r.cells.first().map(|c| &c.field), Some(Field::SchemaName(BodyLoc::Response(_), p)) if p.len()==2))
-            .unwrap();
-        assert!(!nested.cells[0].value.contains('├') && !nested.cells[0].value.contains('└'));
-        assert!(nested.prefix.contains('└') || nested.prefix.contains('├'));
     }
 }

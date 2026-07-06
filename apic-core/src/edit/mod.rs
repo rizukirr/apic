@@ -14,7 +14,4 @@ pub mod model;
 
 pub use action::{EditAction, apply};
 pub use address::{BodyLoc, Field};
-pub use model::{
-    EditBody, EditHeader, EditModel, EditQuery, EditResponse, EditSchema, example_from_schema,
-    schema_from_example,
-};
+pub use model::{EditBody, EditHeader, EditModel, EditQuery, EditResponse};

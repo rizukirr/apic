@@ -129,8 +129,6 @@ fn build_contract(raw: RawRequest) -> JsonContent {
 
     let request = raw.body.as_deref().and_then(|text| {
         body_example(Some(text)).map(|example| RequestBody {
-            dtype: "object".to_string(),
-            schema: None,
             example: Some(example),
         })
     });
@@ -142,8 +140,6 @@ fn build_contract(raw: RawRequest) -> JsonContent {
             code,
             description: status,
             headers: Vec::new(),
-            dtype: "object".to_string(),
-            schema: Vec::new(),
             example: body_example(body.as_deref()),
         })
         .collect();

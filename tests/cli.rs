@@ -341,49 +341,7 @@ fn list_defaults_to_relative_paths() {
 }
 
 #[test]
-fn read_renders_accept_column_for_multipart_file_fields() {
-    let dir = init_project("multipart");
-    let contract = r#"{
-        "name": "upload-avatar",
-        "method": "POST",
-        "url": "https://api.example.com/user/avatar",
-        "headers": [
-            { "name": "Content-Type", "value": "multipart/form-data" }
-        ],
-        "request": {
-            "schema": [
-                { "name": "avatar", "type": "file", "default": null,
-                  "description": "Avatar image", "required": true,
-                  "accept": "image/png, image/jpeg" },
-                { "name": "caption", "type": "string", "default": null,
-                  "description": "Optional caption", "required": false }
-            ]
-        },
-        "responses": []
-    }"#;
-    fs::write(dir.join("contracts/upload.json"), contract).unwrap();
-
-    apic(&dir)
-        .args(["read", "-f", "upload"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("ACCEPT"))
-        .stdout(predicate::str::contains("image/png, image/jpeg"));
-
-    // Contracts without accept fields keep the four-column table.
-    apic(&dir)
-        .args(["create", "--editor", "true", "-f", "plain.json"])
-        .assert()
-        .success();
-    apic(&dir)
-        .args(["read", "-f", "plain"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("ACCEPT").not());
-}
-
-#[test]
-fn read_example_shows_raw_json_payloads() {
+fn read_shows_raw_json_body_examples() {
     let dir = init_project("example_view");
     let contract = r#"{
         "name": "login",
@@ -391,77 +349,24 @@ fn read_example_shows_raw_json_payloads() {
         "url": "https://api.example.com/auth/login",
         "headers": [],
         "request": {
-            "schema": [
-                { "name": "username", "type": "string", "default": null,
-                  "description": "Username", "required": true }
-            ],
             "example": { "username": "rizukirr", "password": "123qweA@" }
         },
         "responses": [
             { "code": 200, "description": "ok",
               "example": { "status": 200, "message": "welcome" } },
-            { "code": 401, "description": "denied",
-              "schema": [
-                  { "name": "status", "type": "int", "default": null,
-                    "description": "Status", "required": true, "properties": null }
-              ] }
+            { "code": 401, "description": "denied" }
         ]
     }"#;
     fs::write(dir.join("contracts/login.json"), contract).unwrap();
 
-    // Default view renders the schema table with the example shown beneath
-    // it, labeled, so structure and payload stay adjacent.
+    // A body renders as its raw JSON example; a response without one says so.
     apic(&dir)
         .args(["read", "-f", "login"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("NAME")) // schema table header
-        .stdout(predicate::str::contains("Example:"))
         .stdout(predicate::str::contains("\"password\": \"123qweA@\""))
-        // Sections without an example get no note in the default view.
-        .stdout(predicate::str::contains("(no example provided)").not());
-
-    // --example shows raw JSON payloads only; a response without one says so.
-    apic(&dir)
-        .args(["read", "-f", "login", "--example"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("\"username\": \"rizukirr\""))
         .stdout(predicate::str::contains("\"message\": \"welcome\""))
         .stdout(predicate::str::contains("(no example provided)"));
-}
-
-#[test]
-fn read_example_only_contract_shows_none_by_default() {
-    let dir = init_project("example_only");
-    let contract = r#"{
-        "name": "ping",
-        "method": "GET",
-        "url": "https://api.example.com/ping",
-        "headers": [],
-        "request": { "example": { "probe": true } },
-        "responses": [
-            { "code": 200, "description": "pong", "example": { "pong": true } }
-        ]
-    }"#;
-    fs::write(dir.join("contracts/ping.json"), contract).unwrap();
-
-    // With no schema, the default view shows `(none)` and does not fall back to
-    // the examples — those are reachable via --example.
-    apic(&dir)
-        .args(["read", "-f", "ping"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("(none)"))
-        .stdout(predicate::str::contains("\"probe\": true").not())
-        .stdout(predicate::str::contains("\"pong\": true").not());
-
-    apic(&dir)
-        .args(["read", "-f", "ping", "--example"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("\"probe\": true"))
-        .stdout(predicate::str::contains("\"pong\": true"));
 }
 
 #[test]
