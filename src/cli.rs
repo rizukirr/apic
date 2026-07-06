@@ -215,9 +215,9 @@ enum Commands {
     /// one JSON contract per request, mirroring the collection's folder nesting.
     /// Files are written under `--destination`, resolved within the configured
     /// working directory; when omitted, the working directory itself is used.
-    /// `..` escapes and absolute paths elsewhere are rejected, and existing
-    /// files are never overwritten. Requires an initialized apic project
-    /// (`apic init`).
+    /// `..` escapes and absolute paths elsewhere are rejected. An existing
+    /// contract is left untouched unless `--force` is passed. Requires an
+    /// initialized apic project (`apic init`).
     Convert {
         /// Path to the Postman collection JSON file to import.
         #[arg(long, value_name = "FILE")]
@@ -228,6 +228,10 @@ enum Commands {
         /// directory from `.apic/config.toml`.
         #[arg(long, value_name = "DIR")]
         destination: Option<String>,
+
+        /// Overwrite contracts that already exist instead of erroring.
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -260,7 +264,7 @@ fn init_cmd(working_dir: Option<&str>) -> Result<(), String> {
             println!("Successfully initialized");
         }
         InitOutcome::TemplateSeeded => {
-            println!("Already initialized; created the missing template")
+            println!("Already initialized, created the missing template")
         }
     }
     Ok(())
@@ -467,9 +471,9 @@ fn select_create_template(
 fn no_template_error(name: &str, templates: &[PathBuf], root: &Path) -> String {
     let mut msg = format!("no template matching '{}'", sanitize(name));
     if templates.is_empty() {
-        msg.push_str("; no templates in .apic/template/");
+        msg.push_str(", no templates in .apic/template/");
     } else {
-        msg.push_str("; available:\n");
+        msg.push_str(", available:\n");
         for t in templates {
             msg.push_str(&format!("  {}\n", rel_display(t, root)));
         }
@@ -772,7 +776,7 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
                 if issues.is_empty() {
                     Ok(())
                 } else {
-                    Err(issues.join("; "))
+                    Err(issues.join(", "))
                 }
             });
 
@@ -804,13 +808,13 @@ fn validate_template_cmd() -> Result<(), String> {
     let apic_dir = match apic_core::config::find_apic_dir() {
         Some(dir) => dir,
         None => {
-            println!("No project template found; create will use the built-in template");
+            println!("No project template found, create will use the built-in template");
             return Ok(());
         }
     };
     let templates = apic_core::template::list_templates(&apic_dir);
     if templates.is_empty() {
-        println!("No project template found; create will use the built-in template");
+        println!("No project template found, create will use the built-in template");
         return Ok(());
     }
 
@@ -1108,13 +1112,13 @@ fn remove_template_cmd(name: &str) -> Result<(), String> {
 
 /// Handles `apic convert`: resolve the destination under the working directory,
 /// then parse the Postman collection and write contracts.
-fn convert_cmd(postman: &Path, destination: Option<&str>) -> Result<(), String> {
+fn convert_cmd(postman: &Path, destination: Option<&str>, force: bool) -> Result<(), String> {
     let root = read_config_file().and_then(|conf| conf.get_root_dir())?;
     let dest_base = match destination {
         Some(dir) => confine_to_dir(&root, Path::new(dir))?,
         None => root,
     };
-    let outcome = apic_core::convert::run(postman, &dest_base)?;
+    let outcome = apic_core::convert::run(postman, &dest_base, force)?;
     for warning in &outcome.warnings {
         eprintln!("warning: {warning}");
     }
@@ -1294,7 +1298,8 @@ pub(crate) fn run() {
         Commands::Convert {
             postman,
             destination,
-        } => convert_cmd(&postman, destination.as_deref()),
+            force,
+        } => convert_cmd(&postman, destination.as_deref(), force),
     };
 
     if let Err(err) = result {

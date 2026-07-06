@@ -133,9 +133,9 @@ impl Printer {
                 b'4' | b'5' => code.red().bold(),
                 _ => code.yellow().bold(),
             };
-            println!(" {} {code} — {description}", "RESPONSE".bold());
+            println!(" {} {code}, {description}", "RESPONSE".bold());
         } else {
-            println!(" RESPONSE {code} — {description}");
+            println!(" RESPONSE {code}, {description}");
         }
     }
 

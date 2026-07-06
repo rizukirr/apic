@@ -117,7 +117,7 @@ pub fn install_desktop_entry() -> Result<String, String> {
 /// Non-Linux: launcher integration is handled by platform package managers.
 #[cfg(not(target_os = "linux"))]
 pub fn install_desktop_entry() -> Result<String, String> {
-    Err("--desktop-entry is Linux-only. On macOS install via Homebrew (or use the .app from Releases); on Windows use winget (or the .exe from Releases).".to_string())
+    Err("--desktop-entry is Linux-only. On macOS install via Homebrew (or use the .app from Releases), on Windows use winget (or the .exe from Releases).".to_string())
 }
 
 #[cfg(all(test, target_os = "linux"))]

@@ -154,7 +154,7 @@ fn resolve_at(apic_dir: &Path) -> Result<(String, Vec<String>), String> {
     if let Err(err) = seed_if_missing(apic_dir) {
         return Ok((
             DEFAULT.to_string(),
-            vec![format!("{err}; using the built-in template")],
+            vec![format!("{err}, using the built-in template")],
         ));
     }
     resolve_contract_from(&resolve_path(apic_dir))
@@ -173,7 +173,7 @@ pub fn resolve_contract_from(path: &Path) -> Result<(String, Vec<String>), Strin
             return Ok((
                 DEFAULT.to_string(),
                 vec![format!(
-                    "failed to read {}: {err}; using the built-in template",
+                    "failed to read {}: {err}, using the built-in template",
                     path.display()
                 )],
             ));
