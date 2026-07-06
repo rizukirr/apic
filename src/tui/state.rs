@@ -677,14 +677,21 @@ pub(crate) fn handle_confirm_delete(
     match key.code {
         KeyCode::Char('y') => {
             if let Mode::ConfirmDelete(f) = state.mode.clone() {
-                // An example body is cleared in place; every other field is a row.
-                if matches!(f, Field::BodyExample(_)) {
-                    if clear_example(model, &f) {
+                // Deleting a body example removes what owns it (the rule: no JSON,
+                // no status) — the whole response, or the request body; every
+                // other field is a table row.
+                match &f {
+                    Field::BodyExample(BodyLoc::Response(i)) => {
+                        remove_response(state, model, *i);
+                    }
+                    Field::BodyExample(BodyLoc::Request) => {
+                        model.request = None;
                         state.dirty = true;
                         state.refresh(model);
                     }
-                } else {
-                    delete_row(state, model, &f);
+                    _ => {
+                        delete_row(state, model, &f);
+                    }
                 }
             }
             state.mode = Mode::Normal;
@@ -695,22 +702,6 @@ pub(crate) fn handle_confirm_delete(
             Action::None
         }
         _ => Action::None,
-    }
-}
-
-/// Clears a request/response example body. Returns `false` when the field is not
-/// a body example or the body is missing.
-fn clear_example(model: &mut EditModel, field: &Field) -> bool {
-    match field {
-        // A request body is only its example, so clearing it removes the body
-        // entirely and the section falls back to `(none)`.
-        Field::BodyExample(BodyLoc::Request) => model.request.take().is_some(),
-        Field::BodyExample(BodyLoc::Response(i)) => model
-            .responses
-            .get_mut(*i)
-            .map(|r| r.example.clear())
-            .is_some(),
-        _ => false,
     }
 }
 
@@ -890,17 +881,23 @@ mod tests {
     }
 
     #[test]
-    fn d_on_the_example_row_clears_the_body_not_the_response() {
+    fn d_on_the_example_row_removes_the_whole_response() {
+        // The rule: no JSON, no status. Deleting a response's example deletes the
+        // response itself.
         let mut m = model();
         m.responses[0].example = r#"{"status":200}"#.to_string();
         let mut s = UiState::new(&m);
-        assert!(!m.responses[0].example.trim().is_empty());
-        goto(&mut s, |f| matches!(f, Field::BodyExample(_)));
+        goto(&mut s, |f| {
+            matches!(f, Field::BodyExample(BodyLoc::Response(_)))
+        });
         handle_normal(&mut s, &mut m, key(KeyCode::Char('d')));
         assert!(matches!(s.mode, Mode::ConfirmDelete(_)));
         handle_confirm_delete(&mut s, &mut m, key(KeyCode::Char('y')));
-        assert!(m.responses[0].example.is_empty(), "the example is cleared");
-        assert_eq!(m.responses.len(), 1, "the response itself stays");
+        assert_eq!(
+            m.responses.len(),
+            0,
+            "the response is removed with its JSON"
+        );
     }
 
     #[test]
