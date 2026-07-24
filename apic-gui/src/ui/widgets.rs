@@ -42,7 +42,7 @@ pub(crate) fn bordered_input_colored(
             }
             ui.add(
                 egui::TextEdit::singleline(buf)
-                    .frame(false)
+                    .frame(egui::Frame::NONE)
                     .hint_text(hint)
                     .text_color(if error { RED } else { TEXT })
                     .desired_width(if fill { f32::INFINITY } else { width }),
@@ -214,7 +214,7 @@ pub(crate) fn json_editor(ui: &mut egui::Ui, buf: &mut String, editing: bool) {
                 ui.add(
                     egui::TextEdit::multiline(text)
                         .code_editor()
-                        .frame(false)
+                        .frame(egui::Frame::NONE)
                         .interactive(editing)
                         .lock_focus(editing)
                         .layouter(&mut layouter)
@@ -267,7 +267,7 @@ pub(crate) fn header_label(ui: &mut egui::Ui, text: &str) {
 pub(crate) fn tcell_edit(ui: &mut egui::Ui, buf: &mut String, hint: &str) -> egui::Response {
     ui.add(
         egui::TextEdit::singleline(buf)
-            .frame(false)
+            .frame(egui::Frame::NONE)
             .hint_text(hint)
             .text_color(TEXT)
             .desired_width(f32::INFINITY),
