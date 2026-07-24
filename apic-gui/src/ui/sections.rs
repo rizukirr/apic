@@ -33,7 +33,7 @@ pub(crate) fn endpoint_name(ui: &mut egui::Ui, model: &mut EditModel, editing: b
     if editing {
         ui.add(
             egui::TextEdit::singleline(&mut model.name)
-                .frame(false)
+                .frame(egui::Frame::NONE)
                 .hint_text("endpoint name")
                 .font(egui::TextStyle::Heading)
                 .text_color(TEXT)
@@ -50,7 +50,7 @@ pub(crate) fn endpoint_description(ui: &mut egui::Ui, model: &mut EditModel, edi
     if editing {
         ui.add(
             egui::TextEdit::multiline(&mut model.description)
-                .frame(false)
+                .frame(egui::Frame::NONE)
                 .hint_text("description")
                 .text_color(DIM)
                 .desired_rows(2)
@@ -93,7 +93,7 @@ pub(crate) fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: 
             if editing {
                 ui.add(
                     egui::TextEdit::singleline(&mut model.url)
-                        .frame(false)
+                        .frame(egui::Frame::NONE)
                         .hint_text("https://host/path/{id}")
                         .text_color(CYAN)
                         .desired_width(f32::INFINITY),
@@ -431,7 +431,7 @@ pub(crate) fn response_code_selector(
                         ui.add(
                             egui::TextEdit::singleline(&mut model.responses[i].code)
                                 .id(code_edit_id)
-                                .frame(false)
+                                .frame(egui::Frame::NONE)
                                 .desired_width(code_w + 10.0)
                                 .text_color(color),
                         );
@@ -463,7 +463,7 @@ pub(crate) fn response_code_selector(
                         };
                         ui.add(
                             egui::TextEdit::singleline(&mut model.responses[i].description)
-                                .frame(false)
+                                .frame(egui::Frame::NONE)
                                 .desired_width(title_w + 18.0)
                                 .hint_text("title")
                                 .text_color(DIM),

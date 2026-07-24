@@ -114,6 +114,7 @@ pub(crate) fn highlight_json_cached(
         mem.caches
             .cache::<JsonHighlightCache>()
             .get((text, font_id))
+            .clone()
     })
 }
 

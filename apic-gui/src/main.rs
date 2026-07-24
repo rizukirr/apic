@@ -624,7 +624,10 @@ impl App {
         let mut create = false;
         let mut cancel = false;
         let modal = egui::Modal::new(egui::Id::new("new_template_modal"))
-            .frame(egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16)))
+            .frame(
+                egui::Frame::window(&ctx.style_of(ctx.theme()))
+                    .inner_margin(egui::Margin::same(16)),
+            )
             .show(ctx, |ui| {
                 ui.set_min_width(320.0);
                 ui.vertical_centered(|ui| {
@@ -758,7 +761,7 @@ impl App {
         let mut create = false;
         let mut cancel = false;
         let modal = egui::Modal::new(egui::Id::new("new_request_modal"))
-            .frame(egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16)))
+            .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
             .show(ctx, |ui| {
                 ui.set_min_width(320.0);
                 ui.vertical_centered(|ui| {
@@ -886,7 +889,10 @@ impl App {
         let mut confirm = false;
         let mut cancel = false;
         let modal = egui::Modal::new(egui::Id::new("delete_modal"))
-            .frame(egui::Frame::window(&ctx.style()).inner_margin(egui::Margin::same(16)))
+            .frame(
+                egui::Frame::window(&ctx.style_of(ctx.theme()))
+                    .inner_margin(egui::Margin::same(16)),
+            )
             .show(ctx, |ui| {
                 ui.set_min_width(320.0);
                 ui.vertical_centered(|ui| {
@@ -996,11 +1002,16 @@ fn display_location(path: &Path) -> String {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.poll_dialog(ctx);
-        let top = self.top_bar(ctx);
-        self.bottom_bar(ctx);
-        let side = self.sidebar(ctx);
+    // eframe 0.35 replaced `update(ctx)` with `ui(ui)`: the root now hands us a
+    // `Ui` (no margin/background) instead of a `Context`. Panels attach to that
+    // `ui`; the file dialogs and modals still work off the `Context`, reached
+    // via `ui.ctx()`.
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.poll_dialog(&ctx);
+        let top = self.top_bar(ui);
+        self.bottom_bar(ui);
+        let side = self.sidebar(ui);
         match top.or(side) {
             Some(SidebarAction::LoadContract(i)) => {
                 let invalid = self
@@ -1016,9 +1027,9 @@ impl eframe::App for App {
                 }
             }
             Some(SidebarAction::LoadTemplate(i)) => self.load_template(i),
-            Some(SidebarAction::OpenProject) => self.open_project(ctx),
-            Some(SidebarAction::NewProject) => self.new_project(ctx),
-            Some(SidebarAction::ImportPostman) => self.import_postman(ctx),
+            Some(SidebarAction::OpenProject) => self.open_project(&ctx),
+            Some(SidebarAction::NewProject) => self.new_project(&ctx),
+            Some(SidebarAction::ImportPostman) => self.import_postman(&ctx),
             Some(SidebarAction::NewTemplate) => {
                 self.new_template = Some(String::new());
                 ctx.data_mut(|d| {
@@ -1040,20 +1051,20 @@ impl eframe::App for App {
             }
             None => {}
         }
-        self.central(ctx);
-        self.new_template_dialog(ctx);
-        self.new_request_dialog(ctx);
-        self.delete_dialog(ctx);
-        self.open_blocked_dialog(ctx);
+        self.central(ui);
+        self.new_template_dialog(&ctx);
+        self.new_request_dialog(&ctx);
+        self.delete_dialog(&ctx);
+        self.open_blocked_dialog(&ctx);
     }
 }
 
 impl App {
     /// Top header: title, the Import menu, and the search box. Returns an action
     /// when Import is chosen.
-    fn top_bar(&mut self, ctx: &egui::Context) -> Option<SidebarAction> {
+    fn top_bar(&mut self, ui: &mut egui::Ui) -> Option<SidebarAction> {
         let mut action = None;
-        egui::TopBottomPanel::top("nav").show(ctx, |ui| {
+        egui::Panel::top("nav").show(ui, |ui| {
             ui.add_space(SPACE_EXTRA_SMALL);
             ui.horizontal(|ui| {
                 let row_h = 26.0;
@@ -1093,8 +1104,8 @@ impl App {
     }
 
     /// Bottom bar: the loaded contract's location (home-relative), nothing else.
-    fn bottom_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+    fn bottom_bar(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(&self.status).color(DIM));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1110,7 +1121,7 @@ impl App {
 
     /// Left sidebar: a TEMPLATES section on top, then the contract picker
     /// (folder tree, method-badged, filtered by search).
-    fn sidebar(&mut self, ctx: &egui::Context) -> Option<SidebarAction> {
+    fn sidebar(&mut self, ui: &mut egui::Ui) -> Option<SidebarAction> {
         // When collapsed, skip building/showing the panel entirely so the
         // CentralPanel reclaims the full width.
         if !self.sidebar_open {
@@ -1128,14 +1139,14 @@ impl App {
         let templates: Vec<(String, PathBuf)> = self.templates.clone();
         let mut action = None;
         let mut to_contract = None;
-        egui::SidePanel::left("contracts")
+        egui::Panel::left("contracts")
             .resizable(true)
-            .default_width(240.0)
-            .min_width(100.0)
-            .show(ctx, |ui| {
-                egui::TopBottomPanel::bottom("new_request_bar")
+            .default_size(240.0)
+            .min_size(100.0)
+            .show(ui, |ui| {
+                egui::Panel::bottom("new_request_bar")
                     .show_separator_line(false)
-                    .show_inside(ui, |ui| {
+                    .show(ui, |ui| {
                         ui.add_space(SPACE_EXTRA_SMALL);
                         let button = egui::Button::new(RichText::new("[ NEW REQUEST ]").color(BG))
                             .fill(GREEN);
@@ -1229,7 +1240,7 @@ impl App {
     }
 
     /// The central viewer/editor for the loaded contract.
-    fn central(&mut self, ctx: &egui::Context) {
+    fn central(&mut self, ui: &mut egui::Ui) {
         let no_project = self.project_root.is_none();
         let mut promote: Option<(PathBuf, String)> = None;
         let mut toggle_edit = false;
@@ -1246,7 +1257,7 @@ impl App {
             original_model,
             ..
         } = self;
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             if no_project {
                 ui.add_space(40.0);
                 ui.vertical_centered(|ui| {
@@ -1694,11 +1705,14 @@ mod tests {
             };
             let mut delays = Vec::new();
             for _ in 0..frames {
-                let out = ctx.run(input.clone(), |ctx| {
-                    app.top_bar(ctx);
-                    app.bottom_bar(ctx);
-                    app.sidebar(ctx);
-                    app.central(ctx);
+                // `run_ui` hands the closure a root `Ui`, exactly like eframe's
+                // `App::ui` (egui 0.35 replaced the old `Context::run`, which
+                // passed a `Context`).
+                let out = ctx.run_ui(input.clone(), |ui| {
+                    app.top_bar(ui);
+                    app.bottom_bar(ui);
+                    app.sidebar(ui);
+                    app.central(ui);
                 });
                 delays.push(
                     out.viewport_output
