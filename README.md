@@ -45,7 +45,7 @@ Mainstream API tooling gates collaboration behind paywalls, charging per team me
 cargo install apic-cli
 ```
 
-**From source** (requires a Rust toolchain, 1.88+):
+**From source** (requires a Rust toolchain, 1.97+):
 
 ```bash
 git clone https://github.com/rizukirr/apic

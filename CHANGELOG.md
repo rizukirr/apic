@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-30
+
+A maintenance release on top of 0.4.0. No contract format changes and no new
+commands, so 0.4.0 projects work as they are. The bulk of the work is the
+eframe/egui 0.35 upgrade behind the desktop GUI, a dependency refresh across the
+workspace, and a higher minimum supported Rust version.
+
+### Changed
+
+- **Desktop GUI now builds on eframe/egui 0.35** (up from 0.33.3), including the
+  Windows wgpu renderer feature. The upgrade required following three breaking
+  changes in egui:
+  - `eframe::App` no longer exposes `update(&mut self, ctx, frame)`. The GUI
+    implements `ui(&mut self, ui, frame)` instead, so the root of the app is a
+    `Ui` with no margin or background rather than a `Context`. Panels attach to
+    that `Ui`, while the file dialogs and modals keep working off the `Context`
+    reached through `ui.ctx()`.
+  - `TopBottomPanel` and `SidePanel` are replaced by the unified `egui::Panel`
+    (`Panel::top`, `Panel::bottom`, `Panel::left`), and the sidebar's
+    `default_width`/`min_width` become `default_size`/`min_size`. Nested panels
+    use `show` rather than `show_inside`.
+  - `TextEdit::frame(bool)` is replaced by `TextEdit::frame(egui::Frame)`, so
+    every frameless inline input now passes `egui::Frame::NONE`.
+- **The neon theme is installed for every egui theme variant.** egui 0.35 dropped
+  the single global `Context::set_style` in favour of per-theme styles, so
+  `apply_theme` uses `all_styles_mut`. The dark monospace palette holds no matter
+  what the host OS reports as its light/dark preference.
+- **Minimum supported Rust version raised.** The `apic-cli` bin requires Rust
+  1.97, and `apic-core` and `apic-gui` require 1.92. The previous floor across
+  all three crates was 1.88.
+- **Dependencies refreshed and pinned to the patch level.** `clap` 4.6.1 to
+  4.6.4, `serde` 1.0.228 to 1.0.229, `serde_json` 1.0.150 to 1.0.151, plus
+  explicit patch floors for `libc` (0.2.189), `ratatui` (0.30.2), and
+  `ratatui-textarea` (0.9.2) that were previously loose minor requirements.
+- CI and release workflows use `actions/checkout@v5` instead of `v4`, and the
+  runner images were refreshed.
+
+### Fixed
+
+- `egui_extras`' frame cache now returns an owned value in the JSON syntax
+  highlighter, matching the 0.35 API and keeping the cached layout job valid for
+  the rest of the frame.
+- The GUI frame-timing test drives the app through `Context::run_ui` instead of
+  the removed `Context::run`, so it exercises the same root `Ui` path that
+  eframe hands the real app.
+
+### Documentation
+
+- `apic_core::fuzzy::fuzzy_find`'s example is a real, compiled doctest rather
+  than an ` ```ignore ` block, so the documented usage is verified on every test
+  run.
+- Rewrote the Flatpak packaging guidance in `packaging/flatpak/README.md` to
+  match the current update flow.
+
+### Packaging
+
+- The AUR `apic-bin` PKGBUILD and `.SRCINFO`, and the Copr `apic.spec`, were
+  synced to the 0.4.0 artifacts and checksums.
+
 ## [0.4.0] - 2026-07-06
 
 A large release: a simplified, breaking contract format plus full redesigns of
@@ -317,7 +376,8 @@ Initial beta release.
 - CI (fmt, clippy, build, test) and unit + end-to-end test suites.
 - MIT license.
 
-[Unreleased]: https://github.com/rizukirr/apic/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/rizukirr/apic/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/rizukirr/apic/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/rizukirr/apic/compare/v0.3.6...v0.4.0
 [0.2.4]: https://github.com/rizukirr/apic/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/rizukirr/apic/compare/v0.2.2...v0.2.3
