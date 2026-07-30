@@ -1,5 +1,5 @@
 Name:           apic-cli
-Version:        0.4.0
+Version:        0.4.1
 Release:        1%{?dist}
 Summary:        Git-friendly API contracts, CLI/TUI (prebuilt)
 License:        MIT
@@ -67,6 +67,11 @@ cp -p %{SOURCE4} %{_builddir}/LICENSE
 %{_datadir}/icons/hicolor/256x256/apps/apic-gui.png
 
 %changelog
+* Thu Jul 30 2026 Rizki Rakasiwi <rizkirr.xyz@gmail.com> - 0.4.1-1
+- Maintenance release. The desktop GUI moves to eframe/egui 0.35, dependencies
+  are refreshed across the workspace, and the minimum supported Rust version is
+  now 1.97. No contract format changes.
+
 * Mon Jul 06 2026 Rizki Rakasiwi <rizkirr.xyz@gmail.com> - 0.4.0-1
 - Update to apic 0.4.0.
 
