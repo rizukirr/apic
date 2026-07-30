@@ -34,9 +34,10 @@ workspace, and a higher minimum supported Rust version.
   the single global `Context::set_style` in favour of per-theme styles, so
   `apply_theme` uses `all_styles_mut`. The dark monospace palette holds no matter
   what the host OS reports as its light/dark preference.
-- **Minimum supported Rust version raised.** The `apic-cli` bin requires Rust
-  1.97, and `apic-core` and `apic-gui` require 1.92. The previous floor across
-  all three crates was 1.88.
+- **Minimum supported Rust version raised to 1.97**, declared uniformly across
+  `apic-cli`, `apic-core`, and `apic-gui`. The previous floor across all three
+  crates was 1.88. One version for the whole workspace means any toolchain that
+  builds one crate builds all of them.
 - **Dependencies refreshed and pinned to the patch level.** `clap` 4.6.1 to
   4.6.4, `serde` 1.0.228 to 1.0.229, `serde_json` 1.0.150 to 1.0.151, plus
   explicit patch floors for `libc` (0.2.189), `ratatui` (0.30.2), and

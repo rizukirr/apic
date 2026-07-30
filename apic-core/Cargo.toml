@@ -2,7 +2,7 @@
 name = "apic-core"
 version = "0.4.1"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.97"
 authors = ["Rizki Rakasiwi"]
 license = "MIT"
 description = "Core contract model and logic for apic (parsing, validation, templates, convert)."
