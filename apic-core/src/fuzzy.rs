@@ -141,7 +141,9 @@ fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
+/// use apic_core::fuzzy::fuzzy_find;
+///
 /// let items = vec!["src/main.rs".to_string(), "Cargo.toml".to_string()];
 /// let hits = fuzzy_find("main", &items).unwrap();
 /// assert_eq!(hits[0].0, "src/main.rs");
