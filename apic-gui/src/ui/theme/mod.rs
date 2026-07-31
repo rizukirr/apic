@@ -6,9 +6,11 @@
 
 pub(crate) mod colors;
 pub(crate) mod spacing;
+pub(crate) mod typography;
 
 pub(crate) use colors::*;
 pub(crate) use spacing::*;
+pub(crate) use typography::*;
 
 use eframe::egui;
 use egui::{Color32, RichText, Stroke};

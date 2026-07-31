@@ -19,12 +19,13 @@ mod desktop;
 mod settings;
 mod ui;
 use settings::Settings;
+use ui::components::{bordered_input, text_button};
+use ui::focus::take_pending_focus;
 use ui::sections::{
     endpoint_description, endpoint_name, headers, method_url_row, query_section, request_body,
     response_body, response_code_selector, response_headers,
 };
 use ui::theme::*;
-use ui::widgets::{bordered_input, take_pending_focus, text_button};
 
 // egui temp-data keys for the "focus the input when the dialog opens" markers,
 // claimed once via `take_pending_focus` the first frame each modal renders.
