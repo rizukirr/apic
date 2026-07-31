@@ -21,6 +21,7 @@ mod features;
 mod settings;
 mod ui;
 use app::state::{DialogKind, ShellState};
+use features::contracts::state::{ContractsState, DeleteTarget, Entry, MainTab, Repair, RespTab};
 use features::contracts::view::{
     endpoint_description, endpoint_name, headers, method_color, method_url_row, query_section,
     request_body, response_body, response_code_selector, response_headers,
@@ -75,28 +76,6 @@ fn load_icon() -> egui::IconData {
         .expect("bundled icon.png is a valid PNG")
 }
 
-/// A discovered contract plus the lightweight summary shown in the sidebar.
-struct Entry {
-    path: PathBuf,
-    rel: String,
-    method: String,
-
-    /// Validation error when this contract is invalid; `None` when it is valid.
-    error: Option<String>,
-}
-
-/// In-progress raw-JSON repair of an invalid contract.
-struct Repair {
-    /// Index into `entries` of the file being repaired.
-    index: usize,
-
-    /// Editable raw file text.
-    buffer: String,
-
-    /// Current validation error for `buffer` (empty once valid).
-    error: String,
-}
-
 /// A one-shot action requested by the header or sidebar this frame.
 enum SidebarAction {
     LoadContract(usize),
@@ -118,112 +97,30 @@ enum SidebarAction {
     ToggleSidebar,
 }
 
-/// A thing the user asked to delete (pending confirmation).
-#[derive(Clone)]
-enum DeleteTarget {
-    /// A contract or folder, by path relative to the contracts root.
-    Contract { rel: String, is_dir: bool },
-
-    /// A template file in `.apic/template/`, by display name and absolute path.
-    Template { name: String, path: PathBuf },
-}
-
 /// Whole-app state.
+///
+/// One field per feature plus the in-flight file dialog. A new feature adds a
+/// field here and a match arm in the action dispatch; it does not touch any
+/// other feature's state.
 struct App {
     /// Application chrome and the active project location, shared by every
     /// feature.
     shell: ShellState,
 
-    entries: Vec<Entry>,
-    selected: Option<usize>,
-    model: Option<EditModel>,
-    path: Option<PathBuf>,
-    editing: bool,
-    search: String,
-    resp_tab: usize,
-
-    /// The active top-level editor tab; reset to [`MainTab::Overview`] on load.
-    main_tab: MainTab,
-
-    /// The active sub-tab inside the Response tab; reset to [`RespTab::Body`].
-    resp_tab_view: RespTab,
-
-    /// When `Some`, a modal listing contracts that must be fixed before the
-    /// picked non-project folder can be opened/initialized.
-    open_blocked: Option<Vec<(PathBuf, String)>>,
-
-    /// Raw-JSON repair editor state for an invalid contract; `None` when not
-    /// repairing.
-    repair: Option<Repair>,
-
-    /// Project templates: (display name, path) from `.apic/template/`.
-    templates: Vec<(String, PathBuf)>,
-
-    /// Index into `templates` when a template is being previewed.
-    selected_template: Option<usize>,
-
-    /// When `Some`, the "new template" dialog is open with this name buffer.
-    new_template: Option<String>,
-
-    /// When `Some`, the "new request" dialog is open with this path buffer.
-    new_request: Option<String>,
-
-    /// Index into `templates` of the template to seed a new request from, used
-    /// only when more than one template exists (the dialog shows a chooser).
-    new_request_seed: usize,
-
-    /// When `Some`, the delete-confirmation dialog is open for this target.
-    pending_delete: Option<DeleteTarget>,
+    /// Everything the contracts feature owns.
+    contracts: ContractsState,
 
     /// In-flight native file dialog, run on a background thread so the portal
     /// call never blocks the UI, plus the action to perform on its result.
     pending_dialog: Option<(DialogKind, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
-
-    /// Snapshot of `model` taken when edit mode is entered, so [ CANCEL ] can
-    /// restore the pre-edit state. `None` whenever not editing.
-    original_model: Option<EditModel>,
-}
-
-/// The active tab in the left pane. Response lives permanently in the right
-/// pane, so it is not a variant here.
-#[derive(Clone, Copy, PartialEq)]
-enum MainTab {
-    Overview,
-    Headers,
-    Query,
-    Request,
-}
-
-/// The active sub-tab inside the Response tab.
-#[derive(Clone, Copy, PartialEq)]
-enum RespTab {
-    Body,
-    Headers,
 }
 
 impl App {
     fn new() -> Self {
         let mut app = App {
             shell: ShellState::default(),
-            entries: Vec::new(),
-            selected: None,
-            model: None,
-            path: None,
-            editing: false,
-            search: String::new(),
-            resp_tab: 0,
-            main_tab: MainTab::Overview,
-            resp_tab_view: RespTab::Body,
-            open_blocked: None,
-            repair: None,
-            templates: Vec::new(),
-            selected_template: None,
-            new_template: None,
-            new_request: None,
-            new_request_seed: 0,
-            pending_delete: None,
+            contracts: ContractsState::default(),
             pending_dialog: None,
-            original_model: None,
         };
         let settings = Settings::load();
         if let Some(root) = settings.last_project
@@ -234,6 +131,7 @@ impl App {
         app.reload_project();
         if let Ok(sub) = std::env::var("APIC_AUTOEDIT")
             && let Some(i) = app
+                .contracts
                 .entries
                 .iter()
                 .position(|e| e.error.is_none() && e.rel.contains(&sub))
@@ -251,14 +149,14 @@ impl App {
         let Some(root) = self.shell.project_root.clone() else {
             self.shell.apic_dir = None;
             self.shell.root = None;
-            self.templates.clear();
-            self.entries.clear();
+            self.contracts.templates.clear();
+            self.contracts.entries.clear();
             self.shell.status = "No project open. Use Open or New.".into();
             return;
         };
 
         self.shell.apic_dir = Some(root.join(".apic"));
-        self.templates = self
+        self.contracts.templates = self
             .shell
             .apic_dir
             .as_deref()
@@ -285,7 +183,7 @@ impl App {
                 let mut paths =
                     apic_core::json::scan_json_file(&contracts_root, true).unwrap_or_default();
                 paths.sort();
-                self.entries = paths
+                self.contracts.entries = paths
                     .into_iter()
                     .filter(|p| !p.components().any(|c| c.as_os_str() == ".apic"))
                     .map(|path| {
@@ -311,7 +209,7 @@ impl App {
             }
             Err(err) => {
                 self.shell.root = None;
-                self.entries.clear();
+                self.contracts.entries.clear();
                 self.shell.status =
                     apic_core::file::home_relative(&format!("Project error: {err}"));
             }
@@ -321,31 +219,31 @@ impl App {
     /// Enter edit mode, snapshotting the current model so the edits can be
     /// discarded on cancel.
     fn begin_edit(&mut self) {
-        self.original_model = self.model.clone();
-        self.editing = true;
+        self.contracts.original_model = self.contracts.model.clone();
+        self.contracts.editing = true;
     }
 
     /// Leave edit mode, restoring the pre-edit snapshot and discarding any edits
     /// made since [ EDIT ] was pressed.
     fn cancel_edit(&mut self) {
-        if let Some(original) = self.original_model.take() {
-            self.model = Some(original);
+        if let Some(original) = self.contracts.original_model.take() {
+            self.contracts.model = Some(original);
         }
-        self.editing = false;
+        self.contracts.editing = false;
     }
 
     /// Loads an invalid contract's raw text into the repair editor.
     fn enter_repair(&mut self, i: usize) {
-        let Some(entry) = self.entries.get(i) else {
+        let Some(entry) = self.contracts.entries.get(i) else {
             return;
         };
         let buffer = apic_core::file::read_file(&entry.path).unwrap_or_default();
         let error = entry.error.clone().unwrap_or_default();
-        self.model = None;
-        self.original_model = None;
-        self.selected = Some(i);
-        self.selected_template = None;
-        self.repair = Some(Repair {
+        self.contracts.model = None;
+        self.contracts.original_model = None;
+        self.contracts.selected = Some(i);
+        self.contracts.selected_template = None;
+        self.contracts.repair = Some(Repair {
             index: i,
             buffer,
             error,
@@ -354,7 +252,7 @@ impl App {
 
     /// Loads entry `i` into the editable model.
     fn load(&mut self, i: usize) {
-        let Some(entry) = self.entries.get(i) else {
+        let Some(entry) = self.contracts.entries.get(i) else {
             return;
         };
         let path = entry.path.clone();
@@ -364,16 +262,17 @@ impl App {
             .map(EditModel::from_contract);
         match loaded {
             Ok(model) => {
-                self.model = Some(model);
-                self.path = Some(path);
-                self.selected = Some(i);
-                self.selected_template = None;
-                self.resp_tab = 0;
-                self.main_tab = MainTab::Overview;
-                self.resp_tab_view = RespTab::Body;
-                self.editing = false;
-                self.original_model = None;
+                self.contracts.model = Some(model);
+                self.contracts.path = Some(path);
+                self.contracts.selected = Some(i);
+                self.contracts.selected_template = None;
+                self.contracts.resp_tab = 0;
+                self.contracts.main_tab = MainTab::Overview;
+                self.contracts.resp_tab_view = RespTab::Body;
+                self.contracts.editing = false;
+                self.contracts.original_model = None;
                 self.shell.status = self
+                    .contracts
                     .path
                     .as_deref()
                     .map(display_location)
@@ -389,22 +288,22 @@ impl App {
     /// (Saving a resolved template makes it a full template, every field it then
     /// contains is enforced when creating contracts from it.)
     fn load_template(&mut self, i: usize) {
-        let Some((name, path)) = self.templates.get(i).cloned() else {
+        let Some((name, path)) = self.contracts.templates.get(i).cloned() else {
             return;
         };
         match apic_core::template::resolve_contract_from(&path)
             .and_then(|(c, _w)| apic_core::json::json_get(&c, None).map_err(|e| e.to_string()))
         {
             Ok(contract) => {
-                self.model = Some(EditModel::from_contract(contract));
-                self.path = Some(path);
-                self.selected = None;
-                self.selected_template = Some(i);
-                self.resp_tab = 0;
-                self.main_tab = MainTab::Overview;
-                self.resp_tab_view = RespTab::Body;
-                self.editing = false;
-                self.original_model = None;
+                self.contracts.model = Some(EditModel::from_contract(contract));
+                self.contracts.path = Some(path);
+                self.contracts.selected = None;
+                self.contracts.selected_template = Some(i);
+                self.contracts.resp_tab = 0;
+                self.contracts.main_tab = MainTab::Overview;
+                self.contracts.resp_tab_view = RespTab::Body;
+                self.contracts.editing = false;
+                self.contracts.original_model = None;
                 self.shell.status = format!("template '{name}'");
             }
             Err(err) => self.shell.status = format!("template error: {err}"),
@@ -437,7 +336,7 @@ impl App {
                 Err(e) => self.shell.status = format!("init error: {e}"),
             }
         } else {
-            self.open_blocked = Some(failures);
+            self.contracts.open_blocked = Some(failures);
         }
     }
 
@@ -493,10 +392,10 @@ impl App {
     /// Makes `folder` the active project: reload, then persist as last project.
     fn activate_project(&mut self, folder: PathBuf) {
         self.shell.project_root = Some(folder.clone());
-        self.model = None;
-        self.selected = None;
-        self.selected_template = None;
-        self.repair = None;
+        self.contracts.model = None;
+        self.contracts.selected = None;
+        self.contracts.selected_template = None;
+        self.contracts.repair = None;
         self.reload_project();
         Settings {
             last_project: Some(folder),
@@ -592,7 +491,12 @@ impl App {
                 self.reload_project();
                 // Open the freshly created template in the central view, the same
                 // way create_request opens a new contract.
-                if let Some(i) = self.templates.iter().position(|(_, p)| *p == dest) {
+                if let Some(i) = self
+                    .contracts
+                    .templates
+                    .iter()
+                    .position(|(_, p)| *p == dest)
+                {
                     self.load_template(i);
                 }
                 self.shell.status = format!("created template '{name}'");
@@ -603,7 +507,7 @@ impl App {
 
     /// Renders the "new template" dialog when open, and applies the result.
     fn new_template_dialog(&mut self, ctx: &egui::Context) {
-        if self.new_template.is_none() {
+        if self.contracts.new_template.is_none() {
             return;
         }
         let mut create = false;
@@ -626,7 +530,7 @@ impl App {
                 ui.add_space(SPACE_SMALL);
                 ui.label(RichText::new("template name").color(DIM));
                 ui.add_space(SPACE_MEDIUM);
-                let buf = self.new_template.as_mut().expect("dialog open");
+                let buf = self.contracts.new_template.as_mut().expect("dialog open");
                 let resp = bordered_input(ui, buf, f32::INFINITY, "");
                 // Drop the caret into the input the frame the dialog opens.
                 take_pending_focus(ui, FOCUS_NEW_TEMPLATE, "open", &resp);
@@ -649,10 +553,10 @@ impl App {
                 });
             });
         if create {
-            let name = self.new_template.take().unwrap_or_default();
+            let name = self.contracts.new_template.take().unwrap_or_default();
             self.create_template(&name);
         } else if cancel || modal.should_close() {
-            self.new_template = None;
+            self.contracts.new_template = None;
         }
     }
 
@@ -720,7 +624,7 @@ impl App {
             match std::fs::write(&dest, contract) {
                 Ok(()) => {
                     self.reload_project();
-                    if let Some(i) = self.entries.iter().position(|e| e.path == dest) {
+                    if let Some(i) = self.contracts.entries.iter().position(|e| e.path == dest) {
                         self.load(i);
                     }
                     self.shell.status = format!("created {rel}");
@@ -740,7 +644,7 @@ impl App {
 
     /// Renders the "new request" dialog when open, and applies the result.
     fn new_request_dialog(&mut self, ctx: &egui::Context) {
-        if self.new_request.is_none() {
+        if self.contracts.new_request.is_none() {
             return;
         }
         let mut create = false;
@@ -755,7 +659,7 @@ impl App {
                 ui.add_space(SPACE_SMALL);
                 ui.label(RichText::new("path under the contracts directory").color(DIM));
                 ui.add_space(SPACE_MEDIUM);
-                let buf = self.new_request.as_mut().expect("dialog open");
+                let buf = self.contracts.new_request.as_mut().expect("dialog open");
                 let resp = bordered_input(ui, buf, f32::INFINITY, "");
                 // Drop the caret into the input the frame the dialog opens.
                 take_pending_focus(ui, FOCUS_NEW_REQUEST, "open", &resp);
@@ -773,11 +677,11 @@ impl App {
                 // With more than one template, let the user pick which one seeds
                 // the contract. With one it is used automatically; with none the
                 // built-in default is used.
-                if self.templates.len() > 1 {
+                if self.contracts.templates.len() > 1 {
                     let names: Vec<String> =
-                        self.templates.iter().map(|(n, _)| n.clone()).collect();
+                        self.contracts.templates.iter().map(|(n, _)| n.clone()).collect();
                     let current = names
-                        .get(self.new_request_seed)
+                        .get(self.contracts.new_request_seed)
                         .cloned()
                         .unwrap_or_default();
                     ui.add_space(SPACE_MEDIUM);
@@ -787,7 +691,7 @@ impl App {
                             .selected_text(RichText::new(current).color(GREEN))
                             .show_ui(ui, |ui| {
                                 for (i, name) in names.iter().enumerate() {
-                                    ui.selectable_value(&mut self.new_request_seed, i, name);
+                                    ui.selectable_value(&mut self.contracts.new_request_seed, i, name);
                                 }
                             });
                     });
@@ -808,27 +712,28 @@ impl App {
                 });
             });
         if create {
-            let path = self.new_request.take().unwrap_or_default();
+            let path = self.contracts.new_request.take().unwrap_or_default();
             // Choose the seeding template: none -> built-in default; one -> it;
             // many -> the user's pick.
-            let template = match self.templates.len() {
+            let template = match self.contracts.templates.len() {
                 0 => None,
-                1 => Some(self.templates[0].1.clone()),
+                1 => Some(self.contracts.templates[0].1.clone()),
                 _ => self
+                    .contracts
                     .templates
-                    .get(self.new_request_seed)
+                    .get(self.contracts.new_request_seed)
                     .map(|(_, p)| p.clone()),
             };
             self.create_request(&path, template);
         } else if cancel || modal.should_close() {
-            self.new_request = None;
+            self.contracts.new_request = None;
         }
     }
 
     /// Modal shown when a picked non-project folder has invalid contracts: the
     /// user must fix them before it can be opened/initialized.
     fn open_blocked_dialog(&mut self, ctx: &egui::Context) {
-        let Some(failures) = self.open_blocked.clone() else {
+        let Some(failures) = self.contracts.open_blocked.clone() else {
             return;
         };
         let mut close = false;
@@ -853,14 +758,14 @@ impl App {
                 }
             });
         if close {
-            self.open_blocked = None;
+            self.contracts.open_blocked = None;
         }
     }
 
     /// Renders the delete-confirmation dialog when a delete is pending, and
     /// performs the deletion on confirm.
     fn delete_dialog(&mut self, ctx: &egui::Context) {
-        let Some(target) = self.pending_delete.clone() else {
+        let Some(target) = self.contracts.pending_delete.clone() else {
             return;
         };
         let (what, name, folder_warn) = match &target {
@@ -909,10 +814,10 @@ impl App {
                 });
             });
         if confirm {
-            self.pending_delete = None;
+            self.contracts.pending_delete = None;
             self.perform_delete(&target);
         } else if cancel || modal.should_close() {
-            self.pending_delete = None;
+            self.contracts.pending_delete = None;
         }
     }
 
@@ -962,14 +867,15 @@ impl App {
             Ok(()) => {
                 // Clear the editor if the deleted path was (or contained) what is open.
                 if self
+                    .contracts
                     .path
                     .as_deref()
                     .is_some_and(|p| p == removed_path || p.starts_with(&removed_path))
                 {
-                    self.model = None;
-                    self.path = None;
-                    self.selected = None;
-                    self.selected_template = None;
+                    self.contracts.model = None;
+                    self.contracts.path = None;
+                    self.contracts.selected = None;
+                    self.contracts.selected_template = None;
                 }
                 self.reload_project();
                 self.shell.status = format!("deleted {label}");
@@ -1000,6 +906,7 @@ impl eframe::App for App {
         match top.or(side) {
             Some(SidebarAction::LoadContract(i)) => {
                 let invalid = self
+                    .contracts
                     .entries
                     .get(i)
                     .map(|e| e.error.is_some())
@@ -1007,7 +914,7 @@ impl eframe::App for App {
                 if invalid {
                     self.enter_repair(i);
                 } else {
-                    self.repair = None;
+                    self.contracts.repair = None;
                     self.load(i);
                 }
             }
@@ -1016,20 +923,20 @@ impl eframe::App for App {
             Some(SidebarAction::NewProject) => self.new_project(&ctx),
             Some(SidebarAction::ImportPostman) => self.import_postman(&ctx),
             Some(SidebarAction::NewTemplate) => {
-                self.new_template = Some(String::new());
+                self.contracts.new_template = Some(String::new());
                 ctx.data_mut(|d| {
                     d.insert_temp(egui::Id::new(FOCUS_NEW_TEMPLATE), "open".to_string())
                 });
             }
             Some(SidebarAction::NewRequest(prefix)) => {
-                self.new_request = Some(prefix);
-                self.new_request_seed = 0;
+                self.contracts.new_request = Some(prefix);
+                self.contracts.new_request_seed = 0;
                 ctx.data_mut(|d| {
                     d.insert_temp(egui::Id::new(FOCUS_NEW_REQUEST), "open".to_string())
                 });
             }
             Some(SidebarAction::RequestDelete(target)) => {
-                self.pending_delete = Some(target);
+                self.contracts.pending_delete = Some(target);
             }
             Some(SidebarAction::ToggleSidebar) => {
                 self.shell.sidebar_open = !self.shell.sidebar_open;
@@ -1116,16 +1023,16 @@ impl App {
         if !self.shell.sidebar_open {
             return None;
         }
-        let q = self.search.to_lowercase();
+        let q = self.contracts.search.to_lowercase();
         let mut tree = TreeNode::default();
-        for (i, e) in self.entries.iter().enumerate() {
+        for (i, e) in self.contracts.entries.iter().enumerate() {
             if q.is_empty() || e.rel.to_lowercase().contains(&q) {
                 tree.insert(&e.rel, i, &e.method, e.error.is_some());
             }
         }
-        let selected = self.selected;
-        let sel_template = self.selected_template;
-        let templates: Vec<(String, PathBuf)> = self.templates.clone();
+        let selected = self.contracts.selected;
+        let sel_template = self.contracts.selected_template;
+        let templates: Vec<(String, PathBuf)> = self.contracts.templates.clone();
         let mut action = None;
         let mut to_contract = None;
         egui::Panel::left("contracts")
@@ -1201,7 +1108,7 @@ impl App {
                 ui.label(RichText::new("CONTRACTS").color(DIM).size(11.0));
                 ui.separator();
                 if self.shell.sidebar_open {
-                    bordered_input(ui, &mut self.search, f32::INFINITY, "SEARCH...");
+                    bordered_input(ui, &mut self.contracts.search, f32::INFINITY, "SEARCH...");
                     ui.add_space(SPACE_EXTRA_SMALL);
                 }
 
@@ -1235,15 +1142,19 @@ impl App {
         let mut toggle_edit = false;
         let App {
             shell,
-            model,
-            path,
-            editing,
-            resp_tab,
-            main_tab,
-            resp_tab_view,
-            repair,
-            entries,
-            original_model,
+            contracts:
+                ContractsState {
+                    model,
+                    path,
+                    editing,
+                    resp_tab,
+                    main_tab,
+                    resp_tab_view,
+                    repair,
+                    entries,
+                    original_model,
+                    ..
+                },
             ..
         } = self;
         egui::CentralPanel::default().show(ui, |ui| {
@@ -1483,7 +1394,7 @@ impl App {
                 });
         });
         if toggle_edit {
-            if self.editing {
+            if self.contracts.editing {
                 self.cancel_edit();
             } else {
                 self.begin_edit();
@@ -1492,9 +1403,9 @@ impl App {
         if let Some((path, buffer)) = promote
             && std::fs::write(&path, &buffer).is_ok()
         {
-            self.repair = None;
+            self.contracts.repair = None;
             self.reload_project();
-            if let Some(i) = self.entries.iter().position(|e| e.path == path) {
+            if let Some(i) = self.contracts.entries.iter().position(|e| e.path == path) {
                 self.load(i);
             }
         }
@@ -1645,22 +1556,25 @@ mod tests {
     #[test]
     fn cancel_edit_restores_pre_edit_model() {
         let mut app = App::new();
-        app.model = Some(sample_model());
-        let original = app.model.clone();
+        app.contracts.model = Some(sample_model());
+        let original = app.contracts.model.clone();
 
         app.begin_edit();
         // Simulate the reported destructive edit: clear the response code 200.
-        app.model.as_mut().unwrap().responses[0].code = String::new();
-        assert_ne!(app.model, original, "the edit should change the model");
+        app.contracts.model.as_mut().unwrap().responses[0].code = String::new();
+        assert_ne!(
+            app.contracts.model, original,
+            "the edit should change the model"
+        );
 
         app.cancel_edit();
         assert_eq!(
-            app.model, original,
+            app.contracts.model, original,
             "cancel must restore the pre-edit model"
         );
-        assert!(!app.editing, "cancel must exit edit mode");
+        assert!(!app.contracts.editing, "cancel must exit edit mode");
         assert!(
-            app.original_model.is_none(),
+            app.contracts.original_model.is_none(),
             "snapshot must be cleared after cancel"
         );
     }
@@ -1679,7 +1593,7 @@ mod tests {
         let contract = apic_core::json::json_get(json, None).expect("valid contract");
         let mut app = App::new();
         app.shell.project_root = Some(std::path::PathBuf::from("/tmp"));
-        app.model = Some(EditModel::from_contract(contract));
+        app.contracts.model = Some(EditModel::from_contract(contract));
         app.begin_edit();
 
         let ctx = egui::Context::default();
@@ -1728,7 +1642,7 @@ mod tests {
         // for focus exactly as the `+ query` button does. A freshly focused
         // TextEdit must not pin egui into a permanent repaint.
         {
-            let m = app.model.as_mut().unwrap();
+            let m = app.contracts.model.as_mut().unwrap();
             let new_idx = m.query.len();
             apic_core::edit::apply(
                 m,
