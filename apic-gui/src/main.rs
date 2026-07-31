@@ -15,10 +15,12 @@ use egui::RichText;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod app;
 mod desktop;
 mod features;
 mod settings;
 mod ui;
+use app::state::{DialogKind, ShellState};
 use features::contracts::view::{
     endpoint_description, endpoint_name, headers, method_color, method_url_row, query_section,
     request_body, response_body, response_code_selector, response_headers,
@@ -128,12 +130,14 @@ enum DeleteTarget {
 
 /// Whole-app state.
 struct App {
-    root: Option<PathBuf>,
+    /// Application chrome and the active project location, shared by every
+    /// feature.
+    shell: ShellState,
+
     entries: Vec<Entry>,
     selected: Option<usize>,
     model: Option<EditModel>,
     path: Option<PathBuf>,
-    status: String,
     editing: bool,
     search: String,
     resp_tab: usize,
@@ -143,13 +147,6 @@ struct App {
 
     /// The active sub-tab inside the Response tab; reset to [`RespTab::Body`].
     resp_tab_view: RespTab,
-
-    /// The `.apic` directory, for locating templates.
-    apic_dir: Option<PathBuf>,
-
-    /// Absolute root of the active project (the dir containing `.apic/`). `None`
-    /// when no project is open. All discovery resolves against this, never cwd.
-    project_root: Option<PathBuf>,
 
     /// When `Some`, a modal listing contracts that must be fixed before the
     /// picked non-project folder can be opened/initialized.
@@ -182,21 +179,9 @@ struct App {
     /// call never blocks the UI, plus the action to perform on its result.
     pending_dialog: Option<(DialogKind, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
 
-    /// Whether the left contracts sidebar is shown. Toggled from the top bar;
-    /// not persisted, so it always starts `true` on launch.
-    sidebar_open: bool,
-
     /// Snapshot of `model` taken when edit mode is entered, so [ CANCEL ] can
     /// restore the pre-edit state. `None` whenever not editing.
     original_model: Option<EditModel>,
-}
-
-/// Which action consumes the path chosen by an in-flight file dialog.
-#[derive(Clone, Copy)]
-enum DialogKind {
-    OpenProject,
-    NewProject,
-    ImportPostman,
 }
 
 /// The active tab in the left pane. Response lives permanently in the right
@@ -219,19 +204,16 @@ enum RespTab {
 impl App {
     fn new() -> Self {
         let mut app = App {
-            root: None,
+            shell: ShellState::default(),
             entries: Vec::new(),
             selected: None,
             model: None,
             path: None,
-            status: String::new(),
             editing: false,
             search: String::new(),
             resp_tab: 0,
             main_tab: MainTab::Overview,
             resp_tab_view: RespTab::Body,
-            apic_dir: None,
-            project_root: None,
             open_blocked: None,
             repair: None,
             templates: Vec::new(),
@@ -241,14 +223,13 @@ impl App {
             new_request_seed: 0,
             pending_delete: None,
             pending_dialog: None,
-            sidebar_open: true,
             original_model: None,
         };
         let settings = Settings::load();
         if let Some(root) = settings.last_project
             && root.is_dir()
         {
-            app.project_root = Some(root);
+            app.shell.project_root = Some(root);
         }
         app.reload_project();
         if let Ok(sub) = std::env::var("APIC_AUTOEDIT")
@@ -264,20 +245,21 @@ impl App {
     }
 
     /// Discovers contracts for the active project and reads each one's method for
-    /// the sidebar badge. Resolves everything against `self.project_root`; never
+    /// the sidebar badge. Resolves everything against `self.shell.project_root`; never
     /// reads the process current directory.
     fn reload_project(&mut self) {
-        let Some(root) = self.project_root.clone() else {
-            self.apic_dir = None;
-            self.root = None;
+        let Some(root) = self.shell.project_root.clone() else {
+            self.shell.apic_dir = None;
+            self.shell.root = None;
             self.templates.clear();
             self.entries.clear();
-            self.status = "No project open. Use Open or New.".into();
+            self.shell.status = "No project open. Use Open or New.".into();
             return;
         };
 
-        self.apic_dir = Some(root.join(".apic"));
+        self.shell.apic_dir = Some(root.join(".apic"));
         self.templates = self
+            .shell
             .apic_dir
             .as_deref()
             .map(|dir| {
@@ -296,9 +278,9 @@ impl App {
 
         match apic_core::config::read_config_in(&root).and_then(|c| c.root_dir_in(&root)) {
             Ok(contracts_root) => {
-                // `self.root` is the contracts working dir consumed by import /
+                // `self.shell.root` is the contracts working dir consumed by import /
                 // new-request / delete; keep it in sync with the active project.
-                self.root = Some(contracts_root.clone());
+                self.shell.root = Some(contracts_root.clone());
                 let failures = apic_core::validate_dir(&contracts_root);
                 let mut paths =
                     apic_core::json::scan_json_file(&contracts_root, true).unwrap_or_default();
@@ -325,12 +307,13 @@ impl App {
                         }
                     })
                     .collect();
-                self.status = display_location(&contracts_root);
+                self.shell.status = display_location(&contracts_root);
             }
             Err(err) => {
-                self.root = None;
+                self.shell.root = None;
                 self.entries.clear();
-                self.status = apic_core::file::home_relative(&format!("Project error: {err}"));
+                self.shell.status =
+                    apic_core::file::home_relative(&format!("Project error: {err}"));
             }
         }
     }
@@ -390,13 +373,13 @@ impl App {
                 self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
-                self.status = self
+                self.shell.status = self
                     .path
                     .as_deref()
                     .map(display_location)
                     .unwrap_or_default();
             }
-            Err(err) => self.status = format!("load error: {err}"),
+            Err(err) => self.shell.status = format!("load error: {err}"),
         }
     }
 
@@ -422,9 +405,9 @@ impl App {
                 self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
-                self.status = format!("template '{name}'");
+                self.shell.status = format!("template '{name}'");
             }
-            Err(err) => self.status = format!("template error: {err}"),
+            Err(err) => self.shell.status = format!("template error: {err}"),
         }
     }
 
@@ -451,7 +434,7 @@ impl App {
         if failures.is_empty() {
             match apic_core::config::Config::init_in(&folder, None) {
                 Ok(_) => self.activate_project(folder),
-                Err(e) => self.status = format!("init error: {e}"),
+                Err(e) => self.shell.status = format!("init error: {e}"),
             }
         } else {
             self.open_blocked = Some(failures);
@@ -482,7 +465,7 @@ impl App {
             ctx.request_repaint();
         });
         self.pending_dialog = Some((kind, rx));
-        self.status = "Waiting for the file dialog…".into();
+        self.shell.status = "Waiting for the file dialog…".into();
     }
 
     /// Polls the in-flight dialog and runs its action once a path is chosen (or
@@ -509,7 +492,7 @@ impl App {
 
     /// Makes `folder` the active project: reload, then persist as last project.
     fn activate_project(&mut self, folder: PathBuf) {
-        self.project_root = Some(folder.clone());
+        self.shell.project_root = Some(folder.clone());
         self.model = None;
         self.selected = None;
         self.selected_template = None;
@@ -523,8 +506,8 @@ impl App {
 
     /// `[ Import ]` → Postman: launch the file picker (background thread).
     fn import_postman(&mut self, ctx: &egui::Context) {
-        if self.root.is_none() {
-            self.status = "no project to import into".into();
+        if self.shell.root.is_none() {
+            self.shell.status = "no project to import into".into();
             return;
         }
         if self.pending_dialog.is_some() {
@@ -544,14 +527,14 @@ impl App {
             ctx.request_repaint();
         });
         self.pending_dialog = Some((DialogKind::ImportPostman, rx));
-        self.status = "Waiting for the file dialog…".into();
+        self.shell.status = "Waiting for the file dialog…".into();
     }
 
     /// Imports a Postman collection into the project via apic-core's converter,
     /// which writes contracts confined to the working dir and never overwrites.
     fn finish_import_postman(&mut self, src: PathBuf) {
-        let Some(root) = self.root.clone() else {
-            self.status = "no project to import into".into();
+        let Some(root) = self.shell.root.clone() else {
+            self.shell.status = "no project to import into".into();
             return;
         };
         // The GUI import never overwrites; existing contracts must be removed
@@ -564,9 +547,9 @@ impl App {
                 } else {
                     format!(", {} warning(s)", out.warnings.len())
                 };
-                self.status = format!("imported {} contract(s){warn}", out.written);
+                self.shell.status = format!("imported {} contract(s){warn}", out.written);
             }
-            Err(e) => self.status = format!("import error: {e}"),
+            Err(e) => self.shell.status = format!("import error: {e}"),
         }
     }
 
@@ -576,11 +559,11 @@ impl App {
     fn create_template(&mut self, name: &str) {
         let name = name.trim();
         if name.is_empty() {
-            self.status = "template name required".into();
+            self.shell.status = "template name required".into();
             return;
         }
-        let Some(apic_dir) = self.apic_dir.clone() else {
-            self.status = "no project".into();
+        let Some(apic_dir) = self.shell.apic_dir.clone() else {
+            self.shell.status = "no project".into();
             return;
         };
         let dir = apic_core::template::dir(&apic_dir);
@@ -592,16 +575,16 @@ impl App {
         let dest = match apic_core::file::confine_to_dir(&dir, Path::new(&file_name)) {
             Ok(p) => p,
             Err(e) => {
-                self.status = e;
+                self.shell.status = e;
                 return;
             }
         };
         if dest.exists() {
-            self.status = format!("template '{name}' already exists");
+            self.shell.status = format!("template '{name}' already exists");
             return;
         }
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.status = format!("create dir error: {e}");
+            self.shell.status = format!("create dir error: {e}");
             return;
         }
         match std::fs::write(&dest, apic_core::template::DEFAULT) {
@@ -612,9 +595,9 @@ impl App {
                 if let Some(i) = self.templates.iter().position(|(_, p)| *p == dest) {
                     self.load_template(i);
                 }
-                self.status = format!("created template '{name}'");
+                self.shell.status = format!("created template '{name}'");
             }
-            Err(e) => self.status = format!("write error: {e}"),
+            Err(e) => self.shell.status = format!("write error: {e}"),
         }
     }
 
@@ -684,11 +667,11 @@ impl App {
     fn create_request(&mut self, input: &str, template: Option<PathBuf>) {
         let input = input.trim();
         if input.is_empty() {
-            self.status = "name required".into();
+            self.shell.status = "name required".into();
             return;
         }
-        let Some(root) = self.root.clone() else {
-            self.status = "no project".into();
+        let Some(root) = self.shell.root.clone() else {
+            self.shell.status = "no project".into();
             return;
         };
         let is_folder = input.ends_with('/');
@@ -700,20 +683,20 @@ impl App {
             format!("{input}.json")
         };
         if rel.is_empty() {
-            self.status = "name required".into();
+            self.shell.status = "name required".into();
             return;
         }
         let dest = match apic_core::file::confine_to_dir(&root, Path::new(&rel)) {
             Ok(p) => p,
             Err(e) => {
-                self.status = e;
+                self.shell.status = e;
                 return;
             }
         };
 
         if !is_folder {
             if dest.exists() {
-                self.status = format!("{rel} already exists, not overwriting");
+                self.shell.status = format!("{rel} already exists, not overwriting");
                 return;
             }
             // Seed from the chosen template (merged onto the built-in default),
@@ -722,7 +705,7 @@ impl App {
                 Some(path) => match apic_core::template::resolve_contract_from(path) {
                     Ok((c, _warnings)) => c,
                     Err(e) => {
-                        self.status = format!("template error: {e}");
+                        self.shell.status = format!("template error: {e}");
                         return;
                     }
                 },
@@ -731,7 +714,7 @@ impl App {
             if let Some(parent) = dest.parent()
                 && let Err(e) = std::fs::create_dir_all(parent)
             {
-                self.status = format!("create dir error: {e}");
+                self.shell.status = format!("create dir error: {e}");
                 return;
             }
             match std::fs::write(&dest, contract) {
@@ -740,17 +723,17 @@ impl App {
                     if let Some(i) = self.entries.iter().position(|e| e.path == dest) {
                         self.load(i);
                     }
-                    self.status = format!("created {rel}");
+                    self.shell.status = format!("created {rel}");
                 }
-                Err(e) => self.status = format!("write error: {e}"),
+                Err(e) => self.shell.status = format!("write error: {e}"),
             }
         } else {
             match std::fs::create_dir_all(&dest) {
                 Ok(()) => {
                     self.reload_project();
-                    self.status = format!("created folder {rel}/");
+                    self.shell.status = format!("created folder {rel}/");
                 }
-                Err(e) => self.status = format!("create dir error: {e}"),
+                Err(e) => self.shell.status = format!("create dir error: {e}"),
             }
         }
     }
@@ -938,14 +921,14 @@ impl App {
     fn perform_delete(&mut self, target: &DeleteTarget) {
         let (removed_path, result, label) = match target {
             DeleteTarget::Contract { rel, is_dir } => {
-                let Some(root) = self.root.clone() else {
-                    self.status = "no project".into();
+                let Some(root) = self.shell.root.clone() else {
+                    self.shell.status = "no project".into();
                     return;
                 };
                 let dest = match apic_core::file::confine_to_dir(&root, Path::new(rel)) {
                     Ok(p) => p,
                     Err(e) => {
-                        self.status = e;
+                        self.shell.status = e;
                         return;
                     }
                 };
@@ -958,8 +941,8 @@ impl App {
             }
             DeleteTarget::Template { name, path } => {
                 // Confine to the template dir so only a real template is removed.
-                let Some(apic_dir) = self.apic_dir.clone() else {
-                    self.status = "no project".into();
+                let Some(apic_dir) = self.shell.apic_dir.clone() else {
+                    self.shell.status = "no project".into();
                     return;
                 };
                 let dir = apic_core::template::dir(&apic_dir);
@@ -967,7 +950,7 @@ impl App {
                 let dest = match apic_core::file::confine_to_dir(&dir, filename) {
                     Ok(p) => p,
                     Err(e) => {
-                        self.status = e;
+                        self.shell.status = e;
                         return;
                     }
                 };
@@ -989,9 +972,9 @@ impl App {
                     self.selected_template = None;
                 }
                 self.reload_project();
-                self.status = format!("deleted {label}");
+                self.shell.status = format!("deleted {label}");
             }
-            Err(e) => self.status = format!("delete error: {e}"),
+            Err(e) => self.shell.status = format!("delete error: {e}"),
         }
     }
 }
@@ -1049,7 +1032,7 @@ impl eframe::App for App {
                 self.pending_delete = Some(target);
             }
             Some(SidebarAction::ToggleSidebar) => {
-                self.sidebar_open = !self.sidebar_open;
+                self.shell.sidebar_open = !self.shell.sidebar_open;
             }
             None => {}
         }
@@ -1073,7 +1056,11 @@ impl App {
                 ui.set_min_height(row_h);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.set_min_height(row_h);
-                    let toggle_glyph = if self.sidebar_open { "☰" } else { "◧" };
+                    let toggle_glyph = if self.shell.sidebar_open {
+                        "☰"
+                    } else {
+                        "◧"
+                    };
                     if ui
                         .button(RichText::new(toggle_glyph).color(GREEN))
                         .on_hover_text("Toggle sidebar")
@@ -1109,7 +1096,7 @@ impl App {
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(&self.status).color(DIM));
+                ui.label(RichText::new(&self.shell.status).color(DIM));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         RichText::new(concat!("apic v", env!("CARGO_PKG_VERSION")))
@@ -1126,7 +1113,7 @@ impl App {
     fn sidebar(&mut self, ui: &mut egui::Ui) -> Option<SidebarAction> {
         // When collapsed, skip building/showing the panel entirely so the
         // CentralPanel reclaims the full width.
-        if !self.sidebar_open {
+        if !self.shell.sidebar_open {
             return None;
         }
         let q = self.search.to_lowercase();
@@ -1213,7 +1200,7 @@ impl App {
                 ui.add_space(10.0);
                 ui.label(RichText::new("CONTRACTS").color(DIM).size(11.0));
                 ui.separator();
-                if self.sidebar_open {
+                if self.shell.sidebar_open {
                     bordered_input(ui, &mut self.search, f32::INFINITY, "SEARCH...");
                     ui.add_space(SPACE_EXTRA_SMALL);
                 }
@@ -1243,13 +1230,13 @@ impl App {
 
     /// The central viewer/editor for the loaded contract.
     fn central(&mut self, ui: &mut egui::Ui) {
-        let no_project = self.project_root.is_none();
+        let no_project = self.shell.project_root.is_none();
         let mut promote: Option<(PathBuf, String)> = None;
         let mut toggle_edit = false;
         let App {
+            shell,
             model,
             path,
-            status,
             editing,
             resp_tab,
             main_tab,
@@ -1333,7 +1320,7 @@ impl App {
                         match path.as_deref() {
                             Some(p) => match model.save(p) {
                                 Ok(()) => {
-                                    *status = format!("saved {}", p.display());
+                                    shell.status = format!("saved {}", p.display());
                                     *editing = false; // back to read-only on success
                                     *original_model = None; // commit: drop the snapshot
                                     // Refresh this contract's sidebar method badge.
@@ -1343,9 +1330,9 @@ impl App {
                                         e.method = method_str(&model.method);
                                     }
                                 }
-                                Err(e) => *status = format!("save error: {e}"),
+                                Err(e) => shell.status = format!("save error: {e}"),
                             },
-                            None => *status = "no path to save to".into(),
+                            None => shell.status = "no path to save to".into(),
                         }
                     }
                     let edit_label = if *editing { "Cancel" } else { "Edit" };
@@ -1691,7 +1678,7 @@ mod tests {
         }"#;
         let contract = apic_core::json::json_get(json, None).expect("valid contract");
         let mut app = App::new();
-        app.project_root = Some(std::path::PathBuf::from("/tmp"));
+        app.shell.project_root = Some(std::path::PathBuf::from("/tmp"));
         app.model = Some(EditModel::from_contract(contract));
         app.begin_edit();
 
