@@ -80,9 +80,14 @@ gh repo fork flathub/io.github.rizukirr.apic --clone=true
 cd io.github.rizukirr.apic
 git checkout -b update-X.Y.Z
 
-# in io.github.rizukirr.apic.yml, bump the git source:
+# get the sha the new tag points at, run from the apic checkout.
+# the ^{} peels the annotated tag object down to the commit, which is what
+# flatpak-builder compares against, so do not skip it:
+git -C ~/Projects/apic rev-parse vX.Y.Z^{}
+
+# in io.github.rizukirr.apic.yml, bump BOTH lines of the git source:
 #     tag: vX.Y.Z
-#     commit: <sha of the vX.Y.Z tag>   # keep it pinned to a commit
+#     commit: <the sha printed above>   # keep it pinned to a commit
 # and copy over the regenerated vendored sources:
 cp ~/Projects/apic/packaging/flatpak/cargo-sources.json .
 
@@ -96,3 +101,13 @@ gh pr create --repo flathub/io.github.rizukirr.apic --base master --title "Updat
 The Flathub buildbot builds the PR and comments a test-install command. When the
 check is green, **merge it** — that publishes the update. (Or set up
 `flatpak-external-data-checker` to open these update PRs automatically.)
+
+If you bump `tag:` but leave `commit:` on the previous release, every arch fails
+in the *Download sources* step before the build starts, with:
+
+```
+Failed to download sources: module apic: Git commit for branch (null) is
+<sha of the new tag>, but expected <stale sha still in the manifest>
+```
+
+The fix is to set `commit:` to the first sha in that message.
