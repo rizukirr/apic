@@ -122,6 +122,20 @@ pub fn install_desktop_entry() -> Result<String, String> {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
+    /// On Windows we enable eframe's `wgpu` feature alongside the default
+    /// `glow`, and eframe's `Renderer::default()` then resolves to `Wgpu`
+    /// (see eframe `epi.rs`). This locks that wiring so a feature regression
+    /// can't silently drop us back to the OpenGL backend that fails in
+    /// driverless environments.
+    #[cfg(windows)]
+    #[test]
+    fn windows_defaults_to_wgpu_renderer() {
+        assert!(matches!(
+            eframe::Renderer::default(),
+            eframe::Renderer::Wgpu
+        ));
+    }
+
     use super::*;
 
     #[test]
