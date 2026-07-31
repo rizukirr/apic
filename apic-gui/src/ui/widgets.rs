@@ -248,10 +248,6 @@ pub(crate) fn required_chip(ui: &mut egui::Ui, required: bool, editing: bool) ->
     }
 }
 
-/// Header height and per-row height for the metadata/schema tables.
-pub(crate) const TABLE_HEADER_H: f32 = 16.0;
-pub(crate) const TABLE_ROW_H: f32 = 24.0;
-
 /// A dim, small, upper-case column-header cell label.
 pub(crate) fn header_label(ui: &mut egui::Ui, text: &str) {
     ui.label(
@@ -321,6 +317,7 @@ pub(crate) fn table_frame<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::theme::{TABLE_HEADER_H, TABLE_ROW_H};
 
     #[test]
     fn json_editor_renders_edit_and_preview() {

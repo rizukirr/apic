@@ -1,31 +1,17 @@
 //! Palette, spacing scale, and the global egui theme.
 //!
-//! The whole GUI draws from these constants so the look stays uniform; nothing
-//! here knows about contracts or editing.
+//! Tokens live in the child modules and are re-exported here so call sites can
+//! keep using `theme::GREEN`. Nothing in this module may import from
+//! `crate::features`.
+
+pub(crate) mod colors;
+pub(crate) mod spacing;
+
+pub(crate) use colors::*;
+pub(crate) use spacing::*;
 
 use eframe::egui;
 use egui::{Color32, RichText, Stroke};
-
-// Terminal-green identity, toned down for a calmer, cleaner surface.
-pub(crate) const BG: Color32 = Color32::from_rgb(15, 20, 17);
-pub(crate) const PANEL_BG: Color32 = Color32::from_rgb(20, 27, 23);
-pub(crate) const BORDER: Color32 = Color32::from_rgb(45, 66, 54);
-pub(crate) const GREEN: Color32 = Color32::from_rgb(78, 201, 138);
-pub(crate) const CYAN: Color32 = Color32::from_rgb(120, 190, 230);
-pub(crate) const DIM: Color32 = Color32::from_rgb(128, 150, 138);
-pub(crate) const TEXT: Color32 = Color32::from_rgb(205, 225, 213);
-pub(crate) const RED: Color32 = Color32::from_rgb(230, 110, 110);
-pub(crate) const AMBER: Color32 = Color32::from_rgb(224, 176, 60);
-
-/// Chip backgrounds for the REQUIREMENT column.
-pub(crate) const CHIP_BG: Color32 = Color32::from_rgb(40, 50, 45);
-pub(crate) const CHIP_REQUIRED_BG: Color32 = Color32::from_rgb(120, 60, 30);
-
-// Spacing scale (wider for calmer padding).
-pub(crate) const SPACE_EXTRA_SMALL: f32 = 5.0;
-pub(crate) const SPACE_SMALL: f32 = 8.0;
-pub(crate) const SPACE_MEDIUM: f32 = 12.0;
-pub(crate) const SPACE_LARGE: f32 = 20.0;
 
 /// Installs the dark, monospace, neon theme.
 pub(crate) fn apply_theme(ctx: &egui::Context) {
@@ -38,7 +24,7 @@ pub(crate) fn apply_theme(ctx: &egui::Context) {
         v.dark_mode = true;
         v.panel_fill = BG;
         v.window_fill = BG;
-        v.extreme_bg_color = Color32::from_rgb(11, 15, 13);
+        v.extreme_bg_color = EXTREME_BG;
         v.faint_bg_color = PANEL_BG;
         v.override_text_color = Some(TEXT);
         v.hyperlink_color = CYAN;
@@ -55,6 +41,10 @@ pub(crate) fn apply_theme(ctx: &egui::Context) {
 }
 
 /// Color for an HTTP method badge.
+///
+/// vibekit: contracts-domain code temporarily parked in the theme module.
+/// Task 3 of the modular restructure moves this into
+/// `features/contracts/view.rs`, after which `ui/` names no domain concept.
 pub(crate) fn method_color(method: &str) -> Color32 {
     match method {
         "GET" | "HEAD" => GREEN,
@@ -67,6 +57,8 @@ pub(crate) fn method_color(method: &str) -> Color32 {
 
 /// A filled, method-colored badge (read mode); the edit view uses a plain
 /// button instead so it can cycle the method on click.
+///
+/// vibekit: see `method_color` above; moves in Task 3.
 pub(crate) fn method_badge(ui: &mut egui::Ui, method: &str) {
     ui.label(
         RichText::new(format!(" {method} "))

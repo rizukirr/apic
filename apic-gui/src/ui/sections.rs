@@ -10,15 +10,14 @@ use egui::RichText;
 use apic_core::edit::{EditAction, EditBody, EditModel, Field, apply};
 use apic_core::json::method_str;
 
-use crate::ui::theme::AMBER;
-
 use super::theme::{
-    CYAN, DIM, GREEN, RED, SPACE_MEDIUM, SPACE_SMALL, TEXT, method_badge, method_color,
+    AMBER, CYAN, DIM, GREEN, RED, SPACE_MEDIUM, SPACE_SMALL, TABLE_HEADER_H, TABLE_ROW_H, TEXT,
+    method_badge, method_color,
 };
 use super::widgets::{
-    TABLE_HEADER_H, TABLE_ROW_H, add_button, delete_button, fill_column, header_label, json_editor,
-    metadata_table, request_new_row_focus, required_chip, section_label, table_frame,
-    take_pending_focus, tcell_edit, text_button,
+    add_button, delete_button, fill_column, header_label, json_editor, metadata_table,
+    request_new_row_focus, required_chip, section_label, table_frame, take_pending_focus,
+    tcell_edit, text_button,
 };
 use egui_extras::Column;
 
