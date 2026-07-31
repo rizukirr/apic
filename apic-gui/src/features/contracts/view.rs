@@ -1,25 +1,47 @@
-//! The panelled editor/viewer sections (endpoint, parameters, headers, request
-//! body, responses). Each takes the shared [`EditModel`] and an `editing` flag
-//! and renders the read or edit variant, composing the primitives in
-//! [`super::components`]. Editing behavior itself lives in [`apic_core::edit`];
-//! these functions only translate clicks into [`EditAction`]s.
+//! The panelled contract editor/viewer sections (endpoint, parameters, headers,
+//! request body, responses). Each takes the shared [`EditModel`] and an
+//! `editing` flag and renders the read or edit variant, composing the
+//! primitives in [`crate::ui::components`]. Editing behavior itself lives in
+//! [`apic_core::edit`]; these functions only translate clicks into
+//! [`EditAction`]s.
 
 use eframe::egui;
-use egui::RichText;
+use egui::{Color32, RichText};
 
 use apic_core::edit::{EditAction, EditBody, EditModel, Field, apply};
 use apic_core::json::method_str;
 
-use super::components::{
+use crate::ui::components::{
     add_button, delete_button, fill_column, header_label, json_editor, metadata_table,
     required_chip, section_label, table_frame, tcell_edit, text_button,
 };
-use super::focus::{request_new_row_focus, take_pending_focus};
-use super::theme::{
-    AMBER, CYAN, DIM, GREEN, RED, SPACE_MEDIUM, SPACE_SMALL, TABLE_HEADER_H, TABLE_ROW_H, TEXT,
-    method_badge, method_color,
+use crate::ui::focus::{request_new_row_focus, take_pending_focus};
+use crate::ui::theme::{
+    AMBER, BG, CYAN, DIM, GREEN, RED, SPACE_MEDIUM, SPACE_SMALL, TABLE_HEADER_H, TABLE_ROW_H, TEXT,
 };
 use egui_extras::Column;
+
+/// Color for an HTTP method badge.
+pub(crate) fn method_color(method: &str) -> Color32 {
+    match method {
+        "GET" | "HEAD" => GREEN,
+        "POST" => CYAN,
+        "PUT" | "PATCH" => AMBER,
+        "DELETE" => RED,
+        _ => DIM,
+    }
+}
+
+/// A filled, method-colored badge (read mode); the edit view uses a plain
+/// button instead so it can cycle the method on click.
+pub(crate) fn method_badge(ui: &mut egui::Ui, method: &str) {
+    ui.label(
+        RichText::new(format!(" {method} "))
+            .color(BG)
+            .background_color(method_color(method))
+            .strong(),
+    );
+}
 
 // egui temp-data keys for the "focus the new row's name field" markers, one per
 // editable list.

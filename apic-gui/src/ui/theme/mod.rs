@@ -13,7 +13,7 @@ pub(crate) use spacing::*;
 pub(crate) use typography::*;
 
 use eframe::egui;
-use egui::{Color32, RichText, Stroke};
+use egui::{Color32, Stroke};
 
 /// Installs the dark, monospace, neon theme.
 pub(crate) fn apply_theme(ctx: &egui::Context) {
@@ -40,32 +40,4 @@ pub(crate) fn apply_theme(ctx: &egui::Context) {
         style.spacing.item_spacing = egui::vec2(8.0, 8.0);
         style.spacing.button_padding = egui::vec2(8.0, 4.0);
     });
-}
-
-/// Color for an HTTP method badge.
-///
-/// vibekit: contracts-domain code temporarily parked in the theme module.
-/// Task 3 of the modular restructure moves this into
-/// `features/contracts/view.rs`, after which `ui/` names no domain concept.
-pub(crate) fn method_color(method: &str) -> Color32 {
-    match method {
-        "GET" | "HEAD" => GREEN,
-        "POST" => CYAN,
-        "PUT" | "PATCH" => AMBER,
-        "DELETE" => RED,
-        _ => DIM,
-    }
-}
-
-/// A filled, method-colored badge (read mode); the edit view uses a plain
-/// button instead so it can cycle the method on click.
-///
-/// vibekit: see `method_color` above; moves in Task 3.
-pub(crate) fn method_badge(ui: &mut egui::Ui, method: &str) {
-    ui.label(
-        RichText::new(format!(" {method} "))
-            .color(BG)
-            .background_color(method_color(method))
-            .strong(),
-    );
 }

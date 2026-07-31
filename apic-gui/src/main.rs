@@ -16,15 +16,16 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod desktop;
+mod features;
 mod settings;
 mod ui;
+use features::contracts::view::{
+    endpoint_description, endpoint_name, headers, method_color, method_url_row, query_section,
+    request_body, response_body, response_code_selector, response_headers,
+};
 use settings::Settings;
 use ui::components::{bordered_input, text_button};
 use ui::focus::take_pending_focus;
-use ui::sections::{
-    endpoint_description, endpoint_name, headers, method_url_row, query_section, request_body,
-    response_body, response_code_selector, response_headers,
-};
 use ui::theme::*;
 
 // egui temp-data keys for the "focus the input when the dialog opens" markers,

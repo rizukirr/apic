@@ -8,6 +8,5 @@
 
 pub(crate) mod components;
 pub(crate) mod focus;
-pub(crate) mod sections;
 pub(crate) mod syntax_highlighting;
 pub(crate) mod theme;
