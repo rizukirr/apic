@@ -186,7 +186,7 @@ impl App {
     }
 
     /// Verify a chosen folder, then open / auto-init / block.
-    pub(crate) fn finish_open(&mut self, folder: PathBuf) {
+    fn finish_open(&mut self, folder: PathBuf) {
         let has_apic = folder.join(".apic").join("config.toml").is_file();
         if has_apic {
             self.activate_project(folder);
@@ -206,7 +206,7 @@ impl App {
     }
 
     /// Initialize a fresh project in `folder` (opening it if it already is one).
-    pub(crate) fn finish_new(&mut self, folder: PathBuf) {
+    fn finish_new(&mut self, folder: PathBuf) {
         match apic_core::config::Config::init_in(&folder, None) {
             Ok(_) | Err(_) => self.activate_project(folder), // Err = already a project
         }
@@ -215,12 +215,7 @@ impl App {
     /// Spawns a native dialog on a background thread (so the portal call never
     /// freezes the UI) and records what to do with the result; polled by
     /// [`App::poll_dialog`]. A second dialog cannot start while one is pending.
-    pub(crate) fn spawn_folder_dialog(
-        &mut self,
-        kind: DialogKind,
-        title: &'static str,
-        ctx: &egui::Context,
-    ) {
+    fn spawn_folder_dialog(&mut self, kind: DialogKind, title: &'static str, ctx: &egui::Context) {
         if self.pending_dialog.is_some() {
             return;
         }
@@ -260,7 +255,7 @@ impl App {
     }
 
     /// Makes `folder` the active project: reload, then persist as last project.
-    pub(crate) fn activate_project(&mut self, folder: PathBuf) {
+    fn activate_project(&mut self, folder: PathBuf) {
         self.shell.project_root = Some(folder.clone());
         self.contracts.model = None;
         self.contracts.selected = None;
@@ -301,7 +296,7 @@ impl App {
 
     /// Imports a Postman collection into the project via apic-core's converter,
     /// which writes contracts confined to the working dir and never overwrites.
-    pub(crate) fn finish_import_postman(&mut self, src: PathBuf) {
+    fn finish_import_postman(&mut self, src: PathBuf) {
         let Some(root) = self.shell.root.clone() else {
             self.shell.status = "no project to import into".into();
             return;

@@ -26,7 +26,7 @@ use crate::ui::theme::*;
 use egui_extras::Column;
 
 /// Color for an HTTP method badge.
-pub(crate) fn method_color(method: &str) -> Color32 {
+fn method_color(method: &str) -> Color32 {
     match method {
         "GET" | "HEAD" => GREEN,
         "POST" => CYAN,
@@ -38,7 +38,7 @@ pub(crate) fn method_color(method: &str) -> Color32 {
 
 /// A filled, method-colored badge (read mode); the edit view uses a plain
 /// button instead so it can cycle the method on click.
-pub(crate) fn method_badge(ui: &mut egui::Ui, method: &str) {
+fn method_badge(ui: &mut egui::Ui, method: &str) {
     ui.label(
         RichText::new(format!(" {method} "))
             .color(BG)
@@ -54,7 +54,7 @@ const FOCUS_HEADER: &str = "apic.focus.header";
 
 /// The endpoint name, rendered inline on the toolbar row (left of EDIT/SAVE).
 /// Editable frameless heading in edit mode; a heading label otherwise.
-pub(crate) fn endpoint_name(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+fn endpoint_name(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     if editing {
         ui.add(
             egui::TextEdit::singleline(&mut model.name)
@@ -71,7 +71,7 @@ pub(crate) fn endpoint_name(ui: &mut egui::Ui, model: &mut EditModel, editing: b
 
 /// The endpoint description, shown under the name/url row. Frameless multiline in
 /// edit mode; dim text otherwise (hidden when empty in view mode).
-pub(crate) fn endpoint_description(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+fn endpoint_description(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     if editing {
         ui.add(
             egui::TextEdit::multiline(&mut model.description)
@@ -87,7 +87,7 @@ pub(crate) fn endpoint_description(ui: &mut egui::Ui, model: &mut EditModel, edi
 }
 
 /// The `[ METHOD ] [ url................ ]` top row.
-pub(crate) fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     table_frame(ui, |ui| {
         ui.horizontal(|ui| {
             let method = method_str(&model.method);
@@ -132,7 +132,7 @@ pub(crate) fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: 
 
 /// Body of the QUERY PARAMS section. Uses the flat `{name, value, description}`
 /// query model; path variables now live inline in the URL string.
-pub(crate) fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     let mut actions: Vec<EditAction> = Vec::new();
     table_frame(ui, |ui| {
         let fixed = if editing {
@@ -215,12 +215,7 @@ pub(crate) fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: b
 }
 
 /// Response header rows for the selected response `idx`.
-pub(crate) fn response_headers(
-    ui: &mut egui::Ui,
-    model: &mut EditModel,
-    idx: usize,
-    editing: bool,
-) {
+fn response_headers(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editing: bool) {
     let Some(_) = model.responses.get(idx) else {
         return;
     };
@@ -299,7 +294,7 @@ pub(crate) fn response_headers(
     }
 }
 
-pub(crate) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     let mut actions: Vec<EditAction> = Vec::new();
     table_frame(ui, |ui| {
         let fixed = if editing {
@@ -372,7 +367,7 @@ pub(crate) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     }
 }
 
-pub(crate) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
     if editing {
         // The request body is always editable — materialize an empty one so the
@@ -403,7 +398,7 @@ pub(crate) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bo
 /// `+ new response` button. In edit mode the active tab's code is edited inline
 /// (frameless) and carries an `x` to delete that response. Selecting a tab sets
 /// `resp_tab`, so both `responses()` and the RespHeader tab share it.
-pub(crate) fn response_code_selector(
+fn response_code_selector(
     ui: &mut egui::Ui,
     model: &mut EditModel,
     resp_tab: &mut usize,
@@ -551,7 +546,7 @@ fn status_tab_label(code: &str, title: &str) -> String {
 /// Renders the selected response's JSON example body. The caller (the Response
 /// tab) has already drawn the code-tab strip, which now also owns the response's
 /// title, and guarantees `idx` is a valid response index.
-pub(crate) fn response_body(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editing: bool) {
+fn response_body(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editing: bool) {
     ui.spacing_mut().item_spacing.y = SPACE_SMALL;
     let r = &mut model.responses[idx];
     // The title/description now lives in the status tab, so the body is just
@@ -575,7 +570,7 @@ mod tests {
     use super::*;
 
     #[test]
-    pub(crate) fn every_section_renders_without_panicking() {
+    fn every_section_renders_without_panicking() {
         // `__run_test_ui` takes `impl Fn`, so build the model and tab index
         // fresh inside the closure rather than capturing them mutably.
         eframe::egui::__run_test_ui(|ui| {
@@ -1271,7 +1266,7 @@ struct TreeNode {
 }
 
 impl TreeNode {
-    pub(crate) fn insert(&mut self, rel: &str, idx: usize, method: &str, invalid: bool) {
+    fn insert(&mut self, rel: &str, idx: usize, method: &str, invalid: bool) {
         match rel.split_once('/') {
             Some((dir, rest)) => self
                 .dirs
@@ -1288,7 +1283,7 @@ impl TreeNode {
     /// and the `+` target); `to_load` records a clicked contract; `new_in`
     /// records a folder's path (with trailing `/`) when its `+` is clicked.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn show(
+    fn show(
         &self,
         ui: &mut egui::Ui,
         prefix: &str,
