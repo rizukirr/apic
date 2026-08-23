@@ -16,6 +16,7 @@ use apic_core::json::method_str;
 
 use crate::app::App;
 use crate::app::actions::SidebarAction;
+use crate::app::state::ShellState;
 use crate::features::contracts::state::{ContractsState, DeleteTarget, MainTab, RespTab};
 use crate::ui::components::{
     add_button, bordered_input, delete_button, fill_column, header_label, json_editor,
@@ -859,402 +860,375 @@ impl App {
             self.contracts.pending_delete = None;
         }
     }
+}
 
-    /// Left sidebar: a TEMPLATES section on top, then the contract picker
-    /// (folder tree, method-badged, filtered by search).
-    pub(crate) fn sidebar(&mut self, ui: &mut egui::Ui) -> Option<SidebarAction> {
-        // When collapsed, skip building/showing the panel entirely so the
-        // CentralPanel reclaims the full width.
-        if !self.shell.sidebar_open {
-            return None;
+/// What [`central_body`] asks the shell to do after the panel closes.
+///
+/// The body only holds the contracts slice, so anything needing `&mut App`
+/// (re-reading the project, taking an edit snapshot) is recorded here and
+/// applied by the caller.
+#[derive(Default)]
+pub(crate) struct CentralOutcome {
+    /// The Edit/Cancel button was clicked; the shell enters or leaves edit
+    /// mode so the snapshot is taken or restored on `App`.
+    pub(crate) toggle_edit: bool,
+
+    /// A repaired contract is now valid JSON: write this buffer to this path
+    /// and reload the project.
+    pub(crate) promote: Option<(PathBuf, String)>,
+}
+
+/// Left sidebar body: a TEMPLATES section on top, then the contract picker
+/// (folder tree, method-badged, filtered by search).
+///
+/// The panel frame is owned by the app shell, not by this feature, so that a
+/// second sidebar tab can render into the same frame; this only fills it.
+pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Option<SidebarAction> {
+    let q = state.search.to_lowercase();
+    let mut tree = TreeNode::default();
+    for (i, e) in state.entries.iter().enumerate() {
+        if q.is_empty() || e.rel.to_lowercase().contains(&q) {
+            tree.insert(&e.rel, i, &e.method, e.error.is_some());
         }
-        let q = self.contracts.search.to_lowercase();
-        let mut tree = TreeNode::default();
-        for (i, e) in self.contracts.entries.iter().enumerate() {
-            if q.is_empty() || e.rel.to_lowercase().contains(&q) {
-                tree.insert(&e.rel, i, &e.method, e.error.is_some());
+    }
+    let selected = state.selected;
+    let sel_template = state.selected_template;
+    let templates: Vec<(String, PathBuf)> = state.templates.clone();
+    let mut action = None;
+    let mut to_contract = None;
+    egui::Panel::bottom("new_request_bar")
+        .show_separator_line(false)
+        .show(ui, |ui| {
+            ui.add_space(SPACE_EXTRA_SMALL);
+            let button = egui::Button::new(RichText::new("[ NEW REQUEST ]").color(BG)).fill(GREEN);
+            if ui.add_sized([ui.available_width(), 26.0], button).clicked() {
+                action = Some(SidebarAction::NewRequest(String::new()));
             }
+            ui.add_space(SPACE_EXTRA_SMALL);
+        });
+
+    ui.add_space(SPACE_MEDIUM);
+    ui.label(RichText::new("EXPLORER").color(GREEN).strong().size(16.0));
+
+    ui.add_space(SPACE_MEDIUM);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("TEMPLATES").color(DIM).size(11.0));
+        if ui
+            .small_button(RichText::new("+").color(GREEN))
+            .on_hover_text("New template")
+            .clicked()
+        {
+            action = Some(SidebarAction::NewTemplate);
         }
-        let selected = self.contracts.selected;
-        let sel_template = self.contracts.selected_template;
-        let templates: Vec<(String, PathBuf)> = self.contracts.templates.clone();
-        let mut action = None;
-        let mut to_contract = None;
-        egui::Panel::left("contracts")
-            .resizable(true)
-            .default_size(240.0)
-            .min_size(100.0)
-            .show(ui, |ui| {
-                egui::Panel::bottom("new_request_bar")
-                    .show_separator_line(false)
-                    .show(ui, |ui| {
-                        ui.add_space(SPACE_EXTRA_SMALL);
-                        let button = egui::Button::new(RichText::new("[ NEW REQUEST ]").color(BG))
-                            .fill(GREEN);
-                        if ui.add_sized([ui.available_width(), 26.0], button).clicked() {
-                            action = Some(SidebarAction::NewRequest(String::new()));
-                        }
-                        ui.add_space(SPACE_EXTRA_SMALL);
-                    });
-
-                ui.add_space(SPACE_MEDIUM);
-                ui.label(RichText::new("EXPLORER").color(GREEN).strong().size(16.0));
-
-                ui.add_space(SPACE_MEDIUM);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("TEMPLATES").color(DIM).size(11.0));
-                    if ui
-                        .small_button(RichText::new("+").color(GREEN))
-                        .on_hover_text("New template")
-                        .clicked()
-                    {
-                        action = Some(SidebarAction::NewTemplate);
-                    }
-                });
-                ui.separator();
-                if templates.is_empty() {
-                    ui.label(RichText::new("(none)").color(DIM));
-                }
-                for (i, (name, path)) in templates.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        // Reserve the trailing delete button first so the name
-                        // label truncates to the space that's left instead of
-                        // forcing the panel wider than its dragged width.
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .small_button(RichText::new("-").color(DIM))
-                                .on_hover_text("Delete this template")
-                                .clicked()
-                            {
-                                action =
-                                    Some(SidebarAction::RequestDelete(DeleteTarget::Template {
-                                        name: name.clone(),
-                                        path: path.clone(),
-                                    }));
-                            }
-                            ui.with_layout(
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| {
-                                    let label = egui::Button::selectable(
-                                        sel_template == Some(i),
-                                        RichText::new(format!("◆ {name}")).color(AMBER),
-                                    )
-                                    .truncate();
-                                    if ui.add(label).clicked() {
-                                        action = Some(SidebarAction::LoadTemplate(i));
-                                    }
-                                },
-                            );
-                        });
-                    });
-                }
-
-                ui.add_space(10.0);
-                ui.label(RichText::new("CONTRACTS").color(DIM).size(11.0));
-                ui.separator();
-                if self.shell.sidebar_open {
-                    bordered_input(ui, &mut self.contracts.search, f32::INFINITY, "SEARCH...");
-                    ui.add_space(SPACE_EXTRA_SMALL);
-                }
-
-                let mut new_in = None;
-                let mut delete = None;
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        tree.show(ui, "", selected, &mut to_contract, &mut new_in, &mut delete);
-                    });
-                if let Some(prefix) = new_in {
-                    action = Some(SidebarAction::NewRequest(prefix));
-                }
-                if let Some((rel, is_dir)) = delete {
-                    action = Some(SidebarAction::RequestDelete(DeleteTarget::Contract {
-                        rel,
-                        is_dir,
+    });
+    ui.separator();
+    if templates.is_empty() {
+        ui.label(RichText::new("(none)").color(DIM));
+    }
+    for (i, (name, path)) in templates.iter().enumerate() {
+        ui.horizontal(|ui| {
+            // Reserve the trailing delete button first so the name
+            // label truncates to the space that's left instead of
+            // forcing the panel wider than its dragged width.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .small_button(RichText::new("-").color(DIM))
+                    .on_hover_text("Delete this template")
+                    .clicked()
+                {
+                    action = Some(SidebarAction::RequestDelete(DeleteTarget::Template {
+                        name: name.clone(),
+                        path: path.clone(),
                     }));
                 }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let label = egui::Button::selectable(
+                        sel_template == Some(i),
+                        RichText::new(format!("◆ {name}")).color(AMBER),
+                    )
+                    .truncate();
+                    if ui.add(label).clicked() {
+                        action = Some(SidebarAction::LoadTemplate(i));
+                    }
+                });
             });
-        if let Some(i) = to_contract {
-            action = Some(SidebarAction::LoadContract(i));
-        }
-        action
+        });
     }
 
-    /// The central viewer/editor for the loaded contract.
-    pub(crate) fn central(&mut self, ui: &mut egui::Ui) {
-        let no_project = self.shell.project_root.is_none();
-        let mut promote: Option<(PathBuf, String)> = None;
-        let mut toggle_edit = false;
-        let App {
-            shell,
-            contracts:
-                ContractsState {
-                    model,
-                    path,
-                    editing,
-                    resp_tab,
-                    main_tab,
-                    resp_tab_view,
-                    repair,
-                    entries,
-                    original_model,
-                    ..
-                },
-            ..
-        } = self;
-        egui::CentralPanel::default().show(ui, |ui| {
-            if no_project {
-                ui.add_space(40.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("No project open").color(DIM).size(16.0));
-                    ui.add_space(SPACE_SMALL);
-                    ui.label(
-                        RichText::new("Use Open to open a project folder, or New to create one.")
-                            .color(DIM),
-                    );
-                });
-                return;
-            }
-            if let Some(rep) = repair.as_mut() {
-                ui.add_space(SPACE_SMALL);
-                if rep.error.is_empty() {
-                    ui.label(
-                        RichText::new("Valid, opening editor…")
-                            .color(GREEN)
-                            .strong(),
-                    );
-                } else {
-                    ui.label(RichText::new("INVALID CONTRACT").color(RED).strong());
-                    ui.label(RichText::new(&rep.error).color(AMBER).size(12.0));
+    ui.add_space(10.0);
+    ui.label(RichText::new("CONTRACTS").color(DIM).size(11.0));
+    ui.separator();
+    bordered_input(ui, &mut state.search, f32::INFINITY, "SEARCH...");
+    ui.add_space(SPACE_EXTRA_SMALL);
+
+    let mut new_in = None;
+    let mut delete = None;
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            tree.show(ui, "", selected, &mut to_contract, &mut new_in, &mut delete);
+        });
+    if let Some(prefix) = new_in {
+        action = Some(SidebarAction::NewRequest(prefix));
+    }
+    if let Some((rel, is_dir)) = delete {
+        action = Some(SidebarAction::RequestDelete(DeleteTarget::Contract {
+            rel,
+            is_dir,
+        }));
+    }
+    if let Some(i) = to_contract {
+        action = Some(SidebarAction::LoadContract(i));
+    }
+    action
+}
+
+/// The central body for the loaded contract: the viewer/editor, the repair
+/// editor for an invalid file, or the empty-state text.
+///
+/// The panel frame is owned by the app shell. Work that needs `&mut App` is
+/// reported through `out` rather than done here, since this only sees the
+/// contracts slice.
+pub(crate) fn central_body(
+    ui: &mut egui::Ui,
+    shell: &mut ShellState,
+    contracts: &mut ContractsState,
+    out: &mut CentralOutcome,
+) {
+    let no_project = shell.project_root.is_none();
+    let ContractsState {
+        model,
+        path,
+        editing,
+        resp_tab,
+        main_tab,
+        resp_tab_view,
+        repair,
+        entries,
+        original_model,
+        ..
+    } = contracts;
+    if no_project {
+        ui.add_space(40.0);
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new("No project open").color(DIM).size(16.0));
+            ui.add_space(SPACE_SMALL);
+            ui.label(
+                RichText::new("Use Open to open a project folder, or New to create one.")
+                    .color(DIM),
+            );
+        });
+        return;
+    }
+    if let Some(rep) = repair.as_mut() {
+        ui.add_space(SPACE_SMALL);
+        if rep.error.is_empty() {
+            ui.label(
+                RichText::new("Valid, opening editor…")
+                    .color(GREEN)
+                    .strong(),
+            );
+        } else {
+            ui.label(RichText::new("INVALID CONTRACT").color(RED).strong());
+            ui.label(RichText::new(&rep.error).color(AMBER).size(12.0));
+        }
+        ui.add_space(SPACE_SMALL);
+        let pretty = text_button(ui, "pretty", AMBER);
+        if pretty {
+            rep.buffer = apic_core::json::pretty_json(&rep.buffer);
+        }
+        ui.add_space(SPACE_SMALL);
+        // The multiline TextEdit has no scrollbar of its own; a long
+        // invalid contract is only reachable inside an enclosing
+        // ScrollArea (egui lays the editor out to full content height).
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let resp = ui.add(
+                    egui::TextEdit::multiline(&mut rep.buffer)
+                        .code_editor()
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(24),
+                );
+                if resp.changed() || pretty {
+                    rep.error = match apic_core::json::validate(&rep.buffer) {
+                        Ok(()) => String::new(),
+                        Err(e) => e.to_string(),
+                    };
+                    if rep.error.is_empty()
+                        && let Some(entry) = entries.get(rep.index)
+                    {
+                        out.promote = Some((entry.path.clone(), rep.buffer.clone()));
+                    }
                 }
-                ui.add_space(SPACE_SMALL);
-                let pretty = text_button(ui, "pretty", AMBER);
-                if pretty {
-                    rep.buffer = apic_core::json::pretty_json(&rep.buffer);
-                }
-                ui.add_space(SPACE_SMALL);
-                // The multiline TextEdit has no scrollbar of its own; a long
-                // invalid contract is only reachable inside an enclosing
-                // ScrollArea (egui lays the editor out to full content height).
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let resp = ui.add(
-                            egui::TextEdit::multiline(&mut rep.buffer)
-                                .code_editor()
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(24),
-                        );
-                        if resp.changed() || pretty {
-                            rep.error = match apic_core::json::validate(&rep.buffer) {
-                                Ok(()) => String::new(),
-                                Err(e) => e.to_string(),
-                            };
-                            if rep.error.is_empty()
-                                && let Some(entry) = entries.get(rep.index)
-                            {
-                                promote = Some((entry.path.clone(), rep.buffer.clone()));
+            });
+        return;
+    }
+    let Some(model) = model.as_mut() else {
+        ui.add_space(40.0);
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new("WELCOME TO APIC").color(GREEN).size(28.0));
+            ui.label(RichText::new("Select a contract on the left.").color(DIM));
+        });
+        return;
+    };
+
+    // Toolbar row: endpoint name on the left, EDIT/SAVE on the right.
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(SPACE_SMALL); // end padding, right of Save
+            if text_button(ui, "Save", GREEN) {
+                match path.as_deref() {
+                    Some(p) => match model.save(p) {
+                        Ok(()) => {
+                            shell.status = format!("saved {}", p.display());
+                            *editing = false; // back to read-only on success
+                            *original_model = None; // commit: drop the snapshot
+                            // Refresh this contract's sidebar method badge.
+                            if let Some(e) = entries.iter_mut().find(|e| e.path.as_path() == p) {
+                                e.method = method_str(&model.method);
                             }
                         }
-                    });
-                return;
+                        Err(e) => shell.status = format!("save error: {e}"),
+                    },
+                    None => shell.status = "no path to save to".into(),
+                }
             }
-            let Some(model) = model.as_mut() else {
-                ui.add_space(40.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("WELCOME TO APIC").color(GREEN).size(28.0));
-                    ui.label(RichText::new("Select a contract on the left.").color(DIM));
-                });
-                return;
-            };
-
-            // Toolbar row: endpoint name on the left, EDIT/SAVE on the right.
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_space(SPACE_SMALL); // end padding, right of Save
-                    if text_button(ui, "Save", GREEN) {
-                        match path.as_deref() {
-                            Some(p) => match model.save(p) {
-                                Ok(()) => {
-                                    shell.status = format!("saved {}", p.display());
-                                    *editing = false; // back to read-only on success
-                                    *original_model = None; // commit: drop the snapshot
-                                    // Refresh this contract's sidebar method badge.
-                                    if let Some(e) =
-                                        entries.iter_mut().find(|e| e.path.as_path() == p)
-                                    {
-                                        e.method = method_str(&model.method);
-                                    }
-                                }
-                                Err(e) => shell.status = format!("save error: {e}"),
-                            },
-                            None => shell.status = "no path to save to".into(),
-                        }
-                    }
-                    let edit_label = if *editing { "Cancel" } else { "Edit" };
-                    if text_button(ui, edit_label, GREEN) {
-                        // Applied after the panel closure via begin_edit/cancel_edit
-                        // so the snapshot is taken/restored on `self`.
-                        toggle_edit = true;
-                    }
-                    // The name fills the space to the left of the buttons.
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.add_space(SPACE_SMALL); // start padding, left of the name
-                        endpoint_name(ui, model, *editing);
-                    });
-                });
+            let edit_label = if *editing { "Cancel" } else { "Edit" };
+            if text_button(ui, edit_label, GREEN) {
+                // Applied after the panel closure via begin_edit/cancel_edit
+                // so the snapshot is taken/restored on `self`.
+                out.toggle_edit = true;
+            }
+            // The name fills the space to the left of the buttons.
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add_space(SPACE_SMALL); // start padding, left of the name
+                endpoint_name(ui, model, *editing);
             });
+        });
+    });
+    ui.add_space(SPACE_SMALL);
+
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::same(10))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
+            method_url_row(ui, model, *editing);
             ui.add_space(SPACE_SMALL);
 
-            egui::Frame::NONE
-                .inner_margin(egui::Margin::same(10))
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
-                    method_url_row(ui, model, *editing);
-                    ui.add_space(SPACE_SMALL);
+            // 50:50 split with a vertical divider between the panes:
+            // request tabs on the left, Response on the right.
+            ui.horizontal_top(|ui| {
+                let gap = ui.spacing().item_spacing.x;
+                // Reserve the divider's own width plus a gap on each side so the
+                // two panes stay an even 50:50.
+                let divider_w = 6.0;
+                let col_w = ((ui.available_width() - divider_w - gap * 2.0) / 2.0).max(0.0);
+                let col_h = ui.available_height();
 
-                    // 50:50 split with a vertical divider between the panes:
-                    // request tabs on the left, Response on the right.
-                    ui.horizontal_top(|ui| {
-                        let gap = ui.spacing().item_spacing.x;
-                        // Reserve the divider's own width plus a gap on each side so the
-                        // two panes stay an even 50:50.
-                        let divider_w = 6.0;
-                        let col_w = ((ui.available_width() - divider_w - gap * 2.0) / 2.0).max(0.0);
-                        let col_h = ui.available_height();
+                // Left pane: Overview / Headers / Query / Request.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(col_w, col_h),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |left| {
+                        left.horizontal(|ui| {
+                            let mut t = |ui: &mut egui::Ui, label: &str, which: MainTab| {
+                                if ui
+                                    .selectable_label(
+                                        *main_tab == which,
+                                        RichText::new(label).color(if *main_tab == which {
+                                            GREEN
+                                        } else {
+                                            DIM
+                                        }),
+                                    )
+                                    .clicked()
+                                {
+                                    *main_tab = which;
+                                }
+                            };
+                            t(ui, "Overview", MainTab::Overview);
+                            t(ui, "Headers", MainTab::Headers);
+                            t(ui, "Query", MainTab::Query);
+                            t(ui, "Request", MainTab::Request);
+                        });
+                        left.separator();
+                        // One scroll per pane (distinct id) so the left
+                        // and right panes scroll independently.
+                        egui::ScrollArea::vertical()
+                            .id_salt("left_pane_scroll")
+                            .auto_shrink([false, false])
+                            .show(left, |ui| match *main_tab {
+                                MainTab::Overview => endpoint_description(ui, model, *editing),
+                                MainTab::Headers => headers(ui, model, *editing),
+                                MainTab::Query => query_section(ui, model, *editing),
+                                MainTab::Request => request_body(ui, model, *editing),
+                            });
+                    },
+                );
 
-                        // Left pane: Overview / Headers / Query / Request.
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(col_w, col_h),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |left| {
-                                left.horizontal(|ui| {
-                                    let mut t = |ui: &mut egui::Ui, label: &str, which: MainTab| {
-                                        if ui
-                                            .selectable_label(
-                                                *main_tab == which,
-                                                RichText::new(label).color(if *main_tab == which {
-                                                    GREEN
-                                                } else {
-                                                    DIM
-                                                }),
-                                            )
-                                            .clicked()
-                                        {
-                                            *main_tab = which;
-                                        }
-                                    };
-                                    t(ui, "Overview", MainTab::Overview);
-                                    t(ui, "Headers", MainTab::Headers);
-                                    t(ui, "Query", MainTab::Query);
-                                    t(ui, "Request", MainTab::Request);
-                                });
-                                left.separator();
-                                // One scroll per pane (distinct id) so the left
-                                // and right panes scroll independently.
-                                egui::ScrollArea::vertical()
-                                    .id_salt("left_pane_scroll")
-                                    .auto_shrink([false, false])
-                                    .show(left, |ui| match *main_tab {
-                                        MainTab::Overview => {
-                                            endpoint_description(ui, model, *editing)
-                                        }
-                                        MainTab::Headers => headers(ui, model, *editing),
-                                        MainTab::Query => query_section(ui, model, *editing),
-                                        MainTab::Request => request_body(ui, model, *editing),
-                                    });
-                            },
-                        );
+                ui.separator();
 
-                        ui.separator();
-
-                        // Right pane: a Response / Header tab bar over a shared,
-                        // per-response status strip.
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(col_w, col_h),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |right| {
-                                right.horizontal(|ui| {
-                                    let mut t = |ui: &mut egui::Ui, label: &str, which: RespTab| {
-                                        if ui
-                                            .selectable_label(
-                                                *resp_tab_view == which,
-                                                RichText::new(label).color(
-                                                    if *resp_tab_view == which {
-                                                        GREEN
-                                                    } else {
-                                                        DIM
-                                                    },
-                                                ),
-                                            )
-                                            .clicked()
-                                        {
-                                            *resp_tab_view = which;
-                                        }
-                                    };
-                                    t(ui, "Response", RespTab::Body);
-                                    t(ui, "Header", RespTab::Headers);
-                                });
-                                right.separator();
-                                // One scroll per pane (distinct id) starting under
-                                // the "Response" title, so the left and right panes
-                                // scroll independently as plain vertical content.
-                                egui::ScrollArea::vertical()
-                                    .id_salt("right_pane_scroll")
-                                    .auto_shrink([false, false])
-                                    .show(right, |ui| {
-                                        // An endpoint is expected to document a
-                                        // response, so default to a 200 in edit mode
-                                        // (its editor shows without "+ new response").
-                                        if *editing && model.responses.is_empty() {
-                                            model
-                                                .responses
-                                                .push(apic_core::edit::EditResponse::blank());
-                                        }
-                                        // Per-response status strip; its `code -
-                                        // title` tabs select the response whose
-                                        // body/headers the tab bar above shows.
-                                        response_code_selector(ui, model, resp_tab, *editing);
-                                        if model.responses.is_empty() {
-                                            ui.label(RichText::new("(no responses)").color(DIM));
-                                            return;
-                                        }
-                                        if *resp_tab >= model.responses.len() {
-                                            *resp_tab = 0;
-                                        }
-                                        ui.add_space(SPACE_SMALL);
-                                        let idx = *resp_tab;
-                                        match *resp_tab_view {
-                                            RespTab::Body => {
-                                                response_body(ui, model, idx, *editing)
-                                            }
-                                            RespTab::Headers => {
-                                                response_headers(ui, model, idx, *editing)
-                                            }
-                                        }
-                                    });
-                            },
-                        );
-                    });
-                });
+                // Right pane: a Response / Header tab bar over a shared,
+                // per-response status strip.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(col_w, col_h),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |right| {
+                        right.horizontal(|ui| {
+                            let mut t =
+                                |ui: &mut egui::Ui, label: &str, which: RespTab| {
+                                    if ui
+                                        .selectable_label(
+                                            *resp_tab_view == which,
+                                            RichText::new(label).color(
+                                                if *resp_tab_view == which { GREEN } else { DIM },
+                                            ),
+                                        )
+                                        .clicked()
+                                    {
+                                        *resp_tab_view = which;
+                                    }
+                                };
+                            t(ui, "Response", RespTab::Body);
+                            t(ui, "Header", RespTab::Headers);
+                        });
+                        right.separator();
+                        // One scroll per pane (distinct id) starting under
+                        // the "Response" title, so the left and right panes
+                        // scroll independently as plain vertical content.
+                        egui::ScrollArea::vertical()
+                            .id_salt("right_pane_scroll")
+                            .auto_shrink([false, false])
+                            .show(right, |ui| {
+                                // An endpoint is expected to document a
+                                // response, so default to a 200 in edit mode
+                                // (its editor shows without "+ new response").
+                                if *editing && model.responses.is_empty() {
+                                    model.responses.push(apic_core::edit::EditResponse::blank());
+                                }
+                                // Per-response status strip; its `code -
+                                // title` tabs select the response whose
+                                // body/headers the tab bar above shows.
+                                response_code_selector(ui, model, resp_tab, *editing);
+                                if model.responses.is_empty() {
+                                    ui.label(RichText::new("(no responses)").color(DIM));
+                                    return;
+                                }
+                                if *resp_tab >= model.responses.len() {
+                                    *resp_tab = 0;
+                                }
+                                ui.add_space(SPACE_SMALL);
+                                let idx = *resp_tab;
+                                match *resp_tab_view {
+                                    RespTab::Body => response_body(ui, model, idx, *editing),
+                                    RespTab::Headers => response_headers(ui, model, idx, *editing),
+                                }
+                            });
+                    },
+                );
+            });
         });
-        if toggle_edit {
-            if self.contracts.editing {
-                self.cancel_edit();
-            } else {
-                self.begin_edit();
-            }
-        }
-        if let Some((path, buffer)) = promote
-            && std::fs::write(&path, &buffer).is_ok()
-        {
-            self.contracts.repair = None;
-            self.reload_project();
-            if let Some(i) = self.contracts.entries.iter().position(|e| e.path == path) {
-                self.load(i);
-            }
-        }
-    }
 }
 
 /// A folder tree of contracts built from their `/`-separated relative paths.
