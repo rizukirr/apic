@@ -17,7 +17,9 @@ use egui::RichText;
 use crate::app::actions::SidebarAction;
 use crate::app::state::{DialogKind, ShellState};
 use crate::features::contracts::state::ContractsState;
-use crate::features::contracts::view::{FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE};
+use crate::features::contracts::view::{
+    CentralOutcome, FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, sidebar_body,
+};
 use crate::settings::Settings;
 use crate::ui::components::text_button;
 use crate::ui::theme::*;
@@ -128,6 +130,50 @@ impl App {
                 });
             });
         });
+    }
+
+    /// The left sidebar frame. The panel belongs to the shell rather than to any
+    /// one feature, so the active tab only fills its body.
+    fn sidebar(&mut self, ui: &mut egui::Ui) -> Option<SidebarAction> {
+        // When collapsed, skip building/showing the panel entirely so the
+        // CentralPanel reclaims the full width.
+        if !self.shell.sidebar_open {
+            return None;
+        }
+        let mut action = None;
+        egui::Panel::left("sidebar")
+            .resizable(true)
+            .default_size(240.0)
+            .min_size(100.0)
+            .show(ui, |ui| {
+                action = sidebar_body(ui, &mut self.contracts);
+            });
+        action
+    }
+
+    /// The central panel frame, plus the deferred work its body reported: both
+    /// need `&mut App`, which the body itself does not have.
+    fn central(&mut self, ui: &mut egui::Ui) {
+        let mut out = CentralOutcome::default();
+        egui::CentralPanel::default().show(ui, |ui| {
+            central_body(ui, &mut self.shell, &mut self.contracts, &mut out);
+        });
+        if out.toggle_edit {
+            if self.contracts.editing {
+                self.cancel_edit();
+            } else {
+                self.begin_edit();
+            }
+        }
+        if let Some((path, buffer)) = out.promote
+            && std::fs::write(&path, &buffer).is_ok()
+        {
+            self.contracts.repair = None;
+            self.reload_project();
+            if let Some(i) = self.contracts.entries.iter().position(|e| e.path == path) {
+                self.load(i);
+            }
+        }
     }
 }
 
