@@ -908,9 +908,6 @@ pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Opt
         });
 
     ui.add_space(SPACE_MEDIUM);
-    ui.label(RichText::new("EXPLORER").color(GREEN).strong().size(16.0));
-
-    ui.add_space(SPACE_MEDIUM);
     ui.horizontal(|ui| {
         ui.label(RichText::new("TEMPLATES").color(DIM).size(11.0));
         if ui

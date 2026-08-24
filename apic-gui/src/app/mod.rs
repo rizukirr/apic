@@ -154,23 +154,44 @@ impl App {
             .default_size(240.0)
             .min_size(100.0)
             .show(ui, |ui| {
+                ui.add_space(SPACE_EXTRA_SMALL);
                 ui.horizontal(|ui| {
-                    let mut tab = |ui: &mut egui::Ui, label: &str, which: SidebarTab| {
-                        let selected = self.shell.sidebar_tab == which;
-                        if ui
-                            .selectable_label(
-                                selected,
-                                RichText::new(label).color(if selected { GREEN } else { DIM }),
-                            )
-                            .clicked()
-                            && !selected
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.shell.sidebar_tab == SidebarTab::Git
+                            && ui
+                                .small_button(RichText::new("⟳").color(GREEN))
+                                .on_hover_text("Refresh status")
+                                .clicked()
                         {
-                            action = Some(Action::Sidebar(SidebarAction::SwitchTab(which)));
+                            action = Some(Action::Git(GitAction::Refresh));
                         }
-                    };
-                    tab(ui, "Explorer", SidebarTab::Explorer);
-                    tab(ui, "Git", SidebarTab::Git);
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            let mut tab = |ui: &mut egui::Ui, label: &str, which: SidebarTab| {
+                                let selected = self.shell.sidebar_tab == which;
+                                if ui
+                                    .selectable_label(
+                                        selected,
+                                        RichText::new(label).color(if selected {
+                                            GREEN
+                                        } else {
+                                            DIM
+                                        }),
+                                    )
+                                    .clicked()
+                                    && !selected
+                                {
+                                    action = Some(Action::Sidebar(SidebarAction::SwitchTab(which)));
+                                }
+                            };
+                            tab(ui, "Explorer", SidebarTab::Explorer);
+                            tab(ui, "Git", SidebarTab::Git);
+                            if let Some(color) = view::dirty_indicator(&self.git.status) {
+                                ui.label(RichText::new("●").color(color));
+                            }
+                        });
+                    });
                 });
+                ui.add_space(SPACE_EXTRA_SMALL);
                 ui.separator();
                 match self.shell.sidebar_tab {
                     SidebarTab::Explorer => {

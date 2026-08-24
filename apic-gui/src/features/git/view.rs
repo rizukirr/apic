@@ -9,13 +9,34 @@ use egui::RichText;
 
 use crate::app::actions::GitAction;
 use crate::features::git::diff::{self, FieldChange};
-use crate::features::git::model::{Change, FileStatus};
+use crate::features::git::model::{Change, FileStatus, Status};
 use crate::features::git::state::GitState;
 use crate::ui::components::text_button;
 use crate::ui::theme::*;
 
-/// Left sidebar body for the Git tab: a heading, a refresh button, the error
-/// line when set, and the file list split into staged and unstaged sections.
+/// The dirty indicator colour for the Git tab label, decided purely from a
+/// `Status`: `None` when there are no changes, `RED` when any entry is
+/// conflicted, `AMBER` when there are changes but no conflict. Conflict
+/// outranks change, since a conflict is the one that cannot wait.
+pub(crate) fn dirty_indicator(status: &Status) -> Option<egui::Color32> {
+    if status
+        .inside
+        .iter()
+        .chain(status.outside.iter())
+        .any(|f| f.conflicted)
+    {
+        return Some(RED);
+    }
+    if status.inside.is_empty() && status.outside.is_empty() {
+        None
+    } else {
+        Some(AMBER)
+    }
+}
+
+/// Left sidebar body for the Git tab: the error line when set, and the file
+/// list split into staged and unstaged sections. The refresh control and the
+/// tab's own dirty indicator live in the shell's tab row, not here.
 ///
 /// The panel frame is owned by the app shell, not by this feature, so that a
 /// second sidebar tab can render into the same frame; this only fills it.
@@ -25,19 +46,6 @@ pub(crate) fn sidebar_body(
     repo_root: Option<&Path>,
 ) -> Option<GitAction> {
     let mut action = None;
-    ui.add_space(SPACE_MEDIUM);
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("GIT").color(GREEN).strong().size(16.0));
-        if ui
-            .small_button(RichText::new("⟳").color(GREEN))
-            .on_hover_text("Refresh status")
-            .clicked()
-        {
-            action = Some(GitAction::Refresh);
-        }
-    });
-    ui.separator();
-
     if !state.error.is_empty() {
         ui.label(RichText::new(&state.error).color(RED));
         ui.add_space(SPACE_SMALL);
@@ -416,7 +424,6 @@ fn raw_diff_view(ui: &mut egui::Ui, raw: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::git::model::Status;
     use crate::features::git::state::DiffData;
 
     const CONTRACT_GET: &str =
@@ -431,6 +438,38 @@ mod tests {
             diff: Some(((path.to_string(), staged), data)),
             ..GitState::default()
         }
+    }
+
+    fn file(path: &str, conflicted: bool) -> FileStatus {
+        FileStatus {
+            path: path.into(),
+            index: Change::Modified,
+            worktree: Change::Modified,
+            conflicted,
+        }
+    }
+
+    #[test]
+    fn dirty_indicator_is_none_when_status_is_empty() {
+        assert_eq!(dirty_indicator(&Status::default()), None);
+    }
+
+    #[test]
+    fn dirty_indicator_is_amber_for_plain_changes() {
+        let status = Status {
+            inside: vec![file("a.json", false)],
+            outside: vec![],
+        };
+        assert_eq!(dirty_indicator(&status), Some(AMBER));
+    }
+
+    #[test]
+    fn dirty_indicator_is_red_when_any_entry_is_conflicted() {
+        let status = Status {
+            inside: vec![file("a.json", false), file("b.json", true)],
+            outside: vec![file("c.json", false)],
+        };
+        assert_eq!(dirty_indicator(&status), Some(RED));
     }
 
     #[test]
