@@ -9,6 +9,8 @@ pub(crate) mod actions;
 pub(crate) mod git_jobs;
 pub(crate) mod project;
 pub(crate) mod state;
+#[cfg(test)]
+mod test_support;
 
 use std::path::PathBuf;
 
