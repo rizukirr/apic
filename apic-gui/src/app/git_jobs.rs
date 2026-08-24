@@ -40,8 +40,8 @@ impl App {
 
     /// Spawns the diff fetch for one `(path, staged)` selection on a
     /// background thread. Refuses to start a second job while one is
-    /// pending, the same rule as `spawn`.
-    fn spawn_diff(&mut self, ctx: &egui::Context, path: String, staged: bool) {
+    /// pending, the same rule as `spawn`. Called from `GitAction::Select`.
+    pub(crate) fn spawn_diff(&mut self, ctx: &egui::Context, path: String, staged: bool) {
         if self.git.pending.is_some() {
             return;
         }
@@ -57,23 +57,6 @@ impl App {
             ctx.request_repaint();
         });
         self.git.pending = Some(rx);
-    }
-
-    /// Starts the diff fetch for the current selection when no job is
-    /// pending and the cached diff, if any, is for a different selection.
-    /// Called from `poll_git` so a click on `GitAction::Select`, which only
-    /// records the selection, is picked up on the very next poll.
-    fn maybe_spawn_diff(&mut self, ctx: &egui::Context) {
-        if self.git.pending.is_some() {
-            return;
-        }
-        let Some((path, staged)) = self.git.selected.clone() else {
-            return;
-        };
-        let cached = matches!(&self.git.diff, Some((key, _)) if *key == (path.clone(), staged));
-        if !cached {
-            self.spawn_diff(ctx, path, staged);
-        }
     }
 
     /// Runs one mutating git command (stage, unstage, discard or commit) on a
@@ -135,7 +118,6 @@ impl App {
     /// Polls the in-flight git job and applies its result. Called every frame
     /// from `App::ui`, next to `poll_dialog`.
     pub(crate) fn poll_git(&mut self, ctx: &egui::Context) {
-        self.maybe_spawn_diff(ctx);
         let Some(rx) = &self.git.pending else {
             return;
         };

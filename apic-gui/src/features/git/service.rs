@@ -2,9 +2,7 @@
 //! the threading lives in the app shell, which is what keeps this testable
 //! against a real temp-dir repository.
 //!
-//! Nothing outside `tests` calls into this yet, wired in by `state` and
-//! `view` in later tasks.
-#![allow(dead_code)]
+//! Consumed by `state` and `view`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

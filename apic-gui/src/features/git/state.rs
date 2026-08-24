@@ -1,8 +1,6 @@
 //! State owned by the git feature: the current status, the selected diff, and
 //! the in-flight background job (if any).
 
-use std::cell::Cell;
-
 use crate::features::git::model::Status;
 
 /// One completed diff fetch: the raw line diff plus each side's file content,
@@ -67,9 +65,10 @@ pub(crate) struct GitState {
     pub(crate) diff: Option<((String, bool), DiffData)>,
 
     /// Forces the line diff for the current file even when a semantic view
-    /// is available. A `Cell` so the body, which only borrows `GitState`
-    /// immutably, can still flip it from the checkbox click.
-    pub(crate) raw_view: Cell<bool>,
+    /// is available. Reset to `false` when the selection changes, so the
+    /// toggle applies to the file it was set on rather than persisting
+    /// across selections.
+    pub(crate) raw_view: bool,
 
     /// The commit message box, bound to the commit row's text field. Cleared
     /// after a successful commit.

@@ -6,7 +6,7 @@
 //! touch any other feature's state.
 
 pub(crate) mod actions;
-pub(crate) mod git;
+pub(crate) mod git_jobs;
 pub(crate) mod project;
 pub(crate) mod state;
 
@@ -22,7 +22,7 @@ use crate::features::contracts::view::{
     CentralOutcome, FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, sidebar_body,
 };
 use crate::features::git::state::GitState;
-use crate::features::git::view as git_view;
+use crate::features::git::view;
 use crate::settings::Settings;
 use crate::ui::components::text_button;
 use crate::ui::theme::*;
@@ -179,11 +179,9 @@ impl App {
                         }
                     }
                     SidebarTab::Git => {
-                        if let Some(a) = git_view::sidebar_body(
-                            ui,
-                            &mut self.git,
-                            self.shell.repo_root.as_deref(),
-                        ) {
+                        if let Some(a) =
+                            view::sidebar_body(ui, &mut self.git, self.shell.repo_root.as_deref())
+                        {
                             action = Some(Action::Git(a));
                         }
                     }
@@ -200,7 +198,7 @@ impl App {
             SidebarTab::Explorer => {
                 central_body(ui, &mut self.shell, &mut self.contracts, &mut out);
             }
-            SidebarTab::Git => git_view::central_body(ui, &self.git),
+            SidebarTab::Git => view::central_body(ui, &mut self.git),
         });
         if out.toggle_edit {
             if self.contracts.editing {
@@ -283,7 +281,13 @@ impl eframe::App for App {
                 self.spawn(&ctx);
             }
             Some(Action::Git(GitAction::Select { path, staged })) => {
-                self.git.selected = Some((path, staged));
+                self.git.raw_view = false;
+                self.git.selected = Some((path.clone(), staged));
+                let cached =
+                    matches!(&self.git.diff, Some((key, _)) if *key == (path.clone(), staged));
+                if !cached {
+                    self.spawn_diff(&ctx, path, staged);
+                }
             }
             Some(Action::Git(GitAction::Stage { path })) => {
                 self.spawn_stage(&ctx, path);

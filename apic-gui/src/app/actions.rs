@@ -36,9 +36,7 @@ pub(crate) enum GitAction {
     /// Re-read `git status`.
     Refresh,
 
-    /// Show the diff for this repo-relative path, staged or unstaged. Nothing
-    /// constructs this yet, the file list lands in Task 5.
-    #[allow(dead_code)]
+    /// Show the diff for this repo-relative path, staged or unstaged.
     Select { path: String, staged: bool },
 
     /// Stage this repo-relative path.

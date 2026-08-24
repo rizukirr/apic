@@ -3,9 +3,7 @@
 //! Nothing here spawns a process or touches egui, so the parser is testable
 //! against captured `git status --porcelain=v2 -z` bytes.
 //!
-//! Nothing outside `tests` calls into this yet, wired in by `service`,
-//! `state`, and `view` in later tasks.
-#![allow(dead_code)]
+//! Consumed by `service`, `state`, and `view`.
 
 use std::path::Path;
 

@@ -3,9 +3,7 @@
 //! This is the reason the panel exists: `git diff` can say a line changed,
 //! this can say a required query parameter was added. Knows nothing about git.
 //!
-//! Nothing outside `tests` calls into this yet, wired in by `state` and
-//! `view` in later tasks.
-#![allow(dead_code)]
+//! Consumed by `view`.
 
 use apic_core::edit::{EditHeader, EditModel, EditQuery, EditResponse};
 use apic_core::json::method_str;

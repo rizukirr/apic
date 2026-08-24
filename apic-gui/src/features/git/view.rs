@@ -256,7 +256,7 @@ fn file_row(
 /// state until then.
 ///
 /// The panel frame is owned by the app shell. This only sees the git slice.
-pub(crate) fn central_body(ui: &mut egui::Ui, state: &GitState) {
+pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) {
     let Some((path, staged)) = state.selected.clone() else {
         empty_state(ui, "No file selected", "Select a changed file on the left.");
         return;
@@ -281,10 +281,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &GitState) {
         let side = if staged { "staged" } else { "unstaged" };
         ui.label(RichText::new(side).color(DIM));
         if !conflicted {
-            let mut raw = state.raw_view.get();
-            if ui.checkbox(&mut raw, "Raw diff").changed() {
-                state.raw_view.set(raw);
-            }
+            ui.checkbox(&mut state.raw_view, "Raw diff");
         }
     });
     ui.separator();
@@ -296,7 +293,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &GitState) {
         return;
     }
 
-    let semantic = if state.raw_view.get() {
+    let semantic = if state.raw_view {
         None
     } else {
         match (
@@ -413,7 +410,7 @@ mod tests {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = GitState::default();
             sidebar_body(ui, &mut state, None);
-            central_body(ui, &state);
+            central_body(ui, &mut state);
         });
     }
 
@@ -460,7 +457,7 @@ mod tests {
                 ..GitState::default()
             };
             sidebar_body(ui, &mut state, Some(Path::new("/repo")));
-            central_body(ui, &state);
+            central_body(ui, &mut state);
         });
     }
 
@@ -494,7 +491,7 @@ mod tests {
         let old = diff::parse(CONTRACT_GET).expect("valid contract");
         let new = diff::parse(CONTRACT_POST).expect("valid contract");
         assert_eq!(diff::diff_models(&old, &new).len(), 1);
-        let state = state_with_diff(
+        let mut state = state_with_diff(
             "contracts/login.json",
             true,
             DiffData {
@@ -504,13 +501,13 @@ mod tests {
             },
         );
         eframe::egui::__run_test_ui(|ui| {
-            central_body(ui, &state);
+            central_body(ui, &mut state);
         });
     }
 
     #[test]
     fn central_renders_raw_diff_for_a_non_contract_file() {
-        let state = state_with_diff(
+        let mut state = state_with_diff(
             "src/main.rs",
             false,
             DiffData {
@@ -520,7 +517,7 @@ mod tests {
             },
         );
         eframe::egui::__run_test_ui(|ui| {
-            central_body(ui, &state);
+            central_body(ui, &mut state);
         });
     }
 
@@ -529,7 +526,7 @@ mod tests {
         let old = diff::parse(CONTRACT_GET).expect("valid contract");
         let new = diff::parse(CONTRACT_GET_REFORMATTED).expect("valid contract");
         assert!(diff::diff_models(&old, &new).is_empty());
-        let state = state_with_diff(
+        let mut state = state_with_diff(
             "contracts/login.json",
             false,
             DiffData {
@@ -540,7 +537,7 @@ mod tests {
             },
         );
         eframe::egui::__run_test_ui(|ui| {
-            central_body(ui, &state);
+            central_body(ui, &mut state);
         });
     }
 }
