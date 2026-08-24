@@ -4,6 +4,7 @@
 //! `App::ui` applies it. A new feature adds its own action enum here rather than
 //! reaching into another feature's state.
 
+use crate::app::state::SidebarTab;
 use crate::features::contracts::state::DeleteTarget;
 
 /// A one-shot action requested by the header or sidebar this frame.
@@ -25,4 +26,38 @@ pub(crate) enum SidebarAction {
 
     /// Toggle the left contracts sidebar between fully hidden and shown.
     ToggleSidebar,
+
+    /// Switch which panel fills the sidebar frame.
+    SwitchTab(SidebarTab),
+}
+
+/// A one-shot action requested by the Git panel this frame.
+pub(crate) enum GitAction {
+    /// Re-read `git status`.
+    Refresh,
+
+    /// Show the diff for this repo-relative path, staged or unstaged.
+    Select { path: String, staged: bool },
+
+    /// Stage this repo-relative path.
+    Stage { path: String },
+
+    /// Unstage this repo-relative path, leaving the working tree untouched.
+    Unstage { path: String },
+
+    /// Ask to discard this tracked path, shows a confirmation before
+    /// anything is reverted.
+    RequestDiscard { path: String },
+
+    /// The pending discard was confirmed, revert it.
+    ConfirmDiscard,
+
+    /// Commit the currently staged changes with `GitState::commit_message`.
+    Commit,
+}
+
+/// Anything a view returned this frame, from either sidebar tab.
+pub(crate) enum Action {
+    Sidebar(SidebarAction),
+    Git(GitAction),
 }

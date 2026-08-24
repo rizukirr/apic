@@ -26,6 +26,15 @@ pub(crate) struct ShellState {
     /// Whether the left contracts sidebar is shown. Toggled from the top bar;
     /// not persisted, so it always starts `true` on launch.
     pub(crate) sidebar_open: bool,
+
+    /// Which panel fills the shell-owned sidebar frame. Switching tabs only
+    /// changes which body renders, each slice keeps its own selection so
+    /// switching away and back restores the previous view.
+    pub(crate) sidebar_tab: SidebarTab,
+
+    /// Root of the git repository containing `project_root`, or `None` when
+    /// the project is not inside one.
+    pub(crate) repo_root: Option<PathBuf>,
 }
 
 impl Default for ShellState {
@@ -36,8 +45,17 @@ impl Default for ShellState {
             apic_dir: None,
             status: String::new(),
             sidebar_open: true,
+            sidebar_tab: SidebarTab::Explorer,
+            repo_root: None,
         }
     }
+}
+
+/// Which panel fills the shell-owned sidebar frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SidebarTab {
+    Explorer,
+    Git,
 }
 
 /// Which action consumes the path chosen by an in-flight file dialog.

@@ -30,11 +30,28 @@ impl App {
         let Some(root) = self.shell.project_root.clone() else {
             self.shell.apic_dir = None;
             self.shell.root = None;
+            self.shell.repo_root = None;
             self.contracts.templates.clear();
             self.contracts.entries.clear();
             self.shell.status = "No project open. Use Open or New.".into();
             return;
         };
+
+        match crate::features::git::service::discover(&root) {
+            Ok(repo_root) => {
+                self.shell.repo_root = repo_root;
+                // The tab strip's dirty indicator must be correct before the
+                // Git tab is ever opened, so a project load fetches status
+                // itself instead of waiting for tab activation.
+                if self.shell.repo_root.is_some() {
+                    self.request_status_refresh();
+                }
+            }
+            Err(err) => {
+                self.shell.repo_root = None;
+                self.shell.status = err;
+            }
+        }
 
         self.shell.apic_dir = Some(root.join(".apic"));
         self.contracts.templates = self

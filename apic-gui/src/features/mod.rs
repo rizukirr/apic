@@ -5,3 +5,4 @@
 //! (if it renders) or in `crate::app` (if it orchestrates).
 
 pub(crate) mod contracts;
+pub(crate) mod git;

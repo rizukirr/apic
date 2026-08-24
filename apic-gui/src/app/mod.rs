@@ -6,6 +6,7 @@
 //! touch any other feature's state.
 
 pub(crate) mod actions;
+pub(crate) mod git_jobs;
 pub(crate) mod project;
 pub(crate) mod state;
 
@@ -14,15 +15,22 @@ use std::path::PathBuf;
 use eframe::egui;
 use egui::RichText;
 
-use crate::app::actions::SidebarAction;
-use crate::app::state::{DialogKind, ShellState};
+use crate::app::actions::{Action, GitAction, SidebarAction};
+use crate::app::state::{DialogKind, ShellState, SidebarTab};
 use crate::features::contracts::state::ContractsState;
 use crate::features::contracts::view::{
     CentralOutcome, FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, sidebar_body,
 };
+use crate::features::git::state::GitState;
+use crate::features::git::view;
 use crate::settings::Settings;
 use crate::ui::components::text_button;
 use crate::ui::theme::*;
+
+/// Fixed row height shared by the top bar and the sidebar tab row, so a
+/// `selectable_label` and a `small_button` line up on one vertical centre
+/// instead of whatever baseline their differing natural heights would give.
+const TOOLBAR_ROW_H: f32 = 26.0;
 
 /// Whole-app state.
 ///
@@ -37,9 +45,18 @@ pub(crate) struct App {
     /// Everything the contracts feature owns.
     pub(crate) contracts: ContractsState,
 
+    /// Everything the git feature owns.
+    pub(crate) git: GitState,
+
     /// In-flight native file dialog, run on a background thread so the portal
     /// call never blocks the UI, plus the action to perform on its result.
     pub(crate) pending_dialog: Option<(DialogKind, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
+
+    /// Set when a status refresh is owed, a project just loaded or a contract
+    /// was just saved, and consumed by `git_jobs::maybe_refresh_status` once
+    /// no other git job is in flight. This is what makes the Git tab's dirty
+    /// indicator correct without ever having activated the tab.
+    pub(crate) needs_git_refresh: bool,
 }
 
 impl App {
@@ -47,7 +64,9 @@ impl App {
         let mut app = App {
             shell: ShellState::default(),
             contracts: ContractsState::default(),
+            git: GitState::default(),
             pending_dialog: None,
+            needs_git_refresh: false,
         };
         let settings = Settings::load();
         if let Some(root) = settings.last_project
@@ -76,10 +95,9 @@ impl App {
         egui::Panel::top("nav").show(ui, |ui| {
             ui.add_space(SPACE_EXTRA_SMALL);
             ui.horizontal(|ui| {
-                let row_h = 26.0;
-                ui.set_min_height(row_h);
+                ui.set_min_height(TOOLBAR_ROW_H);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.set_min_height(row_h);
+                    ui.set_min_height(TOOLBAR_ROW_H);
                     let toggle_glyph = if self.shell.sidebar_open {
                         "☰"
                     } else {
@@ -133,8 +151,9 @@ impl App {
     }
 
     /// The left sidebar frame. The panel belongs to the shell rather than to any
-    /// one feature, so the active tab only fills its body.
-    fn sidebar(&mut self, ui: &mut egui::Ui) -> Option<SidebarAction> {
+    /// one feature, so a tab row picks the active feature and only its body
+    /// fills the frame.
+    fn sidebar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         // When collapsed, skip building/showing the panel entirely so the
         // CentralPanel reclaims the full width.
         if !self.shell.sidebar_open {
@@ -146,7 +165,71 @@ impl App {
             .default_size(240.0)
             .min_size(100.0)
             .show(ui, |ui| {
-                action = sidebar_body(ui, &mut self.contracts);
+                ui.add_space(SPACE_SMALL);
+                ui.horizontal(|ui| {
+                    ui.set_min_height(TOOLBAR_ROW_H);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.set_min_height(TOOLBAR_ROW_H);
+                        if self.shell.sidebar_tab == SidebarTab::Git
+                            && ui
+                                .small_button(RichText::new("⟳").color(GREEN))
+                                .on_hover_text("Refresh status")
+                                .clicked()
+                        {
+                            action = Some(Action::Git(GitAction::Refresh));
+                        }
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.set_min_height(TOOLBAR_ROW_H);
+                            let selected = self.shell.sidebar_tab == SidebarTab::Explorer;
+                            if ui
+                                .selectable_label(
+                                    selected,
+                                    RichText::new("Explorer").color(if selected {
+                                        GREEN
+                                    } else {
+                                        DIM
+                                    }),
+                                )
+                                .clicked()
+                                && !selected
+                            {
+                                action = Some(Action::Sidebar(SidebarAction::SwitchTab(
+                                    SidebarTab::Explorer,
+                                )));
+                            }
+                            let git_selected = self.shell.sidebar_tab == SidebarTab::Git;
+                            let (git_label, git_color) = view::tab_label("Git", &self.git.status);
+                            if ui
+                                .selectable_label(
+                                    git_selected,
+                                    RichText::new(git_label).color(git_color),
+                                )
+                                .clicked()
+                                && !git_selected
+                            {
+                                action = Some(Action::Sidebar(SidebarAction::SwitchTab(
+                                    SidebarTab::Git,
+                                )));
+                            }
+                        });
+                    });
+                });
+                ui.add_space(SPACE_EXTRA_SMALL);
+                ui.separator();
+                match self.shell.sidebar_tab {
+                    SidebarTab::Explorer => {
+                        if let Some(a) = sidebar_body(ui, &mut self.contracts) {
+                            action = Some(Action::Sidebar(a));
+                        }
+                    }
+                    SidebarTab::Git => {
+                        if let Some(a) =
+                            view::sidebar_body(ui, &mut self.git, self.shell.repo_root.as_deref())
+                        {
+                            action = Some(Action::Git(a));
+                        }
+                    }
+                }
             });
         action
     }
@@ -155,8 +238,11 @@ impl App {
     /// need `&mut App`, which the body itself does not have.
     fn central(&mut self, ui: &mut egui::Ui) {
         let mut out = CentralOutcome::default();
-        egui::CentralPanel::default().show(ui, |ui| {
-            central_body(ui, &mut self.shell, &mut self.contracts, &mut out);
+        egui::CentralPanel::default().show(ui, |ui| match self.shell.sidebar_tab {
+            SidebarTab::Explorer => {
+                central_body(ui, &mut self.shell, &mut self.contracts, &mut out);
+            }
+            SidebarTab::Git => view::central_body(ui, &mut self.git),
         });
         if out.toggle_edit {
             if self.contracts.editing {
@@ -174,6 +260,11 @@ impl App {
                 self.load(i);
             }
         }
+        if out.saved {
+            // A save is the one moment the app itself dirties the tree and
+            // knows it, so keep the tab honest without a filesystem watcher.
+            self.request_status_refresh();
+        }
     }
 }
 
@@ -185,11 +276,13 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.poll_dialog(&ctx);
-        let top = self.top_bar(ui);
+        self.poll_git(&ctx);
+        self.maybe_refresh_status(&ctx);
+        let top = self.top_bar(ui).map(Action::Sidebar);
         self.bottom_bar(ui);
         let side = self.sidebar(ui);
         match top.or(side) {
-            Some(SidebarAction::LoadContract(i)) => {
+            Some(Action::Sidebar(SidebarAction::LoadContract(i))) => {
                 let invalid = self
                     .contracts
                     .entries
@@ -203,28 +296,65 @@ impl eframe::App for App {
                     self.load(i);
                 }
             }
-            Some(SidebarAction::LoadTemplate(i)) => self.load_template(i),
-            Some(SidebarAction::OpenProject) => self.open_project(&ctx),
-            Some(SidebarAction::NewProject) => self.new_project(&ctx),
-            Some(SidebarAction::ImportPostman) => self.import_postman(&ctx),
-            Some(SidebarAction::NewTemplate) => {
+            Some(Action::Sidebar(SidebarAction::LoadTemplate(i))) => self.load_template(i),
+            Some(Action::Sidebar(SidebarAction::OpenProject)) => self.open_project(&ctx),
+            Some(Action::Sidebar(SidebarAction::NewProject)) => self.new_project(&ctx),
+            Some(Action::Sidebar(SidebarAction::ImportPostman)) => self.import_postman(&ctx),
+            Some(Action::Sidebar(SidebarAction::NewTemplate)) => {
                 self.contracts.new_template = Some(String::new());
                 ctx.data_mut(|d| {
                     d.insert_temp(egui::Id::new(FOCUS_NEW_TEMPLATE), "open".to_string())
                 });
             }
-            Some(SidebarAction::NewRequest(prefix)) => {
+            Some(Action::Sidebar(SidebarAction::NewRequest(prefix))) => {
                 self.contracts.new_request = Some(prefix);
                 self.contracts.new_request_seed = 0;
                 ctx.data_mut(|d| {
                     d.insert_temp(egui::Id::new(FOCUS_NEW_REQUEST), "open".to_string())
                 });
             }
-            Some(SidebarAction::RequestDelete(target)) => {
+            Some(Action::Sidebar(SidebarAction::RequestDelete(target))) => {
                 self.contracts.pending_delete = Some(target);
             }
-            Some(SidebarAction::ToggleSidebar) => {
+            Some(Action::Sidebar(SidebarAction::ToggleSidebar)) => {
                 self.shell.sidebar_open = !self.shell.sidebar_open;
+            }
+            Some(Action::Sidebar(SidebarAction::SwitchTab(tab))) => {
+                let entered_git =
+                    tab == SidebarTab::Git && self.shell.sidebar_tab != SidebarTab::Git;
+                self.shell.sidebar_tab = tab;
+                if entered_git {
+                    self.spawn(&ctx);
+                }
+            }
+            Some(Action::Git(GitAction::Refresh)) => {
+                self.spawn(&ctx);
+            }
+            Some(Action::Git(GitAction::Select { path, staged })) => {
+                self.git.raw_view = false;
+                self.git.selected = Some((path.clone(), staged));
+                let cached =
+                    matches!(&self.git.diff, Some((key, _)) if *key == (path.clone(), staged));
+                if !cached {
+                    self.spawn_diff(&ctx, path, staged);
+                }
+            }
+            Some(Action::Git(GitAction::Stage { path })) => {
+                self.spawn_stage(&ctx, path);
+            }
+            Some(Action::Git(GitAction::Unstage { path })) => {
+                self.spawn_unstage(&ctx, path);
+            }
+            Some(Action::Git(GitAction::RequestDiscard { path })) => {
+                self.git.pending_discard = Some(path);
+            }
+            Some(Action::Git(GitAction::ConfirmDiscard)) => {
+                if let Some(path) = self.git.pending_discard.take() {
+                    self.spawn_discard(&ctx, path);
+                }
+            }
+            Some(Action::Git(GitAction::Commit)) => {
+                self.spawn_commit(&ctx, self.git.commit_message.clone());
             }
             None => {}
         }
