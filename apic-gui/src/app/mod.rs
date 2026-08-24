@@ -9,6 +9,8 @@ pub(crate) mod actions;
 pub(crate) mod git_jobs;
 pub(crate) mod project;
 pub(crate) mod state;
+#[cfg(test)]
+mod test_support;
 
 use std::path::PathBuf;
 
@@ -266,6 +268,86 @@ impl App {
             self.request_status_refresh();
         }
     }
+
+    /// Apply an action returned by the top bar or the sidebar to app state.
+    fn apply(&mut self, action: Action, ctx: &egui::Context) {
+        match action {
+            Action::Sidebar(SidebarAction::LoadContract(i)) => {
+                let invalid = self
+                    .contracts
+                    .entries
+                    .get(i)
+                    .map(|e| e.error.is_some())
+                    .unwrap_or(false);
+                if invalid {
+                    self.enter_repair(i);
+                } else {
+                    self.contracts.repair = None;
+                    self.load(i);
+                }
+            }
+            Action::Sidebar(SidebarAction::LoadTemplate(i)) => self.load_template(i),
+            Action::Sidebar(SidebarAction::OpenProject) => self.open_project(ctx),
+            Action::Sidebar(SidebarAction::NewProject) => self.new_project(ctx),
+            Action::Sidebar(SidebarAction::ImportPostman) => self.import_postman(ctx),
+            Action::Sidebar(SidebarAction::NewTemplate) => {
+                self.contracts.new_template = Some(String::new());
+                ctx.data_mut(|d| {
+                    d.insert_temp(egui::Id::new(FOCUS_NEW_TEMPLATE), "open".to_string())
+                });
+            }
+            Action::Sidebar(SidebarAction::NewRequest(prefix)) => {
+                self.contracts.new_request = Some(prefix);
+                self.contracts.new_request_seed = 0;
+                ctx.data_mut(|d| {
+                    d.insert_temp(egui::Id::new(FOCUS_NEW_REQUEST), "open".to_string())
+                });
+            }
+            Action::Sidebar(SidebarAction::RequestDelete(target)) => {
+                self.contracts.pending_delete = Some(target);
+            }
+            Action::Sidebar(SidebarAction::ToggleSidebar) => {
+                self.shell.sidebar_open = !self.shell.sidebar_open;
+            }
+            Action::Sidebar(SidebarAction::SwitchTab(tab)) => {
+                let entered_git =
+                    tab == SidebarTab::Git && self.shell.sidebar_tab != SidebarTab::Git;
+                self.shell.sidebar_tab = tab;
+                if entered_git {
+                    self.spawn(ctx);
+                }
+            }
+            Action::Git(GitAction::Refresh) => {
+                self.spawn(ctx);
+            }
+            Action::Git(GitAction::Select { path, staged }) => {
+                self.git.raw_view = false;
+                self.git.selected = Some((path.clone(), staged));
+                let cached =
+                    matches!(&self.git.diff, Some((key, _)) if *key == (path.clone(), staged));
+                if !cached {
+                    self.spawn_diff(ctx, path, staged);
+                }
+            }
+            Action::Git(GitAction::Stage { path }) => {
+                self.spawn_stage(ctx, path);
+            }
+            Action::Git(GitAction::Unstage { path }) => {
+                self.spawn_unstage(ctx, path);
+            }
+            Action::Git(GitAction::RequestDiscard { path }) => {
+                self.git.pending_discard = Some(path);
+            }
+            Action::Git(GitAction::ConfirmDiscard) => {
+                if let Some(path) = self.git.pending_discard.take() {
+                    self.spawn_discard(ctx, path);
+                }
+            }
+            Action::Git(GitAction::Commit) => {
+                self.spawn_commit(ctx, self.git.commit_message.clone());
+            }
+        }
+    }
 }
 
 impl eframe::App for App {
@@ -281,82 +363,8 @@ impl eframe::App for App {
         let top = self.top_bar(ui).map(Action::Sidebar);
         self.bottom_bar(ui);
         let side = self.sidebar(ui);
-        match top.or(side) {
-            Some(Action::Sidebar(SidebarAction::LoadContract(i))) => {
-                let invalid = self
-                    .contracts
-                    .entries
-                    .get(i)
-                    .map(|e| e.error.is_some())
-                    .unwrap_or(false);
-                if invalid {
-                    self.enter_repair(i);
-                } else {
-                    self.contracts.repair = None;
-                    self.load(i);
-                }
-            }
-            Some(Action::Sidebar(SidebarAction::LoadTemplate(i))) => self.load_template(i),
-            Some(Action::Sidebar(SidebarAction::OpenProject)) => self.open_project(&ctx),
-            Some(Action::Sidebar(SidebarAction::NewProject)) => self.new_project(&ctx),
-            Some(Action::Sidebar(SidebarAction::ImportPostman)) => self.import_postman(&ctx),
-            Some(Action::Sidebar(SidebarAction::NewTemplate)) => {
-                self.contracts.new_template = Some(String::new());
-                ctx.data_mut(|d| {
-                    d.insert_temp(egui::Id::new(FOCUS_NEW_TEMPLATE), "open".to_string())
-                });
-            }
-            Some(Action::Sidebar(SidebarAction::NewRequest(prefix))) => {
-                self.contracts.new_request = Some(prefix);
-                self.contracts.new_request_seed = 0;
-                ctx.data_mut(|d| {
-                    d.insert_temp(egui::Id::new(FOCUS_NEW_REQUEST), "open".to_string())
-                });
-            }
-            Some(Action::Sidebar(SidebarAction::RequestDelete(target))) => {
-                self.contracts.pending_delete = Some(target);
-            }
-            Some(Action::Sidebar(SidebarAction::ToggleSidebar)) => {
-                self.shell.sidebar_open = !self.shell.sidebar_open;
-            }
-            Some(Action::Sidebar(SidebarAction::SwitchTab(tab))) => {
-                let entered_git =
-                    tab == SidebarTab::Git && self.shell.sidebar_tab != SidebarTab::Git;
-                self.shell.sidebar_tab = tab;
-                if entered_git {
-                    self.spawn(&ctx);
-                }
-            }
-            Some(Action::Git(GitAction::Refresh)) => {
-                self.spawn(&ctx);
-            }
-            Some(Action::Git(GitAction::Select { path, staged })) => {
-                self.git.raw_view = false;
-                self.git.selected = Some((path.clone(), staged));
-                let cached =
-                    matches!(&self.git.diff, Some((key, _)) if *key == (path.clone(), staged));
-                if !cached {
-                    self.spawn_diff(&ctx, path, staged);
-                }
-            }
-            Some(Action::Git(GitAction::Stage { path })) => {
-                self.spawn_stage(&ctx, path);
-            }
-            Some(Action::Git(GitAction::Unstage { path })) => {
-                self.spawn_unstage(&ctx, path);
-            }
-            Some(Action::Git(GitAction::RequestDiscard { path })) => {
-                self.git.pending_discard = Some(path);
-            }
-            Some(Action::Git(GitAction::ConfirmDiscard)) => {
-                if let Some(path) = self.git.pending_discard.take() {
-                    self.spawn_discard(&ctx, path);
-                }
-            }
-            Some(Action::Git(GitAction::Commit)) => {
-                self.spawn_commit(&ctx, self.git.commit_message.clone());
-            }
-            None => {}
+        if let Some(a) = top.or(side) {
+            self.apply(a, &ctx);
         }
         self.central(ui);
         self.new_template_dialog(&ctx);
@@ -370,6 +378,31 @@ impl eframe::App for App {
 mod tests {
     use super::*;
     use apic_core::edit::EditModel;
+
+    use crate::app::state::SidebarTab;
+    use crate::app::test_support::{app_at, git_available, project_fixture, settle, tempdir};
+
+    /// Appends a newline to `path`, a change that dirties the working tree
+    /// without breaking JSON validity (trailing whitespace is legal JSON).
+    fn dirty(path: &std::path::Path) {
+        let mut content = std::fs::read_to_string(path).expect("fixture file reads");
+        content.push('\n');
+        std::fs::write(path, content).expect("fixture file writes");
+    }
+
+    /// Runs `git -C root <args>` and returns stdout as a string, for
+    /// assertions that read the repository directly rather than the app's
+    /// own cache.
+    fn git_output(root: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .expect("git spawns");
+        assert!(out.status.success(), "git {args:?} failed: {out:?}");
+        String::from_utf8(out.stdout).expect("git output is utf8")
+    }
 
     /// A minimal but valid contract, loaded the same way `load()` does.
     fn sample_model() -> EditModel {
@@ -500,5 +533,170 @@ mod tests {
         let delays = run_at(&mut app, 1280.0, 800.0, 16);
         let tail_zero = delays[8..].iter().all(|d| *d == std::time::Duration::ZERO);
         assert!(!tail_zero, "focus feature pins repaint: {delays:?}");
+    }
+
+    /// Pins the launch-indicator defect: a project load must populate
+    /// `git.status` on its own, before the Git tab is ever opened. The tab
+    /// switch is what used to fetch status, so the indicator on the tab
+    /// itself stayed empty at launch.
+    #[test]
+    fn reload_project_alone_populates_status() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+
+        let mut app = app_at(root);
+        let ctx = egui::Context::default();
+
+        app.reload_project();
+        assert_eq!(
+            app.shell.sidebar_tab,
+            SidebarTab::Explorer,
+            "the tab must never switch to Git for this to prove anything"
+        );
+        app.maybe_refresh_status(&ctx);
+        settle(&mut app, &ctx);
+
+        assert!(
+            app.git
+                .status
+                .inside
+                .iter()
+                .any(|f| f.path == "contracts/sample.json"),
+            "reload_project must populate status without the Git tab ever opening: {:?}",
+            app.git.status.inside
+        );
+    }
+
+    /// Pins the second shipped defect: routing `GitAction::Stage` through
+    /// `apply` must actually stage the file in the repository. Read the
+    /// result from `git` directly rather than from `app.git.status`, so this
+    /// cannot pass on the app merely agreeing with itself.
+    #[test]
+    fn stage_action_stages_in_the_repository() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+
+        let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        app.maybe_refresh_status(&ctx);
+        settle(&mut app, &ctx);
+
+        app.apply(
+            Action::Git(GitAction::Stage {
+                path: "contracts/sample.json".to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        let porcelain = git_output(&root, &["status", "--porcelain=v2"]);
+        let line = porcelain
+            .lines()
+            .find(|l| l.ends_with("contracts/sample.json"))
+            .unwrap_or_else(|| panic!("git must report the file: {porcelain:?}"));
+        let xy = line.split(' ').nth(1).expect("an XY field");
+        let index_char = xy.as_bytes()[0];
+        assert_ne!(
+            index_char, b'.',
+            "the index column must show a staged change, got {line:?}"
+        );
+    }
+
+    /// Drives a commit through the dispatch and confirms it against the
+    /// repository's own log, not the app's cache.
+    #[test]
+    fn commit_action_commits_the_staged_change() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+
+        let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        app.maybe_refresh_status(&ctx);
+        settle(&mut app, &ctx);
+
+        app.apply(
+            Action::Git(GitAction::Stage {
+                path: "contracts/sample.json".to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        app.git.commit_message = "pin the stage wiring".to_string();
+        app.apply(Action::Git(GitAction::Commit), &ctx);
+        settle(&mut app, &ctx);
+
+        let subject = git_output(&root, &["log", "-1", "--format=%s"]);
+        assert_eq!(subject.trim(), "pin the stage wiring");
+        assert!(
+            app.git.commit_message.is_empty(),
+            "a successful commit must clear the message box"
+        );
+    }
+
+    /// `.apic/config.toml` sits outside the contracts working dir in the
+    /// fixture, the layout that made the original scoping bug invisible.
+    /// Confirms it still lands in `inside` rather than `outside`.
+    #[test]
+    fn apic_config_counts_as_inside_when_working_dir_is_a_subdirectory() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join(".apic").join("config.toml"));
+
+        let mut app = app_at(root);
+        let ctx = egui::Context::default();
+        app.reload_project();
+        app.maybe_refresh_status(&ctx);
+        settle(&mut app, &ctx);
+
+        assert!(
+            app.git
+                .status
+                .inside
+                .iter()
+                .any(|f| f.path == ".apic/config.toml"),
+            "config.toml must count as inside: {:?}",
+            app.git.status.inside
+        );
+        assert!(
+            !app.git
+                .status
+                .outside
+                .iter()
+                .any(|f| f.path == ".apic/config.toml"),
+            "config.toml must not also be reported as outside: {:?}",
+            app.git.status.outside
+        );
+    }
+
+    /// Pins the bound in `settle`: a job that never resolves must panic the
+    /// test rather than hang the suite. No real git command runs here, so
+    /// this does not need `git_available` or the repository fixture. The
+    /// sender is kept alive in `_tx` so the channel never disconnects:
+    /// `poll_git` treats a disconnected channel as an error and clears
+    /// `pending`, which would end the wait and prove nothing about the bound.
+    #[test]
+    #[should_panic(expected = "did not complete")]
+    fn settle_panics_rather_than_hangs_on_a_job_that_never_resolves() {
+        let mut app = app_at(tempdir());
+        let ctx = egui::Context::default();
+
+        let (_tx, rx) = std::sync::mpsc::channel();
+        app.git.pending = Some(rx);
+
+        settle(&mut app, &ctx);
     }
 }

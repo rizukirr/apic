@@ -228,19 +228,39 @@ fn diff_job(root: &Path, path: &str, staged: bool) -> Result<DiffData, String> {
     })
 }
 
+/// Resolves symlinks in `path` for comparison purposes, falling back to
+/// `path` unresolved when resolution fails, a project directory deleted
+/// while the app is open being the case that matters. Never used for a path
+/// shown to the user: `ShellState::project_root` stays unresolved in the
+/// status bar, and this is only applied to a local copy at the point it is
+/// compared against `repo_root`.
+fn resolve_for_comparison(path: &Path) -> std::borrow::Cow<'_, Path> {
+    match path.canonicalize() {
+        Ok(resolved) => std::borrow::Cow::Owned(resolved),
+        Err(_) => std::borrow::Cow::Borrowed(path),
+    }
+}
+
 /// The scopes passed to `service::status`: `root` made relative to
 /// `repo_root`, plus `project_root/.apic` made relative to `repo_root` so the
 /// project config and templates always count as inside even when they sit
 /// outside the contract working dir. Falls back to an empty list (the whole
 /// repo, unconditionally inside) when `root` is not under `repo_root`.
+///
+/// `repo_root` comes from `git rev-parse --show-toplevel`, which resolves
+/// symlinks. `root` and `project_root` are stored unresolved, so both are
+/// resolved here before the comparison rather than trusting the caller to
+/// have matched `repo_root`'s form.
 fn scopes(root: &Path, project_root: Option<&Path>, repo_root: &Path) -> Vec<String> {
-    let root_scope = match root.strip_prefix(repo_root) {
+    let repo_root = resolve_for_comparison(repo_root);
+    let root_scope = match resolve_for_comparison(root).strip_prefix(&repo_root) {
         Ok(rel) => apic_core::file::to_slash(rel),
         Err(_) => return Vec::new(),
     };
     let mut scopes = vec![root_scope];
     if let Some(project_root) = project_root
-        && let Ok(rel) = project_root.join(".apic").strip_prefix(repo_root)
+        && let Ok(rel) =
+            resolve_for_comparison(&project_root.join(".apic")).strip_prefix(&repo_root)
     {
         scopes.push(apic_core::file::to_slash(rel));
     }
@@ -250,6 +270,33 @@ fn scopes(root: &Path, project_root: Option<&Path>, repo_root: &Path) -> Vec<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `project_root` reaches the fixture through a symlink while
+    /// `repo_root` is already resolved, the same shape `git rev-parse
+    /// --show-toplevel` produces on any machine where the project sits
+    /// behind a symlinked temp dir, `/var/folders` on macOS being the
+    /// common case. The comparison must not depend on the caller having
+    /// already resolved `project_root`.
+    #[test]
+    #[cfg(unix)]
+    fn scopes_resolves_a_symlinked_project_root_before_comparing_to_repo_root() {
+        let base = crate::app::test_support::tempdir();
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join(".apic")).unwrap();
+        std::fs::create_dir_all(real.join("contracts")).unwrap();
+        let link = base.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let repo_root = real.canonicalize().unwrap();
+        let root = repo_root.clone();
+        let project_root = link;
+
+        let result = scopes(&root, Some(&project_root), &repo_root);
+        assert!(
+            result.contains(&".apic".to_string()),
+            "a project root reached through a symlink must still resolve to the .apic scope: {result:?}"
+        );
+    }
 
     #[test]
     fn scopes_root_is_root_relative_to_repo_root() {
