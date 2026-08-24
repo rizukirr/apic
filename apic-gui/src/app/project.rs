@@ -38,7 +38,15 @@ impl App {
         };
 
         match crate::features::git::service::discover(&root) {
-            Ok(repo_root) => self.shell.repo_root = repo_root,
+            Ok(repo_root) => {
+                self.shell.repo_root = repo_root;
+                // The tab strip's dirty indicator must be correct before the
+                // Git tab is ever opened, so a project load fetches status
+                // itself instead of waiting for tab activation.
+                if self.shell.repo_root.is_some() {
+                    self.request_status_refresh();
+                }
+            }
             Err(err) => {
                 self.shell.repo_root = None;
                 self.shell.status = err;

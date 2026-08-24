@@ -876,6 +876,11 @@ pub(crate) struct CentralOutcome {
     /// A repaired contract is now valid JSON: write this buffer to this path
     /// and reload the project.
     pub(crate) promote: Option<(PathBuf, String)>,
+
+    /// A contract was just saved successfully: the shell should refresh the
+    /// git status, since this is one of the moments the app itself dirties
+    /// the tree and knows it.
+    pub(crate) saved: bool,
 }
 
 /// Left sidebar body: a TEMPLATES section on top, then the contract picker
@@ -1085,6 +1090,7 @@ pub(crate) fn central_body(
                             if let Some(e) = entries.iter_mut().find(|e| e.path.as_path() == p) {
                                 e.method = method_str(&model.method);
                             }
+                            out.saved = true;
                         }
                         Err(e) => shell.status = format!("save error: {e}"),
                     },

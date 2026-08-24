@@ -46,6 +46,12 @@ pub(crate) struct App {
     /// In-flight native file dialog, run on a background thread so the portal
     /// call never blocks the UI, plus the action to perform on its result.
     pub(crate) pending_dialog: Option<(DialogKind, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
+
+    /// Set when a status refresh is owed, a project just loaded or a contract
+    /// was just saved, and consumed by `git_jobs::maybe_refresh_status` once
+    /// no other git job is in flight. This is what makes the Git tab's dirty
+    /// indicator correct without ever having activated the tab.
+    pub(crate) needs_git_refresh: bool,
 }
 
 impl App {
@@ -55,6 +61,7 @@ impl App {
             contracts: ContractsState::default(),
             git: GitState::default(),
             pending_dialog: None,
+            needs_git_refresh: false,
         };
         let settings = Settings::load();
         if let Some(root) = settings.last_project
@@ -166,27 +173,36 @@ impl App {
                             action = Some(Action::Git(GitAction::Refresh));
                         }
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            let mut tab = |ui: &mut egui::Ui, label: &str, which: SidebarTab| {
-                                let selected = self.shell.sidebar_tab == which;
-                                if ui
-                                    .selectable_label(
-                                        selected,
-                                        RichText::new(label).color(if selected {
-                                            GREEN
-                                        } else {
-                                            DIM
-                                        }),
-                                    )
-                                    .clicked()
-                                    && !selected
-                                {
-                                    action = Some(Action::Sidebar(SidebarAction::SwitchTab(which)));
-                                }
-                            };
-                            tab(ui, "Explorer", SidebarTab::Explorer);
-                            tab(ui, "Git", SidebarTab::Git);
-                            if let Some(color) = view::dirty_indicator(&self.git.status) {
-                                ui.label(RichText::new("●").color(color));
+                            let selected = self.shell.sidebar_tab == SidebarTab::Explorer;
+                            if ui
+                                .selectable_label(
+                                    selected,
+                                    RichText::new("Explorer").color(if selected {
+                                        GREEN
+                                    } else {
+                                        DIM
+                                    }),
+                                )
+                                .clicked()
+                                && !selected
+                            {
+                                action = Some(Action::Sidebar(SidebarAction::SwitchTab(
+                                    SidebarTab::Explorer,
+                                )));
+                            }
+                            let git_selected = self.shell.sidebar_tab == SidebarTab::Git;
+                            let (git_label, git_color) = view::tab_label("Git", &self.git.status);
+                            if ui
+                                .selectable_label(
+                                    git_selected,
+                                    RichText::new(git_label).color(git_color),
+                                )
+                                .clicked()
+                                && !git_selected
+                            {
+                                action = Some(Action::Sidebar(SidebarAction::SwitchTab(
+                                    SidebarTab::Git,
+                                )));
                             }
                         });
                     });
@@ -237,6 +253,11 @@ impl App {
                 self.load(i);
             }
         }
+        if out.saved {
+            // A save is the one moment the app itself dirties the tree and
+            // knows it, so keep the tab honest without a filesystem watcher.
+            self.request_status_refresh();
+        }
     }
 }
 
@@ -249,6 +270,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.poll_dialog(&ctx);
         self.poll_git(&ctx);
+        self.maybe_refresh_status(&ctx);
         let top = self.top_bar(ui).map(Action::Sidebar);
         self.bottom_bar(ui);
         let side = self.sidebar(ui);

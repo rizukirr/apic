@@ -15,24 +15,28 @@ use crate::features::git::state::GitState;
 use crate::ui::components::text_button;
 use crate::ui::theme::*;
 
-/// The dirty indicator colour for the Git tab label, decided purely from a
-/// `Status`: `None` when there are no changes, `RED` when any entry is
-/// conflicted, `AMBER` when there are changes but no conflict. Conflict
-/// outranks change, since a conflict is the one that cannot wait.
-pub(crate) fn dirty_indicator(status: &Status) -> Option<egui::Color32> {
-    if status
-        .inside
-        .iter()
-        .chain(status.outside.iter())
-        .any(|f| f.conflicted)
-    {
-        return Some(RED);
+/// What the Git tab should render, decided purely from a `Status`: the label
+/// text, `name` plus a ` [conflict]` suffix when any entry is conflicted, and
+/// the colour, `RED` when anything has changed at all and `DIM` (the
+/// unchanged colour) otherwise. Selection is shown through the tab's filled
+/// background, so this never needs to consider which tab is selected.
+pub(crate) fn tab_label(name: &str, status: &Status) -> (String, egui::Color32) {
+    let all = status.inside.iter().chain(status.outside.iter());
+    let mut dirty = false;
+    let mut conflicted = false;
+    for f in all {
+        dirty = true;
+        if f.conflicted {
+            conflicted = true;
+        }
     }
-    if status.inside.is_empty() && status.outside.is_empty() {
-        None
+    let label = if conflicted {
+        format!("{name} [conflict]")
     } else {
-        Some(AMBER)
-    }
+        name.to_string()
+    };
+    let color = if dirty { RED } else { DIM };
+    (label, color)
 }
 
 /// Left sidebar body for the Git tab: the error line when set, and the file
@@ -641,26 +645,44 @@ mod tests {
     }
 
     #[test]
-    fn dirty_indicator_is_none_when_status_is_empty() {
-        assert_eq!(dirty_indicator(&Status::default()), None);
+    fn tab_label_is_the_plain_name_and_dim_when_clean() {
+        assert_eq!(
+            tab_label("Git", &Status::default()),
+            ("Git".to_string(), DIM)
+        );
     }
 
     #[test]
-    fn dirty_indicator_is_amber_for_plain_changes() {
+    fn tab_label_is_the_plain_name_and_red_for_plain_changes() {
         let status = Status {
             inside: vec![file("a.json", false)],
             outside: vec![],
         };
-        assert_eq!(dirty_indicator(&status), Some(AMBER));
+        assert_eq!(tab_label("Git", &status), ("Git".to_string(), RED));
     }
 
     #[test]
-    fn dirty_indicator_is_red_when_any_entry_is_conflicted() {
+    fn tab_label_gets_the_conflict_suffix_and_red_for_a_conflict() {
+        let status = Status {
+            inside: vec![file("a.json", true)],
+            outside: vec![],
+        };
+        assert_eq!(
+            tab_label("Git", &status),
+            ("Git [conflict]".to_string(), RED)
+        );
+    }
+
+    #[test]
+    fn tab_label_keeps_the_conflict_suffix_alongside_several_plain_changes() {
         let status = Status {
             inside: vec![file("a.json", false), file("b.json", true)],
             outside: vec![file("c.json", false)],
         };
-        assert_eq!(dirty_indicator(&status), Some(RED));
+        assert_eq!(
+            tab_label("Git", &status),
+            ("Git [conflict]".to_string(), RED)
+        );
     }
 
     #[test]

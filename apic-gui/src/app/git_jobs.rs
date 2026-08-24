@@ -16,6 +16,27 @@ use crate::features::git::service;
 use crate::features::git::state::{DiffData, JobResult, MutateKind};
 
 impl App {
+    /// Queues a status refresh for [`App::maybe_refresh_status`] to start once
+    /// no other git job is in flight. Called after a project loads and after
+    /// the app saves a contract: the two moments the tree can change without
+    /// the user ever opening the Git tab, so the tab's dirty indicator would
+    /// otherwise stay stale until first activation.
+    pub(crate) fn request_status_refresh(&mut self) {
+        self.needs_git_refresh = true;
+    }
+
+    /// Starts the queued status refresh once no other job is in flight.
+    /// Called every frame from `App::ui`, next to `poll_git`. Retrying every
+    /// frame rather than starting the job the moment it is requested means a
+    /// refresh requested while another job is in flight is not silently
+    /// dropped by that job's `pending` guard.
+    pub(crate) fn maybe_refresh_status(&mut self, ctx: &egui::Context) {
+        if self.needs_git_refresh && self.git.pending.is_none() {
+            self.needs_git_refresh = false;
+            self.spawn(ctx);
+        }
+    }
+
     /// Spawns `git status` on a background thread. Refuses to start a second
     /// job while one is pending: concurrent git commands contend for
     /// `index.lock`. Does nothing when the project is not inside a repo.
