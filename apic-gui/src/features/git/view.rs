@@ -256,7 +256,8 @@ fn file_row(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if staged {
                 if ui
-                    .small_button(RichText::new("Unstage").color(DIM))
+                    .small_button(RichText::new("-").color(DIM))
+                    .on_hover_text(format!("Unstage {}", file.path))
                     .clicked()
                 {
                     action = Some(GitAction::Unstage {
@@ -266,14 +267,19 @@ fn file_row(
             } else {
                 if file.tracked()
                     && ui
-                        .small_button(RichText::new("Discard").color(RED))
+                        .small_button(RichText::new("x").color(RED))
+                        .on_hover_text(format!("Discard {}", file.path))
                         .clicked()
                 {
                     action = Some(GitAction::RequestDiscard {
                         path: file.path.clone(),
                     });
                 }
-                if ui.small_button(RichText::new("Stage").color(DIM)).clicked() {
+                if ui
+                    .small_button(RichText::new("+").color(GREEN))
+                    .on_hover_text(format!("Stage {}", file.path))
+                    .clicked()
+                {
                     action = Some(GitAction::Stage {
                         path: file.path.clone(),
                     });
@@ -396,7 +402,8 @@ fn folder_row(
         if staged {
             if node.any_staged()
                 && ui
-                    .small_button(RichText::new("Unstage").color(DIM))
+                    .small_button(RichText::new("-").color(DIM))
+                    .on_hover_text(format!("Unstage {folder_path}"))
                     .clicked()
             {
                 action = Some(GitAction::Unstage {
@@ -404,16 +411,25 @@ fn folder_row(
                 });
             }
         } else {
-            if node.tracked_count() > 0
+            let tracked_count = node.tracked_count();
+            if tracked_count > 0
                 && ui
-                    .small_button(RichText::new("Discard").color(RED))
+                    .small_button(RichText::new("x").color(RED))
+                    .on_hover_text(format!(
+                        "Discard {folder_path} ({tracked_count} tracked file{})",
+                        if tracked_count == 1 { "" } else { "s" }
+                    ))
                     .clicked()
             {
                 action = Some(GitAction::RequestDiscard {
                     path: folder_path.to_string(),
                 });
             }
-            if ui.small_button(RichText::new("Stage").color(DIM)).clicked() {
+            if ui
+                .small_button(RichText::new("+").color(GREEN))
+                .on_hover_text(format!("Stage {folder_path}"))
+                .clicked()
+            {
                 action = Some(GitAction::Stage {
                     path: folder_path.to_string(),
                 });
