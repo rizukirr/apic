@@ -266,6 +266,86 @@ impl App {
             self.request_status_refresh();
         }
     }
+
+    /// Apply an action returned by the top bar or the sidebar to app state.
+    fn apply(&mut self, action: Action, ctx: &egui::Context) {
+        match action {
+            Action::Sidebar(SidebarAction::LoadContract(i)) => {
+                let invalid = self
+                    .contracts
+                    .entries
+                    .get(i)
+                    .map(|e| e.error.is_some())
+                    .unwrap_or(false);
+                if invalid {
+                    self.enter_repair(i);
+                } else {
+                    self.contracts.repair = None;
+                    self.load(i);
+                }
+            }
+            Action::Sidebar(SidebarAction::LoadTemplate(i)) => self.load_template(i),
+            Action::Sidebar(SidebarAction::OpenProject) => self.open_project(ctx),
+            Action::Sidebar(SidebarAction::NewProject) => self.new_project(ctx),
+            Action::Sidebar(SidebarAction::ImportPostman) => self.import_postman(ctx),
+            Action::Sidebar(SidebarAction::NewTemplate) => {
+                self.contracts.new_template = Some(String::new());
+                ctx.data_mut(|d| {
+                    d.insert_temp(egui::Id::new(FOCUS_NEW_TEMPLATE), "open".to_string())
+                });
+            }
+            Action::Sidebar(SidebarAction::NewRequest(prefix)) => {
+                self.contracts.new_request = Some(prefix);
+                self.contracts.new_request_seed = 0;
+                ctx.data_mut(|d| {
+                    d.insert_temp(egui::Id::new(FOCUS_NEW_REQUEST), "open".to_string())
+                });
+            }
+            Action::Sidebar(SidebarAction::RequestDelete(target)) => {
+                self.contracts.pending_delete = Some(target);
+            }
+            Action::Sidebar(SidebarAction::ToggleSidebar) => {
+                self.shell.sidebar_open = !self.shell.sidebar_open;
+            }
+            Action::Sidebar(SidebarAction::SwitchTab(tab)) => {
+                let entered_git =
+                    tab == SidebarTab::Git && self.shell.sidebar_tab != SidebarTab::Git;
+                self.shell.sidebar_tab = tab;
+                if entered_git {
+                    self.spawn(ctx);
+                }
+            }
+            Action::Git(GitAction::Refresh) => {
+                self.spawn(ctx);
+            }
+            Action::Git(GitAction::Select { path, staged }) => {
+                self.git.raw_view = false;
+                self.git.selected = Some((path.clone(), staged));
+                let cached =
+                    matches!(&self.git.diff, Some((key, _)) if *key == (path.clone(), staged));
+                if !cached {
+                    self.spawn_diff(ctx, path, staged);
+                }
+            }
+            Action::Git(GitAction::Stage { path }) => {
+                self.spawn_stage(ctx, path);
+            }
+            Action::Git(GitAction::Unstage { path }) => {
+                self.spawn_unstage(ctx, path);
+            }
+            Action::Git(GitAction::RequestDiscard { path }) => {
+                self.git.pending_discard = Some(path);
+            }
+            Action::Git(GitAction::ConfirmDiscard) => {
+                if let Some(path) = self.git.pending_discard.take() {
+                    self.spawn_discard(ctx, path);
+                }
+            }
+            Action::Git(GitAction::Commit) => {
+                self.spawn_commit(ctx, self.git.commit_message.clone());
+            }
+        }
+    }
 }
 
 impl eframe::App for App {
@@ -281,82 +361,8 @@ impl eframe::App for App {
         let top = self.top_bar(ui).map(Action::Sidebar);
         self.bottom_bar(ui);
         let side = self.sidebar(ui);
-        match top.or(side) {
-            Some(Action::Sidebar(SidebarAction::LoadContract(i))) => {
-                let invalid = self
-                    .contracts
-                    .entries
-                    .get(i)
-                    .map(|e| e.error.is_some())
-                    .unwrap_or(false);
-                if invalid {
-                    self.enter_repair(i);
-                } else {
-                    self.contracts.repair = None;
-                    self.load(i);
-                }
-            }
-            Some(Action::Sidebar(SidebarAction::LoadTemplate(i))) => self.load_template(i),
-            Some(Action::Sidebar(SidebarAction::OpenProject)) => self.open_project(&ctx),
-            Some(Action::Sidebar(SidebarAction::NewProject)) => self.new_project(&ctx),
-            Some(Action::Sidebar(SidebarAction::ImportPostman)) => self.import_postman(&ctx),
-            Some(Action::Sidebar(SidebarAction::NewTemplate)) => {
-                self.contracts.new_template = Some(String::new());
-                ctx.data_mut(|d| {
-                    d.insert_temp(egui::Id::new(FOCUS_NEW_TEMPLATE), "open".to_string())
-                });
-            }
-            Some(Action::Sidebar(SidebarAction::NewRequest(prefix))) => {
-                self.contracts.new_request = Some(prefix);
-                self.contracts.new_request_seed = 0;
-                ctx.data_mut(|d| {
-                    d.insert_temp(egui::Id::new(FOCUS_NEW_REQUEST), "open".to_string())
-                });
-            }
-            Some(Action::Sidebar(SidebarAction::RequestDelete(target))) => {
-                self.contracts.pending_delete = Some(target);
-            }
-            Some(Action::Sidebar(SidebarAction::ToggleSidebar)) => {
-                self.shell.sidebar_open = !self.shell.sidebar_open;
-            }
-            Some(Action::Sidebar(SidebarAction::SwitchTab(tab))) => {
-                let entered_git =
-                    tab == SidebarTab::Git && self.shell.sidebar_tab != SidebarTab::Git;
-                self.shell.sidebar_tab = tab;
-                if entered_git {
-                    self.spawn(&ctx);
-                }
-            }
-            Some(Action::Git(GitAction::Refresh)) => {
-                self.spawn(&ctx);
-            }
-            Some(Action::Git(GitAction::Select { path, staged })) => {
-                self.git.raw_view = false;
-                self.git.selected = Some((path.clone(), staged));
-                let cached =
-                    matches!(&self.git.diff, Some((key, _)) if *key == (path.clone(), staged));
-                if !cached {
-                    self.spawn_diff(&ctx, path, staged);
-                }
-            }
-            Some(Action::Git(GitAction::Stage { path })) => {
-                self.spawn_stage(&ctx, path);
-            }
-            Some(Action::Git(GitAction::Unstage { path })) => {
-                self.spawn_unstage(&ctx, path);
-            }
-            Some(Action::Git(GitAction::RequestDiscard { path })) => {
-                self.git.pending_discard = Some(path);
-            }
-            Some(Action::Git(GitAction::ConfirmDiscard)) => {
-                if let Some(path) = self.git.pending_discard.take() {
-                    self.spawn_discard(&ctx, path);
-                }
-            }
-            Some(Action::Git(GitAction::Commit)) => {
-                self.spawn_commit(&ctx, self.git.commit_message.clone());
-            }
-            None => {}
+        if let Some(a) = top.or(side) {
+            self.apply(a, &ctx);
         }
         self.central(ui);
         self.new_template_dialog(&ctx);
