@@ -6,3 +6,4 @@
 //! module here imports `crate::features::contracts`.
 
 pub(crate) mod model;
+pub(crate) mod service;
