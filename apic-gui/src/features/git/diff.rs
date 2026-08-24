@@ -5,13 +5,17 @@
 //!
 //! Consumed by `view`.
 
-use apic_core::edit::{EditHeader, EditModel, EditQuery, EditResponse};
-use apic_core::json::method_str;
+use std::collections::{BTreeMap, BTreeSet};
 
-/// One named difference between two revisions of a contract.
+use apic_core::edit::{EditHeader, EditModel, EditQuery, EditResponse};
+use apic_core::json::{method_str, pretty_json};
+
+/// One named difference between two revisions of a contract, at leaf-field
+/// granularity: one `FieldChange` per value a person could actually read and
+/// compare, never a bundle of several fields glued into one string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FieldChange {
-    /// What changed, e.g. the field name or `query param <name>`.
+    /// What changed, e.g. `query param page value` or `response 200 body`.
     pub(crate) what: String,
 
     /// The old value, empty when the thing did not exist before.
@@ -19,6 +23,21 @@ pub(crate) struct FieldChange {
 
     /// The new value, empty when the thing was removed.
     pub(crate) to: String,
+}
+
+/// One line of a line-level diff, produced by [`line_diff`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LineDiffKind {
+    Removed,
+    Added,
+    Unchanged,
+}
+
+/// One rendered row of a line-level diff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LineDiffRow {
+    pub(crate) kind: LineDiffKind,
+    pub(crate) text: String,
 }
 
 impl FieldChange {
@@ -59,44 +78,15 @@ pub(crate) fn diff_models(old: &EditModel, new: &EditModel) -> Vec<FieldChange> 
         &method_str(&new.method),
     );
     scalar(&mut changes, "url", &old.url, &new.url);
-    keyed(
-        &mut changes,
-        "query param",
-        old.query.iter().map(|q| (q.name.clone(), summary_query(q))),
-        new.query.iter().map(|q| (q.name.clone(), summary_query(q))),
-    );
-    keyed(
-        &mut changes,
-        "header",
-        old.headers
-            .iter()
-            .map(|h| (h.name.clone(), summary_header(h))),
-        new.headers
-            .iter()
-            .map(|h| (h.name.clone(), summary_header(h))),
-    );
+    diff_query_params(&mut changes, &old.query, &new.query);
+    diff_headers(&mut changes, "header", &old.headers, &new.headers);
     scalar(
         &mut changes,
         "request body",
-        old.request
-            .as_ref()
-            .map(|b| b.example.as_str())
-            .unwrap_or(""),
-        new.request
-            .as_ref()
-            .map(|b| b.example.as_str())
-            .unwrap_or(""),
+        &pretty_body(old.request.as_ref().map(|b| b.example.as_str())),
+        &pretty_body(new.request.as_ref().map(|b| b.example.as_str())),
     );
-    keyed(
-        &mut changes,
-        "response",
-        old.responses
-            .iter()
-            .map(|r| (r.code.clone(), summary_response(r))),
-        new.responses
-            .iter()
-            .map(|r| (r.code.clone(), summary_response(r))),
-    );
+    diff_responses(&mut changes, &old.responses, &new.responses);
     changes
 }
 
@@ -107,57 +97,186 @@ fn scalar(out: &mut Vec<FieldChange>, what: &str, old: &str, new: &str) {
     }
 }
 
-/// Records additions, removals and modifications for a keyed list. Order is not
-/// a difference: reordering query params changes the file but not the contract.
-fn keyed<A, B>(out: &mut Vec<FieldChange>, what: &str, old: A, new: B)
-where
-    A: Iterator<Item = (String, String)>,
-    B: Iterator<Item = (String, String)>,
-{
-    let old: std::collections::BTreeMap<String, String> = old.collect();
-    let new: std::collections::BTreeMap<String, String> = new.collect();
-    for (key, old_value) in &old {
-        match new.get(key) {
-            Some(new_value) if new_value != old_value => {
-                out.push(FieldChange::new(
-                    format!("{what} {key}"),
-                    old_value,
-                    new_value,
-                ));
-            }
-            Some(_) => {}
-            None => out.push(FieldChange::new(format!("{what} {key}"), old_value, "")),
-        }
-    }
-    for (key, new_value) in &new {
-        if !old.contains_key(key) {
-            out.push(FieldChange::new(format!("{what} {key}"), "", new_value));
-        }
+/// `true`/`false` as text, so a required flip compares like any other scalar.
+fn bool_str(b: bool) -> String {
+    b.to_string()
+}
+
+/// Pretty-prints a JSON body example so a diff shows formatted lines instead
+/// of one long line. Empty when there is no example.
+fn pretty_body(example: Option<&str>) -> String {
+    match example {
+        Some(text) if !text.trim().is_empty() => pretty_json(text),
+        _ => String::new(),
     }
 }
 
-/// One comparable string for a query param: value, description, and whether it
-/// is required, so making a parameter required registers as a change.
-fn summary_query(q: &EditQuery) -> String {
-    format!("{}|{}|{}", q.value, q.description, q.required)
+/// The keys present in either map, in a stable order. Order is not itself a
+/// difference: reordering query params changes the file but not the contract.
+fn union_keys<'a, V>(
+    old: &'a BTreeMap<String, V>,
+    new: &'a BTreeMap<String, V>,
+) -> BTreeSet<&'a str> {
+    old.keys().chain(new.keys()).map(String::as_str).collect()
 }
 
-/// One comparable string for a header: value and required flag.
-fn summary_header(h: &EditHeader) -> String {
-    format!("{}|{}", h.value, h.required)
+/// One leaf change per query param field: value, description, required. A
+/// param present on only one side compares against empty/false defaults, so
+/// an add or a remove reports the same way a modification does.
+fn diff_query_params(out: &mut Vec<FieldChange>, old: &[EditQuery], new: &[EditQuery]) {
+    let old: BTreeMap<String, &EditQuery> = old.iter().map(|q| (q.name.clone(), q)).collect();
+    let new: BTreeMap<String, &EditQuery> = new.iter().map(|q| (q.name.clone(), q)).collect();
+    let empty = EditQuery {
+        name: String::new(),
+        value: String::new(),
+        description: String::new(),
+        required: false,
+    };
+    for name in union_keys(&old, &new) {
+        let o = old.get(name).copied().unwrap_or(&empty);
+        let n = new.get(name).copied().unwrap_or(&empty);
+        scalar(
+            out,
+            &format!("query param {name} value"),
+            &o.value,
+            &n.value,
+        );
+        scalar(
+            out,
+            &format!("query param {name} description"),
+            &o.description,
+            &n.description,
+        );
+        scalar(
+            out,
+            &format!("query param {name} required"),
+            &bool_str(o.required),
+            &bool_str(n.required),
+        );
+    }
 }
 
-/// One comparable string for a response: description, headers, and example
-/// body, the fields `EditResponse` carries beside `code`, so a schema edit
-/// registers.
-fn summary_response(r: &EditResponse) -> String {
-    let headers = r
-        .headers
+/// One leaf change per header field: value, required. Shared by the
+/// top-level header list (`what` is `"header"`) and, indirectly, by a
+/// response's own headers, which are diffed as one block in
+/// [`diff_responses`] instead, since they belong to that response.
+fn diff_headers(out: &mut Vec<FieldChange>, what: &str, old: &[EditHeader], new: &[EditHeader]) {
+    let old: BTreeMap<String, &EditHeader> = old.iter().map(|h| (h.name.clone(), h)).collect();
+    let new: BTreeMap<String, &EditHeader> = new.iter().map(|h| (h.name.clone(), h)).collect();
+    let empty = EditHeader {
+        name: String::new(),
+        value: String::new(),
+        required: false,
+    };
+    for name in union_keys(&old, &new) {
+        let o = old.get(name).copied().unwrap_or(&empty);
+        let n = new.get(name).copied().unwrap_or(&empty);
+        scalar(out, &format!("{what} {name} value"), &o.value, &n.value);
+        scalar(
+            out,
+            &format!("{what} {name} required"),
+            &bool_str(o.required),
+            &bool_str(n.required),
+        );
+    }
+}
+
+/// A header list rendered as readable text, one header per line, for use as
+/// a single diffable block under a response.
+fn format_headers(headers: &[EditHeader]) -> String {
+    headers
         .iter()
-        .map(summary_header)
+        .map(|h| format!("{}: {} (required {})", h.name, h.value, h.required))
         .collect::<Vec<_>>()
-        .join(",");
-    format!("{}|{}|{}", r.description, headers, r.example)
+        .join("\n")
+}
+
+/// One leaf change per response field: description, headers, body. A
+/// response present on only one side compares against empty defaults, so an
+/// added or removed response code reports the same way a modification does.
+fn diff_responses(out: &mut Vec<FieldChange>, old: &[EditResponse], new: &[EditResponse]) {
+    let old: BTreeMap<String, &EditResponse> = old.iter().map(|r| (r.code.clone(), r)).collect();
+    let new: BTreeMap<String, &EditResponse> = new.iter().map(|r| (r.code.clone(), r)).collect();
+    let empty = EditResponse {
+        code: String::new(),
+        description: String::new(),
+        headers: Vec::new(),
+        example: String::new(),
+    };
+    for code in union_keys(&old, &new) {
+        let o = old.get(code).copied().unwrap_or(&empty);
+        let n = new.get(code).copied().unwrap_or(&empty);
+        scalar(
+            out,
+            &format!("response {code} description"),
+            &o.description,
+            &n.description,
+        );
+        scalar(
+            out,
+            &format!("response {code} headers"),
+            &format_headers(&o.headers),
+            &format_headers(&n.headers),
+        );
+        scalar(
+            out,
+            &format!("response {code} body"),
+            &pretty_body(Some(&o.example)),
+            &pretty_body(Some(&n.example)),
+        );
+    }
+}
+
+/// Line-level diff of two multi-line strings, by longest common prefix and
+/// suffix rather than a general LCS. That is enough for the case this
+/// exists for: a small edit inside an otherwise unchanged multi-line body,
+/// where it reports the one changed line instead of the whole body twice.
+pub(crate) fn line_diff(from: &str, to: &str) -> Vec<LineDiffRow> {
+    let from_lines: Vec<&str> = from.lines().collect();
+    let to_lines: Vec<&str> = to.lines().collect();
+
+    let mut prefix = 0;
+    while prefix < from_lines.len()
+        && prefix < to_lines.len()
+        && from_lines[prefix] == to_lines[prefix]
+    {
+        prefix += 1;
+    }
+
+    let mut suffix = 0;
+    while suffix < from_lines.len() - prefix
+        && suffix < to_lines.len() - prefix
+        && from_lines[from_lines.len() - 1 - suffix] == to_lines[to_lines.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+
+    let mut rows = Vec::new();
+    for line in &from_lines[..prefix] {
+        rows.push(LineDiffRow {
+            kind: LineDiffKind::Unchanged,
+            text: (*line).to_string(),
+        });
+    }
+    for line in &from_lines[prefix..from_lines.len() - suffix] {
+        rows.push(LineDiffRow {
+            kind: LineDiffKind::Removed,
+            text: (*line).to_string(),
+        });
+    }
+    for line in &to_lines[prefix..to_lines.len() - suffix] {
+        rows.push(LineDiffRow {
+            kind: LineDiffKind::Added,
+            text: (*line).to_string(),
+        });
+    }
+    for line in &to_lines[to_lines.len() - suffix..] {
+        rows.push(LineDiffRow {
+            kind: LineDiffKind::Unchanged,
+            text: (*line).to_string(),
+        });
+    }
+    rows
 }
 
 #[cfg(test)]
@@ -208,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn query_param_added_produces_a_change_with_empty_from() {
+    fn query_param_added_produces_a_value_change_with_empty_from() {
         let old = model(NO_LISTS);
         let new_text = r#"{
             "name": "login",
@@ -221,16 +340,16 @@ mod tests {
         }"#;
         let new = model(new_text);
         let changes = diff_models(&old, &new);
-        let change = changes
-            .iter()
-            .find(|c| c.what == "query param page")
-            .expect("query param change present");
-        assert_eq!(change.from, "");
-        assert!(!change.to.is_empty());
+        // description and required are unchanged from their defaults, so the
+        // add reports as one leaf change, not a bundle.
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].what, "query param page value");
+        assert_eq!(changes[0].from, "");
+        assert_eq!(changes[0].to, "1");
     }
 
     #[test]
-    fn query_param_made_required_produces_a_change_with_differing_from_and_to() {
+    fn query_param_required_flip_reports_only_the_required_leaf() {
         let old = model(BASE);
         // Flip the query param's required flag from true to false to force a change.
         let new_text = BASE.replace(
@@ -239,15 +358,14 @@ mod tests {
         );
         let new = model(&new_text);
         let changes = diff_models(&old, &new);
-        let change = changes
-            .iter()
-            .find(|c| c.what == "query param page")
-            .expect("query param change present");
-        assert_ne!(change.from, change.to);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].what, "query param page required");
+        assert_eq!(changes[0].from, "true");
+        assert_eq!(changes[0].to, "false");
     }
 
     #[test]
-    fn response_code_added_produces_a_change() {
+    fn response_code_added_produces_a_description_change() {
         let old = model(NO_LISTS);
         let new_text = r#"{
             "name": "login",
@@ -259,16 +377,77 @@ mod tests {
         }"#;
         let new = model(new_text);
         let changes = diff_models(&old, &new);
-        assert!(changes.iter().any(|c| c.what == "response 404"));
+        assert!(changes.iter().any(|c| c.what == "response 404 description"));
     }
 
     #[test]
-    fn response_body_edited_produces_a_change() {
+    fn response_body_edited_produces_a_body_change() {
         let old = model(BASE);
         let new_text = BASE.replace("\"token\": \"x\"", "\"token\": \"y\"");
         let new = model(&new_text);
         let changes = diff_models(&old, &new);
-        assert!(changes.iter().any(|c| c.what == "response 200"));
+        assert!(changes.iter().any(|c| c.what == "response 200 body"));
+    }
+
+    /// The regression guard for the bug this task fixes: a leaf-level change
+    /// never carries the `|` separator that used to be built into the
+    /// display string, no matter which fixture produces it.
+    #[test]
+    fn no_field_change_contains_the_pipe_character() {
+        let fixtures: &[(&str, &str)] = &[
+            (BASE, NO_LISTS),
+            (NO_LISTS, BASE),
+            (BASE, &BASE.replace("\"token\": \"x\"", "\"token\": \"y\"")),
+            (
+                BASE,
+                &BASE.replace(
+                    "{ \"name\": \"page\", \"value\": \"1\", \"description\": \"Page\", \"required\": true }",
+                    "{ \"name\": \"page\", \"value\": \"1\", \"description\": \"Page\", \"required\": false }",
+                ),
+            ),
+        ];
+        for (old_text, new_text) in fixtures {
+            let old = model(old_text);
+            let new = model(new_text);
+            for change in diff_models(&old, &new) {
+                assert!(!change.what.contains('|'), "what: {}", change.what);
+                assert!(!change.from.contains('|'), "from: {}", change.from);
+                assert!(!change.to.contains('|'), "to: {}", change.to);
+            }
+        }
+    }
+
+    /// The property that motivates the whole task: a one-word edit inside a
+    /// response body reports as exactly one change, and that change's
+    /// `from`/`to` differ only on the line carrying the edited word.
+    #[test]
+    fn response_body_word_edit_produces_exactly_one_change_differing_on_one_line() {
+        let old_text = r#"{
+            "name": "login",
+            "description": "Log a user in",
+            "method": "POST",
+            "url": "https://api.example.com/auth",
+            "headers": [],
+            "responses": [{
+                "code": 200,
+                "description": "ok",
+                "schema": { "message": "Password berhasil diubah", "ok": true }
+            }]
+        }"#;
+        let new_text = old_text.replace("berhasil diubah", "berhasil diuba");
+        let old = model(old_text);
+        let new = model(&new_text);
+        let changes = diff_models(&old, &new);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].what, "response 200 body");
+
+        let from_lines: Vec<&str> = changes[0].from.lines().collect();
+        let to_lines: Vec<&str> = changes[0].to.lines().collect();
+        assert_eq!(from_lines.len(), to_lines.len());
+        let differing: Vec<usize> = (0..from_lines.len())
+            .filter(|&i| from_lines[i] != to_lines[i])
+            .collect();
+        assert_eq!(differing, vec![1], "exactly one line should differ");
     }
 
     #[test]
@@ -307,9 +486,14 @@ mod tests {
         let old = model(BASE);
         let empty = model(NO_LISTS);
         let changes = diff_models(&old, &empty);
-        assert!(changes.iter().any(|c| c.what == "query param page"));
-        assert!(changes.iter().any(|c| c.what == "header Content-Type"));
+        assert!(changes.iter().any(|c| c.what == "query param page value"));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.what == "header Content-Type value")
+        );
         assert!(changes.iter().any(|c| c.what == "request body"));
-        assert!(changes.iter().any(|c| c.what == "response 200"));
+        assert!(changes.iter().any(|c| c.what == "response 200 description"));
+        assert!(changes.iter().any(|c| c.what == "response 200 body"));
     }
 }

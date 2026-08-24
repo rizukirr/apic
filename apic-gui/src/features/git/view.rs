@@ -341,28 +341,56 @@ fn find_file<'a>(state: &'a GitState, path: &str) -> Option<&'a FileStatus> {
         .find(|f| f.path == path)
 }
 
-/// Renders `diff::diff_models` as one row per change: the field name in
-/// `DIM`, the removed value in `RED`, the added value in `GREEN`. Either
-/// value is absent when the field was purely added or purely removed.
+/// Renders `diff::diff_models` as one block per change. A single-line change
+/// keeps the field name in `DIM` followed by `from` in `RED`, an arrow, and
+/// `to` in `GREEN`. A change whose `from` or `to` spans multiple lines (a
+/// body, mainly) instead renders as a line-level diff under the field name,
+/// so a one-line edit inside a many-line body shows as one changed line
+/// rather than the whole body twice.
 fn semantic_diff_view(ui: &mut egui::Ui, changes: &[FieldChange]) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             for change in changes {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(&change.what).color(DIM));
-                    if !change.from.is_empty() {
-                        ui.label(RichText::new(&change.from).color(RED));
-                    }
-                    if !change.from.is_empty() && !change.to.is_empty() {
-                        ui.label(RichText::new("->").color(DIM));
-                    }
-                    if !change.to.is_empty() {
-                        ui.label(RichText::new(&change.to).color(GREEN));
-                    }
-                });
+                if change.from.contains('\n') || change.to.contains('\n') {
+                    multiline_change_view(ui, change);
+                } else {
+                    single_line_change_view(ui, change);
+                }
+                ui.add_space(SPACE_SMALL);
             }
         });
+}
+
+/// One row for a change whose old and new values are each a single line.
+fn single_line_change_view(ui: &mut egui::Ui, change: &FieldChange) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(&change.what).color(DIM));
+        if !change.from.is_empty() {
+            ui.label(RichText::new(&change.from).color(RED));
+        }
+        if !change.from.is_empty() && !change.to.is_empty() {
+            ui.label(RichText::new("->").color(DIM));
+        }
+        if !change.to.is_empty() {
+            ui.label(RichText::new(&change.to).color(GREEN));
+        }
+    });
+}
+
+/// The field name as a heading, followed by a line-level diff: lines present
+/// only in `from` in `RED`, lines present only in `to` in `GREEN`, unchanged
+/// lines in `DIM`.
+fn multiline_change_view(ui: &mut egui::Ui, change: &FieldChange) {
+    ui.label(RichText::new(&change.what).color(DIM));
+    for row in diff::line_diff(&change.from, &change.to) {
+        let color = match row.kind {
+            diff::LineDiffKind::Removed => RED,
+            diff::LineDiffKind::Added => GREEN,
+            diff::LineDiffKind::Unchanged => DIM,
+        };
+        ui.label(RichText::new(&row.text).color(color).monospace());
+    }
 }
 
 /// Renders raw `git diff` text line by line: `+` lines `GREEN`, `-` lines
