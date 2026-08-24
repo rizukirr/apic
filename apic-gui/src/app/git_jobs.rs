@@ -27,11 +27,12 @@ impl App {
             return;
         };
         let root = self.shell.root.clone().unwrap_or_else(|| repo_root.clone());
-        let scope = scope(&root, &repo_root);
+        let scopes = scopes(&root, self.shell.project_root.as_deref(), &repo_root);
         let (tx, rx) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let result = service::status(&repo_root, &scope);
+            let refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
+            let result = service::status(&repo_root, &refs);
             let _ = tx.send(JobResult::Status(result));
             ctx.request_repaint();
         });
@@ -76,11 +77,12 @@ impl App {
             return;
         };
         let root = self.shell.root.clone().unwrap_or_else(|| repo_root.clone());
-        let scope = scope(&root, &repo_root);
+        let scopes = scopes(&root, self.shell.project_root.as_deref(), &repo_root);
         let (tx, rx) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let result = op(&repo_root).and_then(|()| service::status(&repo_root, &scope));
+            let refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
+            let result = op(&repo_root).and_then(|()| service::status(&repo_root, &refs));
             let _ = tx.send(JobResult::Mutate(kind, result));
             ctx.request_repaint();
         });
@@ -205,14 +207,23 @@ fn diff_job(root: &Path, path: &str, staged: bool) -> Result<DiffData, String> {
     })
 }
 
-/// The scope passed to `service::status`: `root` made relative to
-/// `repo_root`, falling back to an empty scope (the whole repo) when `root`
-/// is not under `repo_root`.
-fn scope(root: &Path, repo_root: &Path) -> String {
-    match root.strip_prefix(repo_root) {
+/// The scopes passed to `service::status`: `root` made relative to
+/// `repo_root`, plus `project_root/.apic` made relative to `repo_root` so the
+/// project config and templates always count as inside even when they sit
+/// outside the contract working dir. Falls back to an empty list (the whole
+/// repo, unconditionally inside) when `root` is not under `repo_root`.
+fn scopes(root: &Path, project_root: Option<&Path>, repo_root: &Path) -> Vec<String> {
+    let root_scope = match root.strip_prefix(repo_root) {
         Ok(rel) => apic_core::file::to_slash(rel),
-        Err(_) => String::new(),
+        Err(_) => return Vec::new(),
+    };
+    let mut scopes = vec![root_scope];
+    if let Some(project_root) = project_root
+        && let Ok(rel) = project_root.join(".apic").strip_prefix(repo_root)
+    {
+        scopes.push(apic_core::file::to_slash(rel));
     }
+    scopes
 }
 
 #[cfg(test)]
@@ -220,22 +231,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scope_is_root_relative_to_repo_root() {
+    fn scopes_root_is_root_relative_to_repo_root() {
         let repo_root = Path::new("/home/user/proj");
         let root = Path::new("/home/user/proj/apic-gui");
-        assert_eq!(scope(root, repo_root), "apic-gui");
+        assert_eq!(scopes(root, None, repo_root), vec!["apic-gui".to_string()]);
     }
 
     #[test]
-    fn scope_of_repo_root_itself_is_empty() {
+    fn scopes_of_repo_root_itself_is_empty_string() {
         let repo_root = Path::new("/home/user/proj");
-        assert_eq!(scope(repo_root, repo_root), "");
+        assert_eq!(scopes(repo_root, None, repo_root), vec![String::new()]);
     }
 
     #[test]
-    fn scope_falls_back_to_whole_repo_when_root_is_outside() {
+    fn scopes_falls_back_to_whole_repo_when_root_is_outside() {
         let repo_root = Path::new("/home/user/proj");
         let root = Path::new("/home/other/place");
-        assert_eq!(scope(root, repo_root), "");
+        assert_eq!(scopes(root, None, repo_root), Vec::<String>::new());
+    }
+
+    #[test]
+    fn scopes_includes_dot_apic_under_project_root_when_it_sits_outside_root() {
+        let repo_root = Path::new("/home/user/proj");
+        let project_root = Path::new("/home/user/proj");
+        let root = Path::new("/home/user/proj/contracts");
+        assert_eq!(
+            scopes(root, Some(project_root), repo_root),
+            vec!["contracts".to_string(), ".apic".to_string()]
+        );
+    }
+
+    #[test]
+    fn scopes_omits_dot_apic_when_project_root_is_outside_the_repo() {
+        let repo_root = Path::new("/home/user/proj");
+        let project_root = Path::new("/home/other/place");
+        let root = Path::new("/home/user/proj/contracts");
+        assert_eq!(
+            scopes(root, Some(project_root), repo_root),
+            vec!["contracts".to_string()]
+        );
     }
 }

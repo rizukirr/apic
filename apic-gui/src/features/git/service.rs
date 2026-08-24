@@ -48,13 +48,14 @@ pub(crate) fn discover(project_root: &Path) -> Result<Option<PathBuf>, String> {
     }
 }
 
-/// The working tree, split against `scope` (a repo-relative prefix).
-pub(crate) fn status(root: &Path, scope: &str) -> Result<Status, String> {
+/// The working tree, split against `scopes` (repo-relative prefixes, empty
+/// for the whole repo).
+pub(crate) fn status(root: &Path, scopes: &[&str]) -> Result<Status, String> {
     let out = run(
         root,
         &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
     )?;
-    Ok(parse_status(&out, scope))
+    Ok(parse_status(&out, scopes))
 }
 
 /// The line diff for one path, staged or unstaged.
@@ -151,12 +152,12 @@ mod tests {
         );
 
         fs::write(dir.join("file.txt"), "changed\n").unwrap();
-        let st = status(&root, "").unwrap();
+        let st = status(&root, &[]).unwrap();
         assert_eq!(st.inside.len(), 1);
         assert_eq!(st.inside[0].path, "file.txt");
 
         stage(&root, "file.txt").unwrap();
-        let st = status(&root, "").unwrap();
+        let st = status(&root, &[]).unwrap();
         assert_eq!(
             st.inside[0].index,
             crate::features::git::model::Change::Modified
@@ -167,7 +168,7 @@ mod tests {
         );
 
         unstage(&root, "file.txt").unwrap();
-        let st = status(&root, "").unwrap();
+        let st = status(&root, &[]).unwrap();
         assert_eq!(
             st.inside[0].index,
             crate::features::git::model::Change::Unmodified
@@ -186,7 +187,7 @@ mod tests {
         stage(&root, "file.txt").unwrap();
         commit(&root, "second").unwrap();
 
-        let st = status(&root, "").unwrap();
+        let st = status(&root, &[]).unwrap();
         assert!(st.inside.is_empty());
     }
 

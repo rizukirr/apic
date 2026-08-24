@@ -75,11 +75,13 @@ pub(crate) struct Status {
 }
 
 /// Parses `git status --porcelain=v2 -z` output, splitting each entry by whether
-/// it falls under `scope` (a repo-relative prefix, empty for the whole repo).
+/// it falls under any of `scopes` (repo-relative prefixes, empty for the whole
+/// repo). A path with no scope list applying is impossible to express with one
+/// prefix when two disjoint directories both matter, so several are accepted.
 ///
 /// Unknown record types are skipped rather than fatal, so a git version that
 /// adds a line type costs a missing row instead of an empty panel.
-pub(crate) fn parse_status(bytes: &[u8], scope: &str) -> Status {
+pub(crate) fn parse_status(bytes: &[u8], scopes: &[&str]) -> Status {
     let mut status = Status::default();
     let mut records = bytes.split(|b| *b == 0).filter(|r| !r.is_empty());
     while let Some(record) = records.next() {
@@ -105,7 +107,7 @@ pub(crate) fn parse_status(bytes: &[u8], scope: &str) -> Status {
             _ => None,
         };
         if let Some(file) = file {
-            if in_scope(&file.path, scope) {
+            if in_scope(&file.path, scopes) {
                 status.inside.push(file);
             } else {
                 status.outside.push(file);
@@ -147,10 +149,13 @@ fn unmerged(text: &str) -> Option<FileStatus> {
     })
 }
 
-/// Whether a repo-relative path sits under `scope`, itself repo-relative. An
-/// empty scope matches everything.
-fn in_scope(path: &str, scope: &str) -> bool {
-    scope.is_empty() || Path::new(path).starts_with(scope)
+/// Whether a repo-relative path sits under any of `scopes`, each itself
+/// repo-relative. An empty list matches everything.
+fn in_scope(path: &str, scopes: &[&str]) -> bool {
+    scopes.is_empty()
+        || scopes
+            .iter()
+            .any(|scope| Path::new(path).starts_with(scope))
 }
 
 #[cfg(test)]
@@ -165,7 +170,7 @@ mod tests {
     #[test]
     fn ordinary_unstaged_modification() {
         let bytes = joined(&["1 .M N... 100644 100644 100644 abc123 def456 src/main.rs"]);
-        let status = parse_status(&bytes, "");
+        let status = parse_status(&bytes, &[]);
         assert_eq!(status.inside.len(), 1);
         let file = &status.inside[0];
         assert_eq!(file.path, "src/main.rs");
@@ -177,7 +182,7 @@ mod tests {
     #[test]
     fn staged_addition() {
         let bytes = joined(&["1 A. N... 000000 100644 100644 0000000 def456 src/new.rs"]);
-        let status = parse_status(&bytes, "");
+        let status = parse_status(&bytes, &[]);
         assert_eq!(status.inside.len(), 1);
         let file = &status.inside[0];
         assert_eq!(file.path, "src/new.rs");
@@ -191,7 +196,7 @@ mod tests {
             "2 R. N... 100644 100644 100644 abc123 abc123 R100 src/renamed.rs",
             "src/old.rs",
         ]);
-        let status = parse_status(&bytes, "");
+        let status = parse_status(&bytes, &[]);
         assert_eq!(status.inside.len(), 1);
         let file = &status.inside[0];
         assert_eq!(file.path, "src/renamed.rs");
@@ -201,7 +206,7 @@ mod tests {
     #[test]
     fn untracked_file() {
         let bytes = joined(&["? src/scratch.rs"]);
-        let status = parse_status(&bytes, "");
+        let status = parse_status(&bytes, &[]);
         assert_eq!(status.inside.len(), 1);
         let file = &status.inside[0];
         assert_eq!(file.path, "src/scratch.rs");
@@ -214,7 +219,7 @@ mod tests {
     fn unmerged_file_is_conflicted() {
         let bytes =
             joined(&["u UU N... 100644 100644 100644 100644 abc123 def456 111111 src/conflict.rs"]);
-        let status = parse_status(&bytes, "");
+        let status = parse_status(&bytes, &[]);
         assert_eq!(status.inside.len(), 1);
         let file = &status.inside[0];
         assert_eq!(file.path, "src/conflict.rs");
@@ -226,7 +231,7 @@ mod tests {
     #[test]
     fn path_with_space() {
         let bytes = joined(&["1 .M N... 100644 100644 100644 abc123 def456 src/my file.rs"]);
-        let status = parse_status(&bytes, "");
+        let status = parse_status(&bytes, &[]);
         assert_eq!(status.inside.len(), 1);
         assert_eq!(status.inside[0].path, "src/my file.rs");
     }
@@ -234,7 +239,7 @@ mod tests {
     #[test]
     fn unknown_record_type_is_skipped() {
         let bytes = joined(&["! ignored entry"]);
-        let status = parse_status(&bytes, "");
+        let status = parse_status(&bytes, &[]);
         assert!(status.inside.is_empty());
         assert!(status.outside.is_empty());
     }
@@ -245,10 +250,27 @@ mod tests {
             "1 .M N... 100644 100644 100644 abc123 def456 apic-gui/src/main.rs",
             "1 .M N... 100644 100644 100644 abc123 def456 apic-core/src/lib.rs",
         ]);
-        let status = parse_status(&bytes, "apic-gui");
+        let status = parse_status(&bytes, &["apic-gui"]);
         assert_eq!(status.inside.len(), 1);
         assert_eq!(status.inside[0].path, "apic-gui/src/main.rs");
         assert_eq!(status.outside.len(), 1);
         assert_eq!(status.outside[0].path, "apic-core/src/lib.rs");
+    }
+
+    #[test]
+    fn dot_apic_stays_inside_even_when_it_sits_outside_the_working_dir() {
+        let bytes = joined(&[
+            "1 .M N... 100644 100644 100644 abc123 def456 project/.apic/config.toml",
+            "1 .M N... 100644 100644 100644 abc123 def456 project/.apic/template/convention.json",
+            "1 .M N... 100644 100644 100644 abc123 def456 project/contracts/login.json",
+            "1 .M N... 100644 100644 100644 abc123 def456 other/file.rs",
+        ]);
+        let status = parse_status(&bytes, &["project/contracts", "project/.apic"]);
+        let inside: Vec<&str> = status.inside.iter().map(|f| f.path.as_str()).collect();
+        assert!(inside.contains(&"project/.apic/config.toml"));
+        assert!(inside.contains(&"project/.apic/template/convention.json"));
+        assert!(inside.contains(&"project/contracts/login.json"));
+        assert_eq!(status.outside.len(), 1);
+        assert_eq!(status.outside[0].path, "other/file.rs");
     }
 }

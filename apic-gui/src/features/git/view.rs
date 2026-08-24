@@ -55,7 +55,7 @@ pub(crate) fn sidebar_body(
             ui.add(
                 egui::TextEdit::multiline(&mut state.commit_message)
                     .hint_text("commit message")
-                    .desired_rows(2)
+                    .desired_rows(4)
                     .desired_width(f32::INFINITY),
             );
             ui.add_space(SPACE_EXTRA_SMALL);
