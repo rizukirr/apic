@@ -8,3 +8,5 @@
 pub(crate) mod diff;
 pub(crate) mod model;
 pub(crate) mod service;
+pub(crate) mod state;
+pub(crate) mod view;
