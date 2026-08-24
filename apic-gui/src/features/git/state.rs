@@ -1,12 +1,38 @@
 //! State owned by the git feature: the current status, the selected diff, and
 //! the in-flight background job (if any).
 
+use std::cell::Cell;
+
 use crate::features::git::model::Status;
 
+/// One completed diff fetch: the raw line diff plus each side's file content,
+/// fetched only for a `.json` path since that is the only shape `diff::parse`
+/// can turn into a semantic comparison.
+pub(crate) struct DiffData {
+    /// `git diff` output for the selected path and side, `--cached` for
+    /// staged.
+    pub(crate) raw: String,
+
+    /// The old side's content: `HEAD` for staged, the index for unstaged.
+    /// `None` when the path did not exist at that revision, the normal case
+    /// for a newly added file.
+    pub(crate) old_blob: Option<String>,
+
+    /// The new side's content: the index for staged, the working file for
+    /// unstaged. `None` when the path does not exist there, the normal case
+    /// for a deleted file.
+    pub(crate) new_blob: Option<String>,
+}
+
 /// The result of a completed background git job, sent back over `pending`.
-/// Extended with more variants (diff, commit) in later tasks.
+/// Extended with more variants (commit) in later tasks.
 pub(crate) enum JobResult {
     Status(Result<Status, String>),
+
+    /// A diff fetch for one `(path, staged)` selection. The key travels with
+    /// the result so a stale reply, one for a file the user has since
+    /// unselected, does not get filed under the wrong key.
+    Diff((String, bool), Result<DiffData, String>),
 }
 
 /// Everything the git feature owns. `App` holds one of these; no other
@@ -20,6 +46,16 @@ pub(crate) struct GitState {
     /// The path and side (staged or unstaged) whose diff is shown, when one
     /// is selected.
     pub(crate) selected: Option<(String, bool)>,
+
+    /// The diff fetched for `selected`, keyed the same way, so switching
+    /// between two files and back does not re-run git. `None` while the
+    /// first fetch for the current selection is still in flight.
+    pub(crate) diff: Option<((String, bool), DiffData)>,
+
+    /// Forces the line diff for the current file even when a semantic view
+    /// is available. A `Cell` so the body, which only borrows `GitState`
+    /// immutably, can still flip it from the checkbox click.
+    pub(crate) raw_view: Cell<bool>,
 
     /// Nothing reads this yet, the commit box lands in a later task.
     #[allow(dead_code)]

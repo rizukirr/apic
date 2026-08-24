@@ -8,6 +8,7 @@ use eframe::egui;
 use egui::RichText;
 
 use crate::app::actions::GitAction;
+use crate::features::git::diff::{self, FieldChange};
 use crate::features::git::model::{Change, FileStatus};
 use crate::features::git::state::GitState;
 use crate::ui::theme::*;
@@ -158,19 +159,157 @@ fn file_row(
 /// state until then.
 ///
 /// The panel frame is owned by the app shell. This only sees the git slice.
-pub(crate) fn central_body(ui: &mut egui::Ui, _state: &GitState) {
+pub(crate) fn central_body(ui: &mut egui::Ui, state: &GitState) {
+    let Some((path, staged)) = state.selected.clone() else {
+        empty_state(ui, "No file selected", "Select a changed file on the left.");
+        return;
+    };
+
+    let loaded = match &state.diff {
+        Some((key, data)) if *key == (path.clone(), staged) => Some(data),
+        _ => None,
+    };
+    let Some(data) = loaded else {
+        empty_state(ui, "Loading diff...", "");
+        return;
+    };
+
+    let conflicted = find_file(state, &path)
+        .map(|f| f.conflicted)
+        .unwrap_or(false);
+
+    ui.add_space(SPACE_SMALL);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(&path).color(TEXT).strong());
+        let side = if staged { "staged" } else { "unstaged" };
+        ui.label(RichText::new(side).color(DIM));
+        if !conflicted {
+            let mut raw = state.raw_view.get();
+            if ui.checkbox(&mut raw, "Raw diff").changed() {
+                state.raw_view.set(raw);
+            }
+        }
+    });
+    ui.separator();
+
+    if conflicted {
+        raw_diff_view(ui, &data.raw);
+        ui.add_space(SPACE_SMALL);
+        ui.label(RichText::new("Resolve conflicts in your editor.").color(AMBER));
+        return;
+    }
+
+    let semantic = if state.raw_view.get() {
+        None
+    } else {
+        match (
+            data.old_blob.as_deref().and_then(diff::parse),
+            data.new_blob.as_deref().and_then(diff::parse),
+        ) {
+            (Some(old), Some(new)) => Some(diff::diff_models(&old, &new)),
+            _ => None,
+        }
+    };
+
+    match semantic {
+        Some(changes) if !changes.is_empty() => semantic_diff_view(ui, &changes),
+        Some(_) => {
+            ui.label(RichText::new("No semantic changes (formatting only).").color(DIM));
+            ui.add_space(SPACE_SMALL);
+            ui.label(RichText::new("Check \"Raw diff\" above to see the raw text.").color(DIM));
+        }
+        None => raw_diff_view(ui, &data.raw),
+    }
+}
+
+/// The centered placeholder shown before a selection exists and while the
+/// diff for the current selection is still loading.
+fn empty_state(ui: &mut egui::Ui, title: &str, hint: &str) {
     ui.add_space(40.0);
     ui.vertical_centered(|ui| {
-        ui.label(RichText::new("No file selected").color(DIM).size(16.0));
-        ui.add_space(SPACE_SMALL);
-        ui.label(RichText::new("Select a changed file on the left.").color(DIM));
+        ui.label(RichText::new(title).color(DIM).size(16.0));
+        if !hint.is_empty() {
+            ui.add_space(SPACE_SMALL);
+            ui.label(RichText::new(hint).color(DIM));
+        }
     });
+}
+
+/// The changed file's `FileStatus`, searched across both scopes so a
+/// conflict indicator is found regardless of whether the file sits inside or
+/// outside the contracts root.
+fn find_file<'a>(state: &'a GitState, path: &str) -> Option<&'a FileStatus> {
+    state
+        .status
+        .inside
+        .iter()
+        .chain(state.status.outside.iter())
+        .find(|f| f.path == path)
+}
+
+/// Renders `diff::diff_models` as one row per change: the field name in
+/// `DIM`, the removed value in `RED`, the added value in `GREEN`. Either
+/// value is absent when the field was purely added or purely removed.
+fn semantic_diff_view(ui: &mut egui::Ui, changes: &[FieldChange]) {
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for change in changes {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(&change.what).color(DIM));
+                    if !change.from.is_empty() {
+                        ui.label(RichText::new(&change.from).color(RED));
+                    }
+                    if !change.from.is_empty() && !change.to.is_empty() {
+                        ui.label(RichText::new("->").color(DIM));
+                    }
+                    if !change.to.is_empty() {
+                        ui.label(RichText::new(&change.to).color(GREEN));
+                    }
+                });
+            }
+        });
+}
+
+/// Renders raw `git diff` text line by line: `+` lines `GREEN`, `-` lines
+/// `RED`, everything else `TEXT`. Scrolls inside its own area so a large diff
+/// does not force the panel to content height.
+fn raw_diff_view(ui: &mut egui::Ui, raw: &str) {
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for line in raw.lines() {
+                let color = if line.starts_with('+') && !line.starts_with("+++") {
+                    GREEN
+                } else if line.starts_with('-') && !line.starts_with("---") {
+                    RED
+                } else {
+                    TEXT
+                };
+                ui.label(RichText::new(line).color(color).monospace());
+            }
+        });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::features::git::model::Status;
+    use crate::features::git::state::DiffData;
+
+    const CONTRACT_GET: &str =
+        r#"{"name":"x","method":"GET","url":"http://a","headers":[],"responses":[]}"#;
+    const CONTRACT_POST: &str =
+        r#"{"name":"x","method":"POST","url":"http://a","headers":[],"responses":[]}"#;
+    const CONTRACT_GET_REFORMATTED: &str = "{\n  \"name\": \"x\",\n  \"method\": \"GET\",\n  \"url\": \"http://a\",\n  \"headers\": [],\n  \"responses\": []\n}\n";
+
+    fn state_with_diff(path: &str, staged: bool, data: DiffData) -> GitState {
+        GitState {
+            selected: Some((path.to_string(), staged)),
+            diff: Some(((path.to_string(), staged), data)),
+            ..GitState::default()
+        }
+    }
 
     #[test]
     fn sidebar_and_central_render_without_panicking() {
@@ -224,6 +363,61 @@ mod tests {
                 ..GitState::default()
             };
             sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+            central_body(ui, &state);
+        });
+    }
+
+    #[test]
+    fn central_renders_semantic_diff_for_a_changed_contract() {
+        let old = diff::parse(CONTRACT_GET).expect("valid contract");
+        let new = diff::parse(CONTRACT_POST).expect("valid contract");
+        assert_eq!(diff::diff_models(&old, &new).len(), 1);
+        let state = state_with_diff(
+            "contracts/login.json",
+            true,
+            DiffData {
+                raw: "diff --git a/contracts/login.json b/contracts/login.json".into(),
+                old_blob: Some(CONTRACT_GET.into()),
+                new_blob: Some(CONTRACT_POST.into()),
+            },
+        );
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &state);
+        });
+    }
+
+    #[test]
+    fn central_renders_raw_diff_for_a_non_contract_file() {
+        let state = state_with_diff(
+            "src/main.rs",
+            false,
+            DiffData {
+                raw: "@@ -1 +1 @@\n-old line\n+new line\n".into(),
+                old_blob: None,
+                new_blob: None,
+            },
+        );
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &state);
+        });
+    }
+
+    #[test]
+    fn central_reports_a_reformatting_only_change_and_offers_raw_view() {
+        let old = diff::parse(CONTRACT_GET).expect("valid contract");
+        let new = diff::parse(CONTRACT_GET_REFORMATTED).expect("valid contract");
+        assert!(diff::diff_models(&old, &new).is_empty());
+        let state = state_with_diff(
+            "contracts/login.json",
+            false,
+            DiffData {
+                raw: "@@ -1,7 +1 @@\n-{\"name\":\"x\",\"method\":\"GET\",\"url\":\"http://a\",\"headers\":[],\"responses\":[]}\n+..."
+                    .into(),
+                old_blob: Some(CONTRACT_GET.into()),
+                new_blob: Some(CONTRACT_GET_REFORMATTED.into()),
+            },
+        );
+        eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &state);
         });
     }

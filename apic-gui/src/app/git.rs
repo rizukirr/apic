@@ -13,7 +13,7 @@ use eframe::egui;
 
 use crate::app::App;
 use crate::features::git::service;
-use crate::features::git::state::JobResult;
+use crate::features::git::state::{DiffData, JobResult};
 
 impl App {
     /// Spawns `git status` on a background thread. Refuses to start a second
@@ -38,9 +38,48 @@ impl App {
         self.git.pending = Some(rx);
     }
 
+    /// Spawns the diff fetch for one `(path, staged)` selection on a
+    /// background thread. Refuses to start a second job while one is
+    /// pending, the same rule as `spawn`.
+    fn spawn_diff(&mut self, ctx: &egui::Context, path: String, staged: bool) {
+        if self.git.pending.is_some() {
+            return;
+        }
+        let Some(repo_root) = self.shell.repo_root.clone() else {
+            return;
+        };
+        let key = (path.clone(), staged);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = diff_job(&repo_root, &path, staged);
+            let _ = tx.send(JobResult::Diff(key, result));
+            ctx.request_repaint();
+        });
+        self.git.pending = Some(rx);
+    }
+
+    /// Starts the diff fetch for the current selection when no job is
+    /// pending and the cached diff, if any, is for a different selection.
+    /// Called from `poll_git` so a click on `GitAction::Select`, which only
+    /// records the selection, is picked up on the very next poll.
+    fn maybe_spawn_diff(&mut self, ctx: &egui::Context) {
+        if self.git.pending.is_some() {
+            return;
+        }
+        let Some((path, staged)) = self.git.selected.clone() else {
+            return;
+        };
+        let cached = matches!(&self.git.diff, Some((key, _)) if *key == (path.clone(), staged));
+        if !cached {
+            self.spawn_diff(ctx, path, staged);
+        }
+    }
+
     /// Polls the in-flight git job and applies its result. Called every frame
     /// from `App::ui`, next to `poll_dialog`.
     pub(crate) fn poll_git(&mut self, ctx: &egui::Context) {
+        self.maybe_spawn_diff(ctx);
         let Some(rx) = &self.git.pending else {
             return;
         };
@@ -54,6 +93,15 @@ impl App {
                 self.git.pending = None;
                 self.git.error = e;
             }
+            Ok(JobResult::Diff(key, Ok(data))) => {
+                self.git.pending = None;
+                self.git.diff = Some((key, data));
+                self.git.error = String::new();
+            }
+            Ok(JobResult::Diff(_, Err(e))) => {
+                self.git.pending = None;
+                self.git.error = e;
+            }
             Err(TryRecvError::Empty) => ctx.request_repaint(),
             // A panicking worker must not leave the panel disabled forever:
             // clear `pending` and surface an error instead of hanging.
@@ -63,6 +111,35 @@ impl App {
             }
         }
     }
+}
+
+/// Builds one `DiffData`: the line diff plus, for a `.json` path, each side's
+/// content so the caller can attempt a semantic comparison.
+///
+/// Staged compares the index against `HEAD`; unstaged compares the working
+/// file against the index. `git show :<path>` reads the index (stage 0),
+/// which is what an empty revision means to `service::blob`.
+fn diff_job(root: &Path, path: &str, staged: bool) -> Result<DiffData, String> {
+    let raw = service::diff_text(root, path, staged)?;
+    let (old_blob, new_blob) = if path.ends_with(".json") {
+        if staged {
+            (
+                service::blob(root, "HEAD", path)?,
+                service::blob(root, "", path)?,
+            )
+        } else {
+            let old = service::blob(root, "", path)?;
+            let new = std::fs::read_to_string(root.join(path)).ok();
+            (old, new)
+        }
+    } else {
+        (None, None)
+    };
+    Ok(DiffData {
+        raw,
+        old_blob,
+        new_blob,
+    })
 }
 
 /// The scope passed to `service::status`: `root` made relative to
