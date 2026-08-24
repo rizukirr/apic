@@ -83,11 +83,6 @@ pub(crate) fn project_fixture() -> PathBuf {
 /// Builds `App` with a struct literal rooted at `root`. Never calls
 /// `App::new()`: that loads `Settings::load()`, which reads the developer's
 /// real `~/.config/apic-gui/config.toml` and can open their last project.
-///
-/// Not yet called from this module: it is scaffolding for the wiring tests
-/// that land in a later commit, so allow the otherwise-correct dead code
-/// warning until then.
-#[allow(dead_code)]
 pub(crate) fn app_at(root: PathBuf) -> App {
     App {
         shell: ShellState {
@@ -107,11 +102,6 @@ pub(crate) fn app_at(root: PathBuf) -> App {
 /// The bound is the point of this helper: without it, a wiring regression
 /// that never completes its job turns a red test into a hung suite, and a
 /// hung suite is worse than no suite at all.
-///
-/// Not yet called from this module: it is scaffolding for the wiring tests
-/// that land in a later commit, so allow the otherwise-correct dead code
-/// warning until then.
-#[allow(dead_code)]
 pub(crate) fn settle(app: &mut App, ctx: &egui::Context) {
     const MAX_ITERS: u32 = 200;
     for _ in 0..MAX_ITERS {
