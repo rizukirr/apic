@@ -40,6 +40,22 @@ pub(crate) enum GitAction {
     /// constructs this yet, the file list lands in Task 5.
     #[allow(dead_code)]
     Select { path: String, staged: bool },
+
+    /// Stage this repo-relative path.
+    Stage { path: String },
+
+    /// Unstage this repo-relative path, leaving the working tree untouched.
+    Unstage { path: String },
+
+    /// Ask to discard this tracked path, shows a confirmation before
+    /// anything is reverted.
+    RequestDiscard { path: String },
+
+    /// The pending discard was confirmed, revert it.
+    ConfirmDiscard,
+
+    /// Commit the currently staged changes with `GitState::commit_message`.
+    Commit,
 }
 
 /// Anything a view returned this frame, from either sidebar tab.

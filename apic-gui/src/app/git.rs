@@ -13,7 +13,7 @@ use eframe::egui;
 
 use crate::app::App;
 use crate::features::git::service;
-use crate::features::git::state::{DiffData, JobResult};
+use crate::features::git::state::{DiffData, JobResult, MutateKind};
 
 impl App {
     /// Spawns `git status` on a background thread. Refuses to start a second
@@ -76,6 +76,62 @@ impl App {
         }
     }
 
+    /// Runs one mutating git command (stage, unstage, discard or commit) on a
+    /// background thread, followed by a status refresh in the same job so a
+    /// successful mutation lands on screen in one poll. Refuses to start a
+    /// second job while one is pending, the same rule as `spawn`.
+    fn spawn_mutation(
+        &mut self,
+        ctx: &egui::Context,
+        kind: MutateKind,
+        op: impl FnOnce(&Path) -> Result<(), String> + Send + 'static,
+    ) {
+        if self.git.pending.is_some() {
+            return;
+        }
+        let Some(repo_root) = self.shell.repo_root.clone() else {
+            return;
+        };
+        let root = self.shell.root.clone().unwrap_or_else(|| repo_root.clone());
+        let scope = scope(&root, &repo_root);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = op(&repo_root).and_then(|()| service::status(&repo_root, &scope));
+            let _ = tx.send(JobResult::Mutate(kind, result));
+            ctx.request_repaint();
+        });
+        self.git.pending = Some(rx);
+    }
+
+    /// Stages `path`.
+    pub(crate) fn spawn_stage(&mut self, ctx: &egui::Context, path: String) {
+        self.spawn_mutation(ctx, MutateKind::Stage, move |root| {
+            service::stage(root, &path)
+        });
+    }
+
+    /// Unstages `path`.
+    pub(crate) fn spawn_unstage(&mut self, ctx: &egui::Context, path: String) {
+        self.spawn_mutation(ctx, MutateKind::Unstage, move |root| {
+            service::unstage(root, &path)
+        });
+    }
+
+    /// Discards `path`. Called only after the discard confirmation.
+    pub(crate) fn spawn_discard(&mut self, ctx: &egui::Context, path: String) {
+        self.spawn_mutation(ctx, MutateKind::Discard, move |root| {
+            service::discard(root, &path)
+        });
+    }
+
+    /// Commits the index with `message`.
+    pub(crate) fn spawn_commit(&mut self, ctx: &egui::Context, message: String) {
+        self.spawn_mutation(ctx, MutateKind::Commit, move |root| {
+            service::commit(root, &message)
+        });
+    }
+
     /// Polls the in-flight git job and applies its result. Called every frame
     /// from `App::ui`, next to `poll_dialog`.
     pub(crate) fn poll_git(&mut self, ctx: &egui::Context) {
@@ -101,6 +157,31 @@ impl App {
             Ok(JobResult::Diff(_, Err(e))) => {
                 self.git.pending = None;
                 self.git.error = e;
+            }
+            Ok(JobResult::Mutate(kind, Ok(status))) => {
+                self.git.pending = None;
+                self.git.status = status;
+                self.git.error = String::new();
+                if let Some((path, _)) = &self.git.selected
+                    && !self
+                        .git
+                        .status
+                        .inside
+                        .iter()
+                        .chain(self.git.status.outside.iter())
+                        .any(|f| &f.path == path)
+                {
+                    self.git.selected = None;
+                    self.git.diff = None;
+                }
+                if matches!(kind, MutateKind::Commit) {
+                    self.git.commit_message.clear();
+                }
+            }
+            Ok(JobResult::Mutate(_, Err(e))) => {
+                self.git.pending = None;
+                self.git.error = e.clone();
+                self.shell.status = e;
             }
             Err(TryRecvError::Empty) => ctx.request_repaint(),
             // A panicking worker must not leave the panel disabled forever:

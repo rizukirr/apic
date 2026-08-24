@@ -24,8 +24,17 @@ pub(crate) struct DiffData {
     pub(crate) new_blob: Option<String>,
 }
 
+/// Which mutating git command a `JobResult::Mutate` reports on. Carried
+/// alongside the result so the caller knows, for a successful commit, to
+/// clear `GitState::commit_message`.
+pub(crate) enum MutateKind {
+    Stage,
+    Unstage,
+    Discard,
+    Commit,
+}
+
 /// The result of a completed background git job, sent back over `pending`.
-/// Extended with more variants (commit) in later tasks.
 pub(crate) enum JobResult {
     Status(Result<Status, String>),
 
@@ -33,6 +42,11 @@ pub(crate) enum JobResult {
     /// the result so a stale reply, one for a file the user has since
     /// unselected, does not get filed under the wrong key.
     Diff((String, bool), Result<DiffData, String>),
+
+    /// A stage, unstage, discard or commit, run then followed by a status
+    /// refresh in the same background job. The refreshed status travels with
+    /// the result so a successful mutation lands on screen in one poll.
+    Mutate(MutateKind, Result<Status, String>),
 }
 
 /// Everything the git feature owns. `App` holds one of these; no other
@@ -57,9 +71,12 @@ pub(crate) struct GitState {
     /// immutably, can still flip it from the checkbox click.
     pub(crate) raw_view: Cell<bool>,
 
-    /// Nothing reads this yet, the commit box lands in a later task.
-    #[allow(dead_code)]
+    /// The commit message box, bound to the commit row's text field. Cleared
+    /// after a successful commit.
     pub(crate) commit_message: String,
+
+    /// The repo-relative path of a discard awaiting confirmation, if any.
+    pub(crate) pending_discard: Option<String>,
 
     /// The last git error, shown in the panel; empty when there is none.
     pub(crate) error: String,

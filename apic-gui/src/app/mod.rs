@@ -285,6 +285,23 @@ impl eframe::App for App {
             Some(Action::Git(GitAction::Select { path, staged })) => {
                 self.git.selected = Some((path, staged));
             }
+            Some(Action::Git(GitAction::Stage { path })) => {
+                self.spawn_stage(&ctx, path);
+            }
+            Some(Action::Git(GitAction::Unstage { path })) => {
+                self.spawn_unstage(&ctx, path);
+            }
+            Some(Action::Git(GitAction::RequestDiscard { path })) => {
+                self.git.pending_discard = Some(path);
+            }
+            Some(Action::Git(GitAction::ConfirmDiscard)) => {
+                if let Some(path) = self.git.pending_discard.take() {
+                    self.spawn_discard(&ctx, path);
+                }
+            }
+            Some(Action::Git(GitAction::Commit)) => {
+                self.spawn_commit(&ctx, self.git.commit_message.clone());
+            }
             None => {}
         }
         self.central(ui);

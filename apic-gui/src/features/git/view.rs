@@ -11,6 +11,7 @@ use crate::app::actions::GitAction;
 use crate::features::git::diff::{self, FieldChange};
 use crate::features::git::model::{Change, FileStatus};
 use crate::features::git::state::GitState;
+use crate::ui::components::text_button;
 use crate::ui::theme::*;
 
 /// Left sidebar body for the Git tab: a heading, a refresh button, the error
@@ -46,6 +47,32 @@ pub(crate) fn sidebar_body(
         ui.label(RichText::new("Not inside a git repository.").color(DIM));
         return action;
     }
+
+    egui::Panel::bottom("git_commit_bar")
+        .show_separator_line(false)
+        .show(ui, |ui| {
+            ui.add_space(SPACE_EXTRA_SMALL);
+            ui.add(
+                egui::TextEdit::multiline(&mut state.commit_message)
+                    .hint_text("commit message")
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY),
+            );
+            ui.add_space(SPACE_EXTRA_SMALL);
+            let has_staged = state
+                .status
+                .inside
+                .iter()
+                .chain(state.status.outside.iter())
+                .any(|f| f.index != Change::Unmodified);
+            let enabled = !state.commit_message.trim().is_empty() && has_staged;
+            ui.add_enabled_ui(enabled, |ui| {
+                if text_button(ui, "Commit", GREEN) {
+                    action = Some(GitAction::Commit);
+                }
+            });
+            ui.add_space(SPACE_EXTRA_SMALL);
+        });
 
     let selected = state.selected.clone();
     egui::ScrollArea::vertical()
@@ -110,7 +137,52 @@ pub(crate) fn sidebar_body(
             }
         });
 
+    if let Some(a) = discard_dialog(ui.ctx(), state) {
+        action = Some(a);
+    }
+
     action
+}
+
+/// Discard confirmation modal, shown when a discard is pending. Follows the
+/// shape of `delete_dialog` in `features::contracts::view`, so the codebase
+/// does not grow a second confirmation style.
+fn discard_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
+    let path = state.pending_discard.clone()?;
+    let mut confirm = false;
+    let mut cancel = false;
+    let modal = egui::Modal::new(egui::Id::new("discard_modal"))
+        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
+        .show(ctx, |ui| {
+            ui.set_min_width(320.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("DISCARD").color(RED).strong().size(16.0));
+            });
+            ui.add_space(SPACE_MEDIUM);
+            ui.label(RichText::new("Discard changes to").color(DIM));
+            ui.label(RichText::new(&path).color(TEXT).strong());
+            ui.add_space(SPACE_LARGE);
+            ui.columns(2, |cols| {
+                cols[0].vertical_centered(|ui| {
+                    if text_button(ui, "Discard", RED) {
+                        confirm = true;
+                    }
+                });
+                cols[1].vertical_centered(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        });
+    if confirm {
+        Some(GitAction::ConfirmDiscard)
+    } else if cancel || modal.should_close() {
+        state.pending_discard = None;
+        None
+    } else {
+        None
+    }
 }
 
 /// One changed-file row: the change letter, the file name (truncated), and a
@@ -135,6 +207,31 @@ fn file_row(
     let is_selected = selected == Some(&(file.path.clone(), staged));
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if staged {
+                if ui
+                    .small_button(RichText::new("Unstage").color(DIM))
+                    .clicked()
+                {
+                    action = Some(GitAction::Unstage {
+                        path: file.path.clone(),
+                    });
+                }
+            } else {
+                if file.tracked()
+                    && ui
+                        .small_button(RichText::new("Discard").color(RED))
+                        .clicked()
+                {
+                    action = Some(GitAction::RequestDiscard {
+                        path: file.path.clone(),
+                    });
+                }
+                if ui.small_button(RichText::new("Stage").color(DIM)).clicked() {
+                    action = Some(GitAction::Stage {
+                        path: file.path.clone(),
+                    });
+                }
+            }
             if file.conflicted {
                 ui.label(RichText::new("●").color(RED))
                     .on_hover_text("Conflicted");
@@ -364,6 +461,31 @@ mod tests {
             };
             sidebar_body(ui, &mut state, Some(Path::new("/repo")));
             central_body(ui, &state);
+        });
+    }
+
+    #[test]
+    fn sidebar_renders_discard_confirmation_without_panicking() {
+        let mut state = GitState {
+            pending_discard: Some("src/unstaged.rs".into()),
+            ..GitState::default()
+        };
+        eframe::egui::__run_test_ui(|ui| {
+            sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+        });
+        // The dialog stays open until the user confirms or cancels: a bare
+        // render must not clear it.
+        assert!(state.pending_discard.is_some());
+    }
+
+    #[test]
+    fn sidebar_renders_an_error_without_panicking() {
+        let mut state = GitState {
+            error: "git commit failed".into(),
+            ..GitState::default()
+        };
+        eframe::egui::__run_test_ui(|ui| {
+            sidebar_body(ui, &mut state, Some(Path::new("/repo")));
         });
     }
 
