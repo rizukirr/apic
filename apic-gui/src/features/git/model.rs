@@ -61,6 +61,20 @@ impl FileStatus {
     pub(crate) fn tracked(&self) -> bool {
         self.index != Change::Untracked && self.worktree != Change::Untracked
     }
+
+    /// Whether this file has content staged in the index. An untracked file
+    /// sets `index` to `Change::Untracked`, which is a real value and not the
+    /// `Unmodified` placeholder, but it is not a staged change, so this checks
+    /// for both.
+    pub(crate) fn has_staged_change(&self) -> bool {
+        self.index != Change::Unmodified && self.index != Change::Untracked
+    }
+
+    /// Whether this file has an unstaged change in the working tree. Being
+    /// untracked counts: the file exists on disk and is not yet in the index.
+    pub(crate) fn has_worktree_change(&self) -> bool {
+        self.worktree != Change::Unmodified
+    }
 }
 
 /// The working tree, split by location once at parse time so the view never
@@ -213,6 +227,43 @@ mod tests {
         assert_eq!(file.index, Change::Untracked);
         assert_eq!(file.worktree, Change::Untracked);
         assert!(!file.tracked());
+    }
+
+    fn status_pair(index: Change, worktree: Change) -> FileStatus {
+        FileStatus {
+            path: "f".into(),
+            index,
+            worktree,
+            conflicted: false,
+        }
+    }
+
+    #[test]
+    fn has_staged_change_and_has_worktree_change_for_untracked() {
+        let file = status_pair(Change::Untracked, Change::Untracked);
+        assert!(!file.has_staged_change());
+        assert!(file.has_worktree_change());
+    }
+
+    #[test]
+    fn has_staged_change_and_has_worktree_change_for_staged_only() {
+        let file = status_pair(Change::Added, Change::Unmodified);
+        assert!(file.has_staged_change());
+        assert!(!file.has_worktree_change());
+    }
+
+    #[test]
+    fn has_staged_change_and_has_worktree_change_for_worktree_only() {
+        let file = status_pair(Change::Unmodified, Change::Modified);
+        assert!(!file.has_staged_change());
+        assert!(file.has_worktree_change());
+    }
+
+    #[test]
+    fn has_staged_change_and_has_worktree_change_for_both() {
+        let file = status_pair(Change::Modified, Change::Modified);
+        assert!(file.has_staged_change());
+        assert!(file.has_worktree_change());
     }
 
     #[test]

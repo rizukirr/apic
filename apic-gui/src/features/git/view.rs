@@ -2,6 +2,7 @@
 //! central body (diff view). Both bodies fill a frame the app shell owns, the
 //! same shape as `features::contracts::view`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use eframe::egui;
@@ -9,7 +10,7 @@ use egui::RichText;
 
 use crate::app::actions::GitAction;
 use crate::features::git::diff::{self, FieldChange};
-use crate::features::git::model::{Change, FileStatus, Status};
+use crate::features::git::model::{FileStatus, Status};
 use crate::features::git::state::GitState;
 use crate::ui::components::text_button;
 use crate::ui::theme::*;
@@ -72,7 +73,7 @@ pub(crate) fn sidebar_body(
                 .inside
                 .iter()
                 .chain(state.status.outside.iter())
-                .any(|f| f.index != Change::Unmodified);
+                .any(|f| f.has_staged_change());
             let enabled = !state.commit_message.trim().is_empty() && has_staged;
             ui.add_enabled_ui(enabled, |ui| {
                 if text_button(ui, "Commit", GREEN) {
@@ -91,16 +92,12 @@ pub(crate) fn sidebar_body(
                 .status
                 .inside
                 .iter()
-                .filter(|f| f.index != Change::Unmodified)
+                .filter(|f| f.has_staged_change())
                 .collect();
             if staged.is_empty() {
                 ui.label(RichText::new("(none)").color(DIM));
             }
-            for file in &staged {
-                if let Some(a) = file_row(ui, file, true, selected.as_ref()) {
-                    action = Some(a);
-                }
-            }
+            FileTree::from_files(&staged).show(ui, "", true, selected.as_ref(), &mut action);
 
             ui.add_space(SPACE_SMALL);
             ui.label(RichText::new("UNSTAGED").color(DIM).size(11.0));
@@ -108,16 +105,12 @@ pub(crate) fn sidebar_body(
                 .status
                 .inside
                 .iter()
-                .filter(|f| f.worktree != Change::Unmodified)
+                .filter(|f| f.has_worktree_change())
                 .collect();
             if unstaged.is_empty() {
                 ui.label(RichText::new("(none)").color(DIM));
             }
-            for file in &unstaged {
-                if let Some(a) = file_row(ui, file, false, selected.as_ref()) {
-                    action = Some(a);
-                }
-            }
+            FileTree::from_files(&unstaged).show(ui, "", false, selected.as_ref(), &mut action);
 
             if !state.status.outside.is_empty() {
                 ui.add_space(SPACE_SMALL);
@@ -136,7 +129,7 @@ pub(crate) fn sidebar_body(
                 }
                 if state.show_outside {
                     for file in &state.status.outside {
-                        let staged = file.index != Change::Unmodified;
+                        let staged = file.has_staged_change();
                         if let Some(a) = file_row(ui, file, staged, selected.as_ref()) {
                             action = Some(a);
                         }
@@ -167,8 +160,23 @@ fn discard_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction
                 ui.label(RichText::new("DISCARD").color(RED).strong().size(16.0));
             });
             ui.add_space(SPACE_MEDIUM);
-            ui.label(RichText::new("Discard changes to").color(DIM));
-            ui.label(RichText::new(&path).color(TEXT).strong());
+            match discard_target(state, &path) {
+                DiscardTarget::File => {
+                    ui.label(RichText::new("Discard changes to").color(DIM));
+                    ui.label(RichText::new(&path).color(TEXT).strong());
+                }
+                DiscardTarget::Folder(count) => {
+                    ui.label(RichText::new("Discard changes in").color(DIM));
+                    ui.label(RichText::new(&path).color(TEXT).strong());
+                    ui.label(
+                        RichText::new(format!(
+                            "{count} tracked file{} will be reverted",
+                            if count == 1 { "" } else { "s" }
+                        ))
+                        .color(DIM),
+                    );
+                }
+            }
             ui.add_space(SPACE_LARGE);
             ui.columns(2, |cols| {
                 cols[0].vertical_centered(|ui| {
@@ -191,6 +199,33 @@ fn discard_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction
     } else {
         None
     }
+}
+
+/// What a pending discard path names: an exact file, or a folder holding some
+/// number of tracked files. Git only ever reports files in status, so a path
+/// that matches no `FileStatus::path` exactly is a folder.
+enum DiscardTarget {
+    File,
+    Folder(usize),
+}
+
+/// Resolves a pending discard path against the current status. The count for
+/// a folder is tracked files only, matching what `git checkout -- <dir>`
+/// actually reverts: untracked files under the folder are left alone.
+fn discard_target(state: &GitState, path: &str) -> DiscardTarget {
+    let all = state
+        .status
+        .inside
+        .iter()
+        .chain(state.status.outside.iter());
+    if all.clone().any(|f| f.path == path) {
+        return DiscardTarget::File;
+    }
+    let prefix = format!("{path}/");
+    let count = all
+        .filter(|f| f.tracked() && f.path.starts_with(&prefix))
+        .count();
+    DiscardTarget::Folder(count)
 }
 
 /// One changed-file row: the change letter, the file name (truncated), and a
@@ -255,6 +290,133 @@ fn file_row(
                     });
                 }
             });
+        });
+    });
+    action
+}
+
+/// A folder tree of a section's changed files, built from their
+/// `/`-separated repo-relative paths. Local to `features/git/`: that module
+/// may not import `features/contracts/`, and `contracts::view::TreeNode`
+/// carries method badges and contract indices that mean nothing here.
+#[derive(Default)]
+struct FileTree<'a> {
+    dirs: BTreeMap<String, FileTree<'a>>,
+    files: Vec<&'a FileStatus>,
+}
+
+impl<'a> FileTree<'a> {
+    fn from_files(files: &[&'a FileStatus]) -> Self {
+        let mut tree = FileTree::default();
+        for file in files {
+            tree.insert(&file.path, file);
+        }
+        tree
+    }
+
+    fn insert(&mut self, rel: &str, file: &'a FileStatus) {
+        match rel.split_once('/') {
+            Some((dir, rest)) => self
+                .dirs
+                .entry(dir.to_string())
+                .or_default()
+                .insert(rest, file),
+            None => self.files.push(file),
+        }
+    }
+
+    /// Whether any file under this node, at any depth, has a staged change.
+    fn any_staged(&self) -> bool {
+        self.files.iter().any(|f| f.has_staged_change())
+            || self.dirs.values().any(FileTree::any_staged)
+    }
+
+    /// The count of tracked files under this node, at any depth. Matches what
+    /// `git checkout -- <dir>` reverts: untracked files are left alone.
+    fn tracked_count(&self) -> usize {
+        self.files.iter().filter(|f| f.tracked()).count()
+            + self
+                .dirs
+                .values()
+                .map(FileTree::tracked_count)
+                .sum::<usize>()
+    }
+
+    /// Renders the tree: folders first with `CollapsingState`, then this
+    /// node's own files. `prefix` is the path accumulated so far, used for
+    /// both the folder's repo-relative path and its persistent id, so
+    /// expansion survives a status refresh.
+    fn show(
+        &self,
+        ui: &mut egui::Ui,
+        prefix: &str,
+        staged: bool,
+        selected: Option<&(String, bool)>,
+        action: &mut Option<GitAction>,
+    ) {
+        for (name, child) in &self.dirs {
+            let folder_path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let id = ui.make_persistent_id(("git_tree", staged, &folder_path));
+            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+                .show_header(ui, |ui| {
+                    if let Some(a) = folder_row(ui, &folder_path, name, staged, child) {
+                        *action = Some(a);
+                    }
+                })
+                .body(|ui| child.show(ui, &folder_path, staged, selected, action));
+        }
+        for file in &self.files {
+            if let Some(a) = file_row(ui, file, staged, selected) {
+                *action = Some(a);
+            }
+        }
+    }
+}
+
+/// One folder row: the same actions as a file row, acting on the folder's
+/// repo-relative path. Buttons are reserved first with a right-to-left
+/// layout, and the name is `.truncate()`d, matching `file_row`.
+fn folder_row(
+    ui: &mut egui::Ui,
+    folder_path: &str,
+    name: &str,
+    staged: bool,
+    node: &FileTree,
+) -> Option<GitAction> {
+    let mut action = None;
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if staged {
+            if node.any_staged()
+                && ui
+                    .small_button(RichText::new("Unstage").color(DIM))
+                    .clicked()
+            {
+                action = Some(GitAction::Unstage {
+                    path: folder_path.to_string(),
+                });
+            }
+        } else {
+            if node.tracked_count() > 0
+                && ui
+                    .small_button(RichText::new("Discard").color(RED))
+                    .clicked()
+            {
+                action = Some(GitAction::RequestDiscard {
+                    path: folder_path.to_string(),
+                });
+            }
+            if ui.small_button(RichText::new("Stage").color(DIM)).clicked() {
+                action = Some(GitAction::Stage {
+                    path: folder_path.to_string(),
+                });
+            }
+        }
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.add(egui::Label::new(RichText::new(name).color(DIM)).truncate());
         });
     });
     action
@@ -424,6 +586,7 @@ fn raw_diff_view(ui: &mut egui::Ui, raw: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::git::model::Change;
     use crate::features::git::state::DiffData;
 
     const CONTRACT_GET: &str =
@@ -447,6 +610,34 @@ mod tests {
             worktree: Change::Modified,
             conflicted,
         }
+    }
+
+    fn untracked(path: &str) -> FileStatus {
+        FileStatus {
+            path: path.into(),
+            index: Change::Untracked,
+            worktree: Change::Untracked,
+            conflicted: false,
+        }
+    }
+
+    #[test]
+    fn folder_with_only_untracked_files_offers_no_discard() {
+        let files = [untracked("dir/a.txt"), untracked("dir/b.txt")];
+        let refs: Vec<&FileStatus> = files.iter().collect();
+        let tree = FileTree::from_files(&refs);
+        let dir = tree.dirs.get("dir").expect("dir node");
+        assert_eq!(dir.tracked_count(), 0);
+    }
+
+    #[test]
+    fn folder_with_a_mix_offers_discard_while_untracked_files_do_not() {
+        let files = [file("dir/a.rs", false), untracked("dir/b.txt")];
+        let refs: Vec<&FileStatus> = files.iter().collect();
+        let tree = FileTree::from_files(&refs);
+        let dir = tree.dirs.get("dir").expect("dir node");
+        assert_eq!(dir.tracked_count(), 1);
+        assert!(!files[1].tracked());
     }
 
     #[test]
