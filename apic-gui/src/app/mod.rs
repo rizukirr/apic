@@ -27,6 +27,11 @@ use crate::settings::Settings;
 use crate::ui::components::text_button;
 use crate::ui::theme::*;
 
+/// Fixed row height shared by the top bar and the sidebar tab row, so a
+/// `selectable_label` and a `small_button` line up on one vertical centre
+/// instead of whatever baseline their differing natural heights would give.
+const TOOLBAR_ROW_H: f32 = 26.0;
+
 /// Whole-app state.
 ///
 /// One field per feature plus the in-flight file dialog. A new feature adds a
@@ -90,10 +95,9 @@ impl App {
         egui::Panel::top("nav").show(ui, |ui| {
             ui.add_space(SPACE_EXTRA_SMALL);
             ui.horizontal(|ui| {
-                let row_h = 26.0;
-                ui.set_min_height(row_h);
+                ui.set_min_height(TOOLBAR_ROW_H);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.set_min_height(row_h);
+                    ui.set_min_height(TOOLBAR_ROW_H);
                     let toggle_glyph = if self.shell.sidebar_open {
                         "☰"
                     } else {
@@ -161,9 +165,11 @@ impl App {
             .default_size(240.0)
             .min_size(100.0)
             .show(ui, |ui| {
-                ui.add_space(SPACE_EXTRA_SMALL);
+                ui.add_space(SPACE_SMALL);
                 ui.horizontal(|ui| {
+                    ui.set_min_height(TOOLBAR_ROW_H);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.set_min_height(TOOLBAR_ROW_H);
                         if self.shell.sidebar_tab == SidebarTab::Git
                             && ui
                                 .small_button(RichText::new("⟳").color(GREEN))
@@ -173,6 +179,7 @@ impl App {
                             action = Some(Action::Git(GitAction::Refresh));
                         }
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.set_min_height(TOOLBAR_ROW_H);
                             let selected = self.shell.sidebar_tab == SidebarTab::Explorer;
                             if ui
                                 .selectable_label(
