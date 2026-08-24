@@ -6,6 +6,7 @@
 //! touch any other feature's state.
 
 pub(crate) mod actions;
+pub(crate) mod git;
 pub(crate) mod project;
 pub(crate) mod state;
 
@@ -20,8 +21,8 @@ use crate::features::contracts::state::ContractsState;
 use crate::features::contracts::view::{
     CentralOutcome, FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, sidebar_body,
 };
-use crate::features::git;
 use crate::features::git::state::GitState;
+use crate::features::git::view as git_view;
 use crate::settings::Settings;
 use crate::ui::components::text_button;
 use crate::ui::theme::*;
@@ -178,7 +179,7 @@ impl App {
                         }
                     }
                     SidebarTab::Git => {
-                        if let Some(a) = git::view::sidebar_body(
+                        if let Some(a) = git_view::sidebar_body(
                             ui,
                             &mut self.git,
                             self.shell.repo_root.as_deref(),
@@ -199,7 +200,7 @@ impl App {
             SidebarTab::Explorer => {
                 central_body(ui, &mut self.shell, &mut self.contracts, &mut out);
             }
-            SidebarTab::Git => git::view::central_body(ui, &self.git),
+            SidebarTab::Git => git_view::central_body(ui, &self.git),
         });
         if out.toggle_edit {
             if self.contracts.editing {
@@ -228,6 +229,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.poll_dialog(&ctx);
+        self.poll_git(&ctx);
         let top = self.top_bar(ui).map(Action::Sidebar);
         self.bottom_bar(ui);
         let side = self.sidebar(ui);
@@ -270,11 +272,15 @@ impl eframe::App for App {
                 self.shell.sidebar_open = !self.shell.sidebar_open;
             }
             Some(Action::Sidebar(SidebarAction::SwitchTab(tab))) => {
+                let entered_git =
+                    tab == SidebarTab::Git && self.shell.sidebar_tab != SidebarTab::Git;
                 self.shell.sidebar_tab = tab;
+                if entered_git {
+                    self.spawn(&ctx);
+                }
             }
             Some(Action::Git(GitAction::Refresh)) => {
-                // Job dispatch lands in Task 5; for now the empty tab has
-                // nothing to refresh against.
+                self.spawn(&ctx);
             }
             Some(Action::Git(GitAction::Select { path, staged })) => {
                 self.git.selected = Some((path, staged));

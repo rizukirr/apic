@@ -5,10 +5,6 @@ use crate::features::git::model::Status;
 
 /// The result of a completed background git job, sent back over `pending`.
 /// Extended with more variants (diff, commit) in later tasks.
-///
-/// Nothing constructs `Status` yet, that lands with the background refresh
-/// job in Task 5.
-#[allow(dead_code)]
 pub(crate) enum JobResult {
     Status(Result<Status, String>),
 }
@@ -17,8 +13,8 @@ pub(crate) enum JobResult {
 /// feature may read or write it.
 #[derive(Default)]
 pub(crate) struct GitState {
-    /// Nothing reads this yet, the file list and diff view land in Task 5.
-    #[allow(dead_code)]
+    /// The last status read from the repository, scoped to the contracts
+    /// working dir plus a count of changes elsewhere.
     pub(crate) status: Status,
 
     /// The path and side (staged or unstaged) whose diff is shown, when one
@@ -33,14 +29,10 @@ pub(crate) struct GitState {
     pub(crate) error: String,
 
     /// Whether the "outside" (out-of-scope) changes section is expanded.
-    /// Nothing reads this yet, the file list lands in Task 5.
-    #[allow(dead_code)]
     pub(crate) show_outside: bool,
 
     /// The receiving end of an in-flight background git job, if any. Only one
     /// git command runs at a time: concurrent commands contend for
-    /// `index.lock`. Nothing reads this yet, the background refresh job
-    /// lands in Task 5.
-    #[allow(dead_code)]
+    /// `index.lock`.
     pub(crate) pending: Option<std::sync::mpsc::Receiver<JobResult>>,
 }
