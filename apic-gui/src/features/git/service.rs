@@ -104,9 +104,6 @@ pub(crate) fn commit(root: &Path, message: &str) -> Result<(), String> {
 
 /// The local branches and the current one. `current` is `None` in detached
 /// HEAD, where `git branch --show-current` prints nothing.
-///
-/// Not yet called outside tests, Task 2 wires it into state and view.
-#[allow(dead_code)]
 pub(crate) fn branches(root: &Path) -> Result<Branches, String> {
     let names = run(
         root,
@@ -131,18 +128,12 @@ pub(crate) fn branches(root: &Path) -> Result<Branches, String> {
 
 /// Checks out an existing branch. `git checkout`, not `git switch`, which
 /// needs git 2.23 or newer.
-///
-/// Not yet called outside tests, Task 2 wires it into state and view.
-#[allow(dead_code)]
 pub(crate) fn switch_branch(root: &Path, name: &str) -> Result<(), String> {
     run(root, &["checkout", name]).map(|_| ())
 }
 
 /// Creates a branch without switching to it. Creating and switching are
 /// deliberately separate operations here.
-///
-/// Not yet called outside tests, Task 2 wires it into state and view.
-#[allow(dead_code)]
 pub(crate) fn create_branch(root: &Path, name: &str) -> Result<(), String> {
     run(root, &["branch", name]).map(|_| ())
 }
@@ -150,9 +141,6 @@ pub(crate) fn create_branch(root: &Path, name: &str) -> Result<(), String> {
 /// Deletes a branch. Git itself refuses a merge-unsafe delete with a
 /// non-zero exit, which surfaces here as `Err` and leaves the branch in
 /// place, the panel never forces this past the refusal.
-///
-/// Not yet called outside tests, Task 2 wires it into state and view.
-#[allow(dead_code)]
 pub(crate) fn delete_branch(root: &Path, name: &str) -> Result<(), String> {
     run(root, &["branch", "-d", name]).map(|_| ())
 }

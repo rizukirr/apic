@@ -12,7 +12,7 @@ use crate::app::actions::GitAction;
 use crate::features::git::diff::{self, FieldChange};
 use crate::features::git::model::{FileStatus, Status};
 use crate::features::git::state::GitState;
-use crate::ui::components::text_button;
+use crate::ui::components::{bordered_input, text_button};
 use crate::ui::theme::*;
 
 /// What the Git tab should render, decided purely from a `Status`: the label
@@ -60,6 +60,17 @@ pub(crate) fn sidebar_body(
         ui.label(RichText::new("Not inside a git repository.").color(DIM));
         return action;
     }
+
+    // Populate the branch list once, and again after every branch mutation
+    // (handled in the app shell). `pending` guards against piling up a
+    // second git command while one is already in flight.
+    if state.branches.all.is_empty() && state.pending.is_none() {
+        action = Some(GitAction::RefreshBranches);
+    }
+    if let Some(a) = branch_row(ui, state) {
+        action = Some(a);
+    }
+    ui.separator();
 
     egui::Panel::bottom("git_commit_bar")
         .show_separator_line(false)
@@ -145,8 +156,199 @@ pub(crate) fn sidebar_body(
     if let Some(a) = discard_dialog(ui.ctx(), state) {
         action = Some(a);
     }
+    if let Some(a) = create_branch_dialog(ui.ctx(), state) {
+        action = Some(a);
+    }
+    if let Some(a) = delete_branch_dialog(ui.ctx(), state) {
+        action = Some(a);
+    }
 
     action
+}
+
+/// The egui memory key holding the branch highlighted in the dropdown.
+/// Selecting a branch only moves this highlight, it never switches the
+/// checked-out branch on its own: a dropdown is a navigation control, and a
+/// stray click there must not mutate the working tree.
+const BRANCH_HIGHLIGHT_ID: &str = "apic.git.branch_highlight";
+
+/// The row above `STAGED`: a dropdown over every local branch (the current
+/// one marked, so the list never changes shape as the user switches), an
+/// explicit Switch control, and glyph buttons to create or delete a branch.
+///
+/// In detached HEAD `Branches::current` is `None`, a real git state rather
+/// than an error, so no branch is marked current and Switch and Delete are
+/// disabled instead of guessing one.
+fn branch_row(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
+    let mut action = None;
+    let current = state.branches.current.clone();
+    let id = egui::Id::new(BRANCH_HIGHLIGHT_ID);
+    let mut highlighted = ui
+        .ctx()
+        .data(|d| d.get_temp::<String>(id))
+        .filter(|h| state.branches.all.contains(h))
+        .or_else(|| current.clone())
+        .or_else(|| state.branches.all.first().cloned())
+        .unwrap_or_default();
+
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let can_delete = current.is_some() && !highlighted.is_empty();
+            ui.add_enabled_ui(can_delete, |ui| {
+                if ui
+                    .small_button(RichText::new("x").color(RED))
+                    .on_hover_text(format!("Delete branch {highlighted}"))
+                    .clicked()
+                {
+                    action = Some(GitAction::RequestBranchDelete {
+                        name: highlighted.clone(),
+                    });
+                }
+            });
+            if ui
+                .small_button(RichText::new("+").color(GREEN))
+                .on_hover_text("Create a new branch")
+                .clicked()
+            {
+                state.new_branch = Some(String::new());
+            }
+            let can_switch = current.is_some() && Some(&highlighted) != current.as_ref();
+            ui.add_enabled_ui(can_switch, |ui| {
+                if text_button(ui, "Switch", GREEN) {
+                    action = Some(GitAction::SwitchBranch {
+                        name: highlighted.clone(),
+                    });
+                }
+            });
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                if current.is_none() {
+                    ui.label(RichText::new("(detached)").color(AMBER));
+                }
+                egui::ComboBox::from_id_salt("git_branch_combo")
+                    .selected_text(branch_label(&highlighted, current.as_deref()))
+                    .show_ui(ui, |ui| {
+                        for name in &state.branches.all {
+                            ui.selectable_value(
+                                &mut highlighted,
+                                name.clone(),
+                                branch_label(name, current.as_deref()),
+                            );
+                        }
+                    });
+            });
+        });
+    });
+
+    ui.ctx().data_mut(|d| d.insert_temp(id, highlighted));
+
+    action
+}
+
+/// A branch name for the dropdown, suffixed to mark the current one so the
+/// list keeps its shape as the user switches selection.
+fn branch_label(name: &str, current: Option<&str>) -> String {
+    if Some(name) == current {
+        format!("{name} (current)")
+    } else {
+        name.to_string()
+    }
+}
+
+/// The create-branch dialog, shaped like `new_template_dialog` in
+/// `features::contracts::view` so the codebase does not grow a second
+/// input-dialog style.
+fn create_branch_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
+    state.new_branch.as_ref()?;
+    let mut create = false;
+    let mut cancel = false;
+    let modal = egui::Modal::new(egui::Id::new("create_branch_modal"))
+        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
+        .show(ctx, |ui| {
+            ui.set_min_width(320.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("NEW BRANCH").color(GREEN).strong().size(16.0));
+            });
+            ui.add_space(SPACE_SMALL);
+            ui.label(RichText::new("branch name").color(DIM));
+            ui.add_space(SPACE_MEDIUM);
+            let buf = state.new_branch.as_mut().expect("dialog open");
+            let resp = bordered_input(ui, buf, f32::INFINITY, "");
+            if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                create = true;
+            }
+            ui.add_space(SPACE_LARGE);
+            ui.columns(2, |cols| {
+                cols[0].vertical_centered(|ui| {
+                    if text_button(ui, "Create", GREEN) {
+                        create = true;
+                    }
+                });
+                cols[1].vertical_centered(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        });
+    if create {
+        let name = state.new_branch.take().unwrap_or_default();
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            None
+        } else {
+            Some(GitAction::CreateBranch { name })
+        }
+    } else if cancel || modal.should_close() {
+        state.new_branch = None;
+        None
+    } else {
+        None
+    }
+}
+
+/// Delete confirmation for a branch, following the shape of `discard_dialog`
+/// rather than inventing a second confirmation style.
+fn delete_branch_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
+    let name = state.pending_branch_delete.clone()?;
+    let mut confirm = false;
+    let mut cancel = false;
+    let modal = egui::Modal::new(egui::Id::new("delete_branch_modal"))
+        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
+        .show(ctx, |ui| {
+            ui.set_min_width(320.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("DELETE BRANCH")
+                        .color(RED)
+                        .strong()
+                        .size(16.0),
+                );
+            });
+            ui.add_space(SPACE_MEDIUM);
+            ui.label(RichText::new("Delete branch").color(DIM));
+            ui.label(RichText::new(&name).color(TEXT).strong());
+            ui.add_space(SPACE_LARGE);
+            ui.columns(2, |cols| {
+                cols[0].vertical_centered(|ui| {
+                    if text_button(ui, "Delete", RED) {
+                        confirm = true;
+                    }
+                });
+                cols[1].vertical_centered(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        });
+    if confirm {
+        Some(GitAction::ConfirmBranchDelete)
+    } else if cancel || modal.should_close() {
+        state.pending_branch_delete = None;
+        None
+    } else {
+        None
+    }
 }
 
 /// Discard confirmation modal, shown when a discard is pending. Follows the
@@ -606,7 +808,7 @@ fn raw_diff_view(ui: &mut egui::Ui, raw: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::git::model::Change;
+    use crate::features::git::model::{Branches, Change};
     use crate::features::git::state::DiffData;
 
     const CONTRACT_GET: &str =
@@ -835,5 +1037,69 @@ mod tests {
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });
+    }
+
+    #[test]
+    fn sidebar_renders_a_normal_two_branch_state_without_panicking() {
+        let mut state = GitState {
+            branches: Branches {
+                current: Some("main".into()),
+                all: vec!["main".into(), "feature".into()],
+            },
+            ..GitState::default()
+        };
+        eframe::egui::__run_test_ui(|ui| {
+            sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+        });
+    }
+
+    #[test]
+    fn sidebar_renders_detached_head_without_panicking() {
+        let mut state = GitState {
+            branches: Branches {
+                current: None,
+                all: vec!["main".into()],
+            },
+            ..GitState::default()
+        };
+        eframe::egui::__run_test_ui(|ui| {
+            sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+        });
+    }
+
+    #[test]
+    fn sidebar_renders_the_create_branch_input_without_panicking() {
+        let mut state = GitState {
+            branches: Branches {
+                current: Some("main".into()),
+                all: vec!["main".into()],
+            },
+            new_branch: Some("feature".into()),
+            ..GitState::default()
+        };
+        eframe::egui::__run_test_ui(|ui| {
+            sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+        });
+        // The dialog stays open until the user confirms or cancels: a bare
+        // render must not clear it.
+        assert!(state.new_branch.is_some());
+    }
+
+    #[test]
+    fn sidebar_renders_the_delete_branch_confirmation_without_panicking() {
+        let mut state = GitState {
+            branches: Branches {
+                current: Some("main".into()),
+                all: vec!["main".into(), "feature".into()],
+            },
+            pending_branch_delete: Some("feature".into()),
+            ..GitState::default()
+        };
+        eframe::egui::__run_test_ui(|ui| {
+            sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+        });
+        // The dialog stays open until the user confirms or cancels: a bare
+        // render must not clear it.
+        assert!(state.pending_branch_delete.is_some());
     }
 }

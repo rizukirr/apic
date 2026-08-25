@@ -88,6 +88,9 @@ pub(crate) struct GitState {
     /// The repo-relative path of a discard awaiting confirmation, if any.
     pub(crate) pending_discard: Option<String>,
 
+    /// The name typed into the create-branch dialog, if it is open.
+    pub(crate) new_branch: Option<String>,
+
     /// The name of a branch delete awaiting confirmation, if any.
     pub(crate) pending_branch_delete: Option<String>,
 
