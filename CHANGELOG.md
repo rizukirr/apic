@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-25
+
+A feature release on top of 0.4.1. The CLI, the TUI, and the contract format are unchanged, so existing projects need no migration. Everything new lives in the desktop GUI, which gained a git panel, and that panel is the headline: status, staging, commit, branch switching, branch creation and deletion, and merge conflict resolution, all built on top of a restructured `apic-gui` codebase.
+
+### Added
+
+- **Git panel in the desktop GUI.** A new Git sidebar tab shows the working tree's status, nested by folder, with a dirty indicator on the tab and per-file symbol buttons for staging. A worker thread keeps status current, the central panel renders a diff for the selected file (including the content of untracked files, not just a field list), and stage, unstage, discard, and commit actions are wired to a git service layer built on the porcelain v2 status format.
+- **Branch support.** List, switch, create, and delete branches from a branch row in the git panel. Switching guards against unsaved edits and reconciles open contracts against the new branch's state, and the branch list stops retrying indefinitely when a fetch comes back empty.
+- **Merge conflict resolution.** Conflicted files get their own sidebar section. A conflict parser renders each conflict block as a colorized diff with a live preview of the resolved result, whole-file take-ours, take-theirs and resolve actions sit in the file's header row, and resolving a conflict writes the merged content and stages it.
+- **Semantic diff for contracts.** Git status for a contract file is summarized field by field (what actually changed in the JSON) rather than shown as a raw text diff.
+
+### Changed
+
+- **`apic-gui` restructured into `app`, `features`, and `ui` layers.** `main.rs` was split into app modules, `ContractsState` and `ShellState` were extracted from `App`, the sidebar and central panel frames moved into a shell, `ui/widgets.rs` became `ui/components` plus `ui/focus`, and `ui/theme.rs` became separate token modules for colors, spacing, and typography. Item visibility was narrowed throughout to what callers actually need.
+- **A suite of git wiring tests was added**, including an `App` test fixture and a bounded settle helper, and it pinned (then fixed) several defects in git status and staging that unit tests on individual functions had not caught.
+- The top bar now reads as a menu bar (New, Open, Import) rather than a row of filled buttons, and the sidebar's tab row and header are visually unified with it.
+
+### Fixed
+
+- Scope paths are resolved through symlinks before comparison, closing a case where a symlinked directory made the git panel treat in-scope files as out of scope.
+- Unstaging an untracked file works correctly, instead of leaving it staged.
+
+### Documentation
+
+- README documents the new git panel.
+
 ## [0.4.1] - 2026-07-30
 
 A maintenance release on top of 0.4.0. No contract format changes and no new
@@ -377,7 +403,8 @@ Initial beta release.
 - CI (fmt, clippy, build, test) and unit + end-to-end test suites.
 - MIT license.
 
-[Unreleased]: https://github.com/rizukirr/apic/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/rizukirr/apic/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/rizukirr/apic/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/rizukirr/apic/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/rizukirr/apic/compare/v0.3.6...v0.4.0
 [0.2.4]: https://github.com/rizukirr/apic/compare/v0.2.3...v0.2.4

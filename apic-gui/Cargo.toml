@@ -1,6 +1,6 @@
 [package]
 name = "apic-gui"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.97"
 authors = ["Rizki Rakasiwi"]
@@ -13,12 +13,12 @@ name = "apic-gui"
 path = "src/main.rs"
 
 [dependencies]
-apic-core = { path = "../apic-core", version = "0.4.1" }
-eframe = "0.35"
-egui_extras = "0.35"
+apic-core = { path = "../apic-core", version = "0.5.0" }
+eframe = "0.36"
+egui_extras = "0.36"
 rfd = "0.17.2"
 dirs = "6"
-pollster = "0.4"
+pollster = "1.0"
 
 # Only pulled in when building on Windows, where it embeds assets/icon.ico into
 # the .exe via build.rs. Other hosts skip it entirely.
@@ -30,4 +30,4 @@ winresource = "0.1"
 # wgpu, which works in driverless environments (VMs / RDP / winget's validation
 # sandbox) where OpenGL is unavailable. Linux/macOS keep the glow default.
 [target.'cfg(windows)'.dependencies]
-eframe = { version = "0.35", features = ["wgpu"] }
+eframe = { version = "0.36", features = ["wgpu"] }
