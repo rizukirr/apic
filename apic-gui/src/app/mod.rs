@@ -120,11 +120,11 @@ impl App {
                             style.spacing.button_padding = egui::vec2(8.0, 4.0);
                         })
                         .ui(ui, |ui| {
-                            if ui.button(RichText::new("Open").color(GREEN)).clicked() {
-                                action = Some(SidebarAction::OpenProject);
-                            }
                             if ui.button(RichText::new("New").color(GREEN)).clicked() {
                                 action = Some(SidebarAction::NewProject);
+                            }
+                            if ui.button(RichText::new("Open").color(GREEN)).clicked() {
+                                action = Some(SidebarAction::OpenProject);
                             }
                             ui.menu_button(RichText::new("Import").color(GREEN), |ui| {
                                 if ui.button("Postman collection").clicked() {
