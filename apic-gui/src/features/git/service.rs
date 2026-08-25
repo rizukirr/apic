@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::features::git::model::{Status, parse_status};
+use crate::features::git::model::{Branches, Status, parse_status};
 
 /// Runs `git -C <root> <args>` and returns stdout bytes.
 ///
@@ -100,6 +100,61 @@ pub(crate) fn discard(root: &Path, path: &str) -> Result<(), String> {
 /// Commits the index with `message`.
 pub(crate) fn commit(root: &Path, message: &str) -> Result<(), String> {
     run(root, &["commit", "-m", message]).map(|_| ())
+}
+
+/// The local branches and the current one. `current` is `None` in detached
+/// HEAD, where `git branch --show-current` prints nothing.
+///
+/// Not yet called outside tests, Task 2 wires it into state and view.
+#[allow(dead_code)]
+pub(crate) fn branches(root: &Path) -> Result<Branches, String> {
+    let names = run(
+        root,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+    )?;
+    let all = String::from_utf8_lossy(&names)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    let current = run(root, &["branch", "--show-current"])?;
+    let current = String::from_utf8_lossy(&current).trim().to_string();
+    let current = if current.is_empty() {
+        None
+    } else {
+        Some(current)
+    };
+
+    Ok(Branches { current, all })
+}
+
+/// Checks out an existing branch. `git checkout`, not `git switch`, which
+/// needs git 2.23 or newer.
+///
+/// Not yet called outside tests, Task 2 wires it into state and view.
+#[allow(dead_code)]
+pub(crate) fn switch_branch(root: &Path, name: &str) -> Result<(), String> {
+    run(root, &["checkout", name]).map(|_| ())
+}
+
+/// Creates a branch without switching to it. Creating and switching are
+/// deliberately separate operations here.
+///
+/// Not yet called outside tests, Task 2 wires it into state and view.
+#[allow(dead_code)]
+pub(crate) fn create_branch(root: &Path, name: &str) -> Result<(), String> {
+    run(root, &["branch", name]).map(|_| ())
+}
+
+/// Deletes a branch. Git itself refuses a merge-unsafe delete with a
+/// non-zero exit, which surfaces here as `Err` and leaves the branch in
+/// place, the panel never forces this past the refusal.
+///
+/// Not yet called outside tests, Task 2 wires it into state and view.
+#[allow(dead_code)]
+pub(crate) fn delete_branch(root: &Path, name: &str) -> Result<(), String> {
+    run(root, &["branch", "-d", name]).map(|_| ())
 }
 
 #[cfg(test)]
@@ -198,5 +253,108 @@ mod tests {
         }
         let dir = tempdir();
         assert_eq!(discover(&dir).unwrap(), None);
+    }
+
+    #[test]
+    fn branches_reports_the_initial_branch_as_current() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+
+        let initial = String::from_utf8_lossy(&run(&dir, &["branch", "--show-current"]).unwrap())
+            .trim()
+            .to_string();
+
+        let b = branches(&dir).unwrap();
+        assert_eq!(b.current, Some(initial.clone()));
+        assert!(b.all.contains(&initial));
+    }
+
+    #[test]
+    fn create_branch_lists_it_without_switching() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        let initial = String::from_utf8_lossy(&run(&dir, &["branch", "--show-current"]).unwrap())
+            .trim()
+            .to_string();
+
+        create_branch(&dir, "feature").unwrap();
+
+        let b = branches(&dir).unwrap();
+        assert!(b.all.contains(&"feature".to_string()));
+        assert_eq!(b.current, Some(initial));
+    }
+
+    #[test]
+    fn switch_branch_changes_current() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        create_branch(&dir, "feature").unwrap();
+
+        switch_branch(&dir, "feature").unwrap();
+
+        let b = branches(&dir).unwrap();
+        assert_eq!(b.current, Some("feature".to_string()));
+    }
+
+    #[test]
+    fn delete_branch_removes_a_merged_branch() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        create_branch(&dir, "feature").unwrap();
+
+        delete_branch(&dir, "feature").unwrap();
+
+        let b = branches(&dir).unwrap();
+        assert!(!b.all.contains(&"feature".to_string()));
+    }
+
+    #[test]
+    fn branches_in_detached_head_reports_no_current() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+
+        assert!(run(&dir, &["checkout", "--detach", "HEAD"]).is_ok());
+
+        let b = branches(&dir).unwrap();
+        assert_eq!(b.current, None);
+    }
+
+    #[test]
+    fn delete_branch_with_unmerged_commits_is_refused() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        let initial = String::from_utf8_lossy(&run(&dir, &["branch", "--show-current"]).unwrap())
+            .trim()
+            .to_string();
+
+        create_branch(&dir, "feature").unwrap();
+        switch_branch(&dir, "feature").unwrap();
+        fs::write(dir.join("file.txt"), "unmerged change\n").unwrap();
+        assert!(run(&dir, &["add", "--", "file.txt"]).is_ok());
+        assert!(commit(&dir, "unmerged commit").is_ok());
+        switch_branch(&dir, &initial).unwrap();
+
+        assert!(delete_branch(&dir, "feature").is_err());
+
+        let b = branches(&dir).unwrap();
+        assert!(b.all.contains(&"feature".to_string()));
     }
 }

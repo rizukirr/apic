@@ -88,6 +88,17 @@ pub(crate) struct Status {
     pub(crate) outside: Vec<FileStatus>,
 }
 
+/// The local branches, and which one is checked out.
+///
+/// `current` is `None` in detached HEAD. That is a normal state, not an
+/// error: git reports no branch name there, and the panel should show it as
+/// such rather than failing.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct Branches {
+    pub(crate) current: Option<String>,
+    pub(crate) all: Vec<String>,
+}
+
 /// Parses `git status --porcelain=v2 -z` output, splitting each entry by whether
 /// it falls under any of `scopes` (repo-relative prefixes, empty for the whole
 /// repo). A path with no scope list applying is impossible to express with one
