@@ -163,6 +163,47 @@ What it does:
 - **Import**, bring in a Postman collection from the **Import** menu.
 - **Manage**, scaffold new contracts and templates, or delete them with a
   confirmation.
+- **Git**, a second sidebar tab for staging, committing, branching and
+  resolving conflicts without leaving the app. See below.
+
+### Git
+
+The **Git** tab appears beside **Explorer** when the project sits inside a git
+repository. It shells out to your own `git`, so hooks, credential helpers and
+config all behave exactly as they do in a terminal. The tab label turns red when
+the working tree is dirty and gains a `[conflict]` suffix when a file is
+conflicted, so you can see it without switching tabs.
+
+- **Changed files**, listed under `CONFLICTS`, `STAGED` and `UNSTAGED`, nested by
+  folder like the Explorer tree. Scoped to your contract working directory plus
+  `.apic/`, with anything changed elsewhere in the repository counted on a line
+  you can expand rather than hidden.
+- **Stage, unstage, discard**, `+`, `-` and `x` on any file or folder. Discard is
+  offered for tracked files only, since reverting a tracked file is recoverable
+  and deleting an untracked one is not, and it always asks first, naming what it
+  will revert.
+- **Commit**, a message box and a commit button at the foot of the tab.
+- **Diffs**, selecting a file shows it whole with changed lines coloured. A
+  toggle switches to a field-level summary that names each changed field and its
+  old and new value, like `name user-login -> login-v2`, which is the better view
+  for a schema change buried in a large contract. Contracts that no longer parse,
+  and every non-contract file, fall back to the line view.
+- **Branches**, a dropdown lists every local branch. Picking one checks it out,
+  `+` creates one, `x` deletes one behind a confirmation. Deleting is never
+  forced, so git's refusal to drop unmerged work is surfaced rather than
+  overridden.
+- **Switching is safe**, a checkout is refused while a contract has unsaved
+  edits, naming the file. After a successful switch the open contract is
+  reloaded from the new branch, or closed if it does not exist there, so the
+  editor never shows content the working tree no longer has.
+- **Conflicts**, a conflicted file opens a resolver: each conflict block in file
+  order with both sides shown, and `Accept ours`, `Accept theirs` or `Accept
+  both` per block. A live preview on the right shows the resulting file as you
+  choose. Nothing is written until **Resolve**, which stays disabled until every
+  block is decided, then writes the file and stages it.
+
+Not included: merge, pull, fetch, rebase, stash and remote branches. Those stay
+in your terminal for now.
 
 ## Templates
 
