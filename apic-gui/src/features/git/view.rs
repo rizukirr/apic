@@ -880,27 +880,45 @@ fn conflict_resolver(
 fn resolve_view(ui: &mut egui::Ui, path: &str, resolve: &mut ResolveState) -> Option<GitAction> {
     let mut action = None;
 
-    ui.horizontal(|ui| {
-        if text_button(ui, "Take all ours", GREEN) {
-            resolve.choices.fill(Some(Choice::Ours));
-        }
-        if text_button(ui, "Take all theirs", GREEN) {
-            resolve.choices.fill(Some(Choice::Theirs));
-        }
-    });
-    ui.add_space(SPACE_SMALL);
-
     // Rendered fresh every frame from the current choices, by the exact
     // function Resolve calls below, so the right pane is always honest about
     // what pressing Resolve would write, including for still-undecided
     // blocks, which render as their original marker text.
     let rendered = conflict::render(&resolve.file, &resolve.choices);
 
+    // Pinned below the panes rather than placed after them, so it stays on
+    // screen regardless of how much height the panes end up wanting.
+    // Declared before the panes below, the same order as the commit bar in
+    // `sidebar_body`.
+    let all_chosen = resolve.choices.iter().all(Option::is_some);
+    egui::Panel::bottom("resolve_action_bar")
+        .show_separator_line(false)
+        .show(ui, |ui| {
+            ui.separator();
+            ui.horizontal(|ui| {
+                if text_button(ui, "Take all ours", GREEN) {
+                    resolve.choices.fill(Some(Choice::Ours));
+                }
+                if text_button(ui, "Take all theirs", GREEN) {
+                    resolve.choices.fill(Some(Choice::Theirs));
+                }
+                ui.add_enabled_ui(all_chosen, |ui| {
+                    if text_button(ui, &resolve_label(&resolve.choices), GREEN) {
+                        action = Some(GitAction::ResolveConflict {
+                            path: path.to_string(),
+                            text: rendered.clone(),
+                        });
+                    }
+                });
+            });
+            ui.add_space(SPACE_EXTRA_SMALL);
+        });
+
     ui.horizontal_top(|ui| {
         let gap = ui.spacing().item_spacing.x;
         let divider_w = 6.0;
         let col_w = ((ui.available_width() - divider_w - gap * 2.0) / 2.0).max(0.0);
-        let col_h = (ui.available_height() - 60.0).max(0.0);
+        let col_h = ui.available_height();
 
         // Left pane: the picker, one block at a time.
         ui.allocate_ui_with_layout(
@@ -980,19 +998,20 @@ fn resolve_view(ui: &mut egui::Ui, path: &str, resolve: &mut ResolveState) -> Op
         );
     });
 
-    ui.separator();
-
-    let all_chosen = resolve.choices.iter().all(Option::is_some);
-    ui.add_enabled_ui(all_chosen, |ui| {
-        if text_button(ui, "Resolve", GREEN) {
-            action = Some(GitAction::ResolveConflict {
-                path: path.to_string(),
-                text: rendered.clone(),
-            });
-        }
-    });
-
     action
+}
+
+/// The Resolve button's label: how many of the file's blocks are decided
+/// while any remain undecided, so a disabled button explains itself instead
+/// of leaving the user to count blocks by eye, or plain "Resolve" once every
+/// block has a choice.
+fn resolve_label(choices: &[Option<Choice>]) -> String {
+    let decided = choices.iter().filter(|c| c.is_some()).count();
+    if decided == choices.len() {
+        "Resolve".to_string()
+    } else {
+        format!("Resolve ({decided}/{})", choices.len())
+    }
 }
 
 /// One conflict block, shaped like VS Code's inline merge view: a row of
@@ -1534,6 +1553,23 @@ mod tests {
         assert_eq!(
             current_choice_summary(Some(Choice::Both), "HEAD", "feature"),
             "Resolve will write both HEAD and feature"
+        );
+    }
+
+    #[test]
+    fn resolve_label_shows_progress_while_blocks_remain_undecided() {
+        assert_eq!(resolve_label(&[None, None, None]), "Resolve (0/3)");
+        assert_eq!(
+            resolve_label(&[Some(Choice::Ours), None, Some(Choice::Theirs)]),
+            "Resolve (2/3)"
+        );
+    }
+
+    #[test]
+    fn resolve_label_reads_plain_resolve_once_every_block_is_decided() {
+        assert_eq!(
+            resolve_label(&[Some(Choice::Ours), Some(Choice::Theirs)]),
+            "Resolve"
         );
     }
 
