@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn cancel_edit_restores_pre_edit_model() {
-        let mut app = App::new();
+        let mut app = app_at(tempdir());
         app.contracts.model = Some(sample_model());
         let original = app.contracts.model.clone();
 
@@ -498,8 +498,7 @@ mod tests {
             "responses": [ { "code": 200, "description": "ok", "schema": {"id":"x"} } ]
         }"#;
         let contract = apic_core::json::json_get(json, None).expect("valid contract");
-        let mut app = App::new();
-        app.shell.project_root = Some(std::path::PathBuf::from("/tmp"));
+        let mut app = app_at(tempdir());
         app.contracts.model = Some(EditModel::from_contract(contract));
         app.begin_edit();
 
