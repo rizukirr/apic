@@ -9,9 +9,10 @@ use eframe::egui;
 use egui::RichText;
 
 use crate::app::actions::GitAction;
+use crate::features::git::conflict::{self, Choice, Segment};
 use crate::features::git::diff::{self, FieldChange};
 use crate::features::git::model::{FileStatus, Status};
-use crate::features::git::state::GitState;
+use crate::features::git::state::{GitState, ResolveState};
 use crate::ui::components::{bordered_input, text_button};
 use crate::ui::theme::*;
 
@@ -104,33 +105,46 @@ pub(crate) fn sidebar_body(
         });
 
     let selected = state.selected.clone();
+    let (conflicted, staged, unstaged) = sections(&state.status.inside);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            if !conflicted.is_empty() {
+                ui.label(RichText::new("CONFLICTS").color(DIM).size(11.0));
+                FileTree::from_files(&conflicted).show(
+                    ui,
+                    "",
+                    RowMode::Conflicted,
+                    selected.as_ref(),
+                    &mut action,
+                );
+                ui.add_space(SPACE_SMALL);
+            }
+
             ui.label(RichText::new("STAGED").color(DIM).size(11.0));
-            let staged: Vec<&FileStatus> = state
-                .status
-                .inside
-                .iter()
-                .filter(|f| f.has_staged_change())
-                .collect();
             if staged.is_empty() {
                 ui.label(RichText::new("(none)").color(DIM));
             }
-            FileTree::from_files(&staged).show(ui, "", true, selected.as_ref(), &mut action);
+            FileTree::from_files(&staged).show(
+                ui,
+                "",
+                RowMode::Staged,
+                selected.as_ref(),
+                &mut action,
+            );
 
             ui.add_space(SPACE_SMALL);
             ui.label(RichText::new("UNSTAGED").color(DIM).size(11.0));
-            let unstaged: Vec<&FileStatus> = state
-                .status
-                .inside
-                .iter()
-                .filter(|f| f.has_worktree_change())
-                .collect();
             if unstaged.is_empty() {
                 ui.label(RichText::new("(none)").color(DIM));
             }
-            FileTree::from_files(&unstaged).show(ui, "", false, selected.as_ref(), &mut action);
+            FileTree::from_files(&unstaged).show(
+                ui,
+                "",
+                RowMode::Unstaged,
+                selected.as_ref(),
+                &mut action,
+            );
 
             if !state.status.outside.is_empty() {
                 ui.add_space(SPACE_SMALL);
@@ -149,8 +163,14 @@ pub(crate) fn sidebar_body(
                 }
                 if state.show_outside {
                     for file in &state.status.outside {
-                        let staged = file.has_staged_change();
-                        if let Some(a) = file_row(ui, file, staged, selected.as_ref()) {
+                        let mode = if file.conflicted {
+                            RowMode::Conflicted
+                        } else if file.has_staged_change() {
+                            RowMode::Staged
+                        } else {
+                            RowMode::Unstaged
+                        };
+                        if let Some(a) = file_row(ui, file, mode, selected.as_ref()) {
                             action = Some(a);
                         }
                     }
@@ -466,6 +486,51 @@ fn discard_target(state: &GitState, path: &str) -> DiscardTarget {
     DiscardTarget::Folder(count)
 }
 
+/// Splits a section's files into the three sidebar groups: unresolved
+/// conflicts, staged, and unstaged. `unmerged` in `model.rs` sets both
+/// `index` and `worktree` to `Modified` for a conflicted entry, which makes
+/// it satisfy `has_staged_change` and `has_worktree_change` at once; staged
+/// and unstaged are not meaningful for a file mid-merge, so a conflicted
+/// entry is excluded from both and only listed here, keeping every file in
+/// exactly one group.
+fn sections(files: &[FileStatus]) -> (Vec<&FileStatus>, Vec<&FileStatus>, Vec<&FileStatus>) {
+    let conflicted: Vec<&FileStatus> = files.iter().filter(|f| f.conflicted).collect();
+    let staged: Vec<&FileStatus> = files
+        .iter()
+        .filter(|f| !f.conflicted && f.has_staged_change())
+        .collect();
+    let unstaged: Vec<&FileStatus> = files
+        .iter()
+        .filter(|f| !f.conflicted && f.has_worktree_change())
+        .collect();
+    (conflicted, staged, unstaged)
+}
+
+/// Which of the sidebar's three groups a row belongs to, deciding both the
+/// buttons it offers and which side (`index` or `worktree`) it reads.
+///
+/// A conflicted row offers no stage, unstage or discard control: `git add`
+/// on a conflicted file marks it resolved with its conflict markers still
+/// inside it, so a stage button here would let one click write a broken file
+/// into the index, which is exactly what the resolver exists to prevent.
+/// Clicking the row is the only action, and it opens the resolver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RowMode {
+    Staged,
+    Unstaged,
+    Conflicted,
+}
+
+impl RowMode {
+    /// Whether this row reads `index` (true) or `worktree` (false), and the
+    /// `staged` half of the `(path, staged)` selection key. Conflicted rows
+    /// read `worktree`: `diff_job` only populates `new_blob`, the working
+    /// file with its markers, when `staged` is false.
+    fn staged(self) -> bool {
+        matches!(self, RowMode::Staged)
+    }
+}
+
 /// One changed-file row: the change letter, the file name (truncated), and a
 /// red conflict indicator when the file is in a merge conflict.
 ///
@@ -476,10 +541,11 @@ fn discard_target(state: &GitState, path: &str) -> DiscardTarget {
 fn file_row(
     ui: &mut egui::Ui,
     file: &FileStatus,
-    staged: bool,
+    mode: RowMode,
     selected: Option<&(String, bool)>,
 ) -> Option<GitAction> {
     let mut action = None;
+    let staged = mode.staged();
     let change = if staged { file.index } else { file.worktree };
     let name = Path::new(&file.path)
         .file_name()
@@ -488,36 +554,40 @@ fn file_row(
     let is_selected = selected == Some(&(file.path.clone(), staged));
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if staged {
-                if ui
-                    .small_button(RichText::new("-").color(DIM))
-                    .on_hover_text(format!("Unstage {}", file.path))
-                    .clicked()
-                {
-                    action = Some(GitAction::Unstage {
-                        path: file.path.clone(),
-                    });
-                }
-            } else {
-                if file.tracked()
-                    && ui
-                        .small_button(RichText::new("x").color(RED))
-                        .on_hover_text(format!("Discard {}", file.path))
+            match mode {
+                RowMode::Staged => {
+                    if ui
+                        .small_button(RichText::new("-").color(DIM))
+                        .on_hover_text(format!("Unstage {}", file.path))
                         .clicked()
-                {
-                    action = Some(GitAction::RequestDiscard {
-                        path: file.path.clone(),
-                    });
+                    {
+                        action = Some(GitAction::Unstage {
+                            path: file.path.clone(),
+                        });
+                    }
                 }
-                if ui
-                    .small_button(RichText::new("+").color(GREEN))
-                    .on_hover_text(format!("Stage {}", file.path))
-                    .clicked()
-                {
-                    action = Some(GitAction::Stage {
-                        path: file.path.clone(),
-                    });
+                RowMode::Unstaged => {
+                    if file.tracked()
+                        && ui
+                            .small_button(RichText::new("x").color(RED))
+                            .on_hover_text(format!("Discard {}", file.path))
+                            .clicked()
+                    {
+                        action = Some(GitAction::RequestDiscard {
+                            path: file.path.clone(),
+                        });
+                    }
+                    if ui
+                        .small_button(RichText::new("+").color(GREEN))
+                        .on_hover_text(format!("Stage {}", file.path))
+                        .clicked()
+                    {
+                        action = Some(GitAction::Stage {
+                            path: file.path.clone(),
+                        });
+                    }
                 }
+                RowMode::Conflicted => {}
             }
             if file.conflicted {
                 ui.label(RichText::new("●").color(RED))
@@ -594,7 +664,7 @@ impl<'a> FileTree<'a> {
         &self,
         ui: &mut egui::Ui,
         prefix: &str,
-        staged: bool,
+        mode: RowMode,
         selected: Option<&(String, bool)>,
         action: &mut Option<GitAction>,
     ) {
@@ -604,17 +674,17 @@ impl<'a> FileTree<'a> {
             } else {
                 format!("{prefix}/{name}")
             };
-            let id = ui.make_persistent_id(("git_tree", staged, &folder_path));
+            let id = ui.make_persistent_id(("git_tree", mode, &folder_path));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    if let Some(a) = folder_row(ui, &folder_path, name, staged, child) {
+                    if let Some(a) = folder_row(ui, &folder_path, name, mode, child) {
                         *action = Some(a);
                     }
                 })
-                .body(|ui| child.show(ui, &folder_path, staged, selected, action));
+                .body(|ui| child.show(ui, &folder_path, mode, selected, action));
         }
         for file in &self.files {
-            if let Some(a) = file_row(ui, file, staged, selected) {
+            if let Some(a) = file_row(ui, file, mode, selected) {
                 *action = Some(a);
             }
         }
@@ -628,46 +698,50 @@ fn folder_row(
     ui: &mut egui::Ui,
     folder_path: &str,
     name: &str,
-    staged: bool,
+    mode: RowMode,
     node: &FileTree,
 ) -> Option<GitAction> {
     let mut action = None;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if staged {
-            if node.any_staged()
-                && ui
-                    .small_button(RichText::new("-").color(DIM))
-                    .on_hover_text(format!("Unstage {folder_path}"))
+        match mode {
+            RowMode::Staged => {
+                if node.any_staged()
+                    && ui
+                        .small_button(RichText::new("-").color(DIM))
+                        .on_hover_text(format!("Unstage {folder_path}"))
+                        .clicked()
+                {
+                    action = Some(GitAction::Unstage {
+                        path: folder_path.to_string(),
+                    });
+                }
+            }
+            RowMode::Unstaged => {
+                let tracked_count = node.tracked_count();
+                if tracked_count > 0
+                    && ui
+                        .small_button(RichText::new("x").color(RED))
+                        .on_hover_text(format!(
+                            "Discard {folder_path} ({tracked_count} tracked file{})",
+                            if tracked_count == 1 { "" } else { "s" }
+                        ))
+                        .clicked()
+                {
+                    action = Some(GitAction::RequestDiscard {
+                        path: folder_path.to_string(),
+                    });
+                }
+                if ui
+                    .small_button(RichText::new("+").color(GREEN))
+                    .on_hover_text(format!("Stage {folder_path}"))
                     .clicked()
-            {
-                action = Some(GitAction::Unstage {
-                    path: folder_path.to_string(),
-                });
+                {
+                    action = Some(GitAction::Stage {
+                        path: folder_path.to_string(),
+                    });
+                }
             }
-        } else {
-            let tracked_count = node.tracked_count();
-            if tracked_count > 0
-                && ui
-                    .small_button(RichText::new("x").color(RED))
-                    .on_hover_text(format!(
-                        "Discard {folder_path} ({tracked_count} tracked file{})",
-                        if tracked_count == 1 { "" } else { "s" }
-                    ))
-                    .clicked()
-            {
-                action = Some(GitAction::RequestDiscard {
-                    path: folder_path.to_string(),
-                });
-            }
-            if ui
-                .small_button(RichText::new("+").color(GREEN))
-                .on_hover_text(format!("Stage {folder_path}"))
-                .clicked()
-            {
-                action = Some(GitAction::Stage {
-                    path: folder_path.to_string(),
-                });
-            }
+            RowMode::Conflicted => {}
         }
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.add(egui::Label::new(RichText::new(name).color(DIM)).truncate());
@@ -677,13 +751,15 @@ fn folder_row(
 }
 
 /// The central body for the Git tab: the diff view once selected, an empty
-/// state until then.
+/// state until then, or the conflict resolver for a conflicted file.
 ///
 /// The panel frame is owned by the app shell. This only sees the git slice.
-pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) {
+/// Returns the resolve action once the user clicks Resolve, for the app
+/// shell to apply after this closure ends.
+pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
     let Some((path, staged)) = state.selected.clone() else {
         empty_state(ui, "No file selected", "Select a changed file on the left.");
-        return;
+        return None;
     };
 
     let loaded = match &state.diff {
@@ -692,7 +768,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) {
     };
     let Some(data) = loaded else {
         empty_state(ui, "Loading diff...", "");
-        return;
+        return None;
     };
 
     let conflicted = find_file(state, &path)
@@ -700,26 +776,30 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) {
         .unwrap_or(false);
 
     ui.add_space(SPACE_SMALL);
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(&path).color(TEXT).strong());
-        let side = if staged { "staged" } else { "unstaged" };
-        ui.label(RichText::new(side).color(DIM));
-        if !conflicted {
-            ui.checkbox(&mut state.raw_view, "Raw diff");
-        }
-    });
-    ui.separator();
-
-    if conflicted {
-        raw_diff_view(ui, &data.raw);
-        ui.add_space(SPACE_SMALL);
-        ui.label(RichText::new("Resolve conflicts in your editor.").color(AMBER));
-        return;
+    if !conflicted {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&path).color(TEXT).strong());
+            let side = if staged { "staged" } else { "unstaged" };
+            ui.label(RichText::new(side).color(DIM));
+            ui.checkbox(&mut state.show_changed_fields, "Show changed fields");
+        });
+        ui.separator();
     }
 
-    let semantic = if state.raw_view {
-        None
-    } else {
+    if conflicted {
+        // Cloned out of `data` before it is dropped, so `state` can be
+        // borrowed mutably below without fighting the borrow checker over a
+        // reference into `state.diff`.
+        let raw = data.raw.clone();
+        let new_blob = data.new_blob.clone();
+        return conflict_resolver(ui, state, &path, staged, &raw, new_blob.as_deref());
+    }
+
+    // The whole file with the change highlighted is the default: it is what
+    // someone clicking a changed file wants to see. The field list is better
+    // for a schema change buried in a large contract, so it stays reachable
+    // through the checkbox rather than being the default.
+    let semantic = if state.show_changed_fields {
         match (
             data.old_blob.as_deref().and_then(diff::parse),
             data.new_blob.as_deref().and_then(diff::parse),
@@ -727,6 +807,8 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) {
             (Some(old), Some(new)) => Some(diff::diff_models(&old, &new)),
             _ => None,
         }
+    } else {
+        None
     };
 
     match semantic {
@@ -734,10 +816,349 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) {
         Some(_) => {
             ui.label(RichText::new("No semantic changes (formatting only).").color(DIM));
             ui.add_space(SPACE_SMALL);
-            ui.label(RichText::new("Check \"Raw diff\" above to see the raw text.").color(DIM));
+            ui.label(
+                RichText::new("Uncheck \"Show changed fields\" above to see the full file.")
+                    .color(DIM),
+            );
         }
         None => raw_diff_view(ui, &data.raw),
     }
+    None
+}
+
+/// Ensures `state.resolve` holds the parsed conflict for `path`, parsing
+/// `new_blob` (the working file, markers and all) the first time this path is
+/// seen, then renders either the resolver or, when the text did not parse,
+/// the same read-only view a conflict showed before this panel existed.
+fn conflict_resolver(
+    ui: &mut egui::Ui,
+    state: &mut GitState,
+    path: &str,
+    staged: bool,
+    raw: &str,
+    new_blob: Option<&str>,
+) -> Option<GitAction> {
+    let matches_path = state.resolve.as_ref().is_some_and(|r| r.path == path);
+    if !matches_path {
+        state.resolve = new_blob.and_then(conflict::parse).map(|file| {
+            let block_count = file
+                .segments
+                .iter()
+                .filter(|s| matches!(s, Segment::Conflict { .. }))
+                .count();
+            ResolveState {
+                path: path.to_string(),
+                file,
+                choices: vec![None; block_count],
+            }
+        });
+    }
+
+    let Some(resolve) = state.resolve.as_mut() else {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(path).color(TEXT).strong());
+            let side = if staged { "staged" } else { "unstaged" };
+            ui.label(RichText::new(side).color(DIM));
+        });
+        ui.separator();
+        raw_diff_view(ui, raw);
+        ui.add_space(SPACE_SMALL);
+        ui.label(
+            RichText::new(
+                "This file's conflict markers could not be read. Resolve it in your editor.",
+            )
+            .color(AMBER),
+        );
+        return None;
+    };
+    resolve_view(ui, path, staged, resolve)
+}
+
+/// The conflict resolver: take-all shortcuts, a 50:50 split with the picker
+/// on the left (every block with its two named sides, the unconflicted text
+/// between them so the file still reads in order) and a live preview of what
+/// Resolve would write on the right, then Resolve.
+///
+/// The preview is `conflict::render` called with the current choices, the
+/// same function Resolve calls with the same choices, so nothing shown here
+/// can drift from what actually reaches disk. Split shape matches
+/// `features::contracts::view`: `horizontal_top` with `allocate_ui_with_layout`
+/// and a reserved divider width, rather than a second way to split a panel.
+///
+/// The whole-file actions live in this header row rather than a pinned bar
+/// below the panes: the header is laid out first, at the top of the body, so
+/// nothing rendered below it can push it off screen. The three buttons are
+/// reserved first, in a right-to-left layout, so a long path can never push
+/// them off the right edge, matching a real defect earlier in this cycle
+/// where Resolve rendered off screen and could not be clicked.
+///
+/// What remains is given to a left-aligned group holding the path then the
+/// side label, matching the non-conflicted header in `central_body`. The
+/// side label's width is measured first with `layout_no_wrap` (the same
+/// idiom `features::contracts::view` uses to size a field to its text) so
+/// the path's truncate width can be capped to leave room for it. Without
+/// that cap, a `.truncate()` label sizes itself against all remaining
+/// width, which is why the side label was pushed next to the buttons in an
+/// earlier pass of this same header.
+fn resolve_view(
+    ui: &mut egui::Ui,
+    path: &str,
+    staged: bool,
+    resolve: &mut ResolveState,
+) -> Option<GitAction> {
+    let mut action = None;
+
+    // Rendered fresh every frame from the current choices, by the exact
+    // function Resolve calls below, so the right pane is always honest about
+    // what pressing Resolve would write, including for still-undecided
+    // blocks, which render as their original marker text.
+    let rendered = conflict::render(&resolve.file, &resolve.choices);
+    let all_chosen = resolve.choices.iter().all(Option::is_some);
+
+    ui.horizontal(|ui| {
+        // Right-aligned, and inserted in right_to_left order so Resolve
+        // lands rightmost and last: it is the only one of the three that
+        // writes to disk, so a stray click one button off lands on a
+        // take-all, which only fills in a choice, rather than on Resolve.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_enabled_ui(all_chosen, |ui| {
+                if text_button(ui, &resolve_label(&resolve.choices), GREEN) {
+                    action = Some(GitAction::ResolveConflict {
+                        path: path.to_string(),
+                        text: rendered.clone(),
+                    });
+                }
+            });
+            if text_button(ui, "Take all theirs", GREEN) {
+                resolve.choices.fill(Some(Choice::Theirs));
+            }
+            if text_button(ui, "Take all ours", GREEN) {
+                resolve.choices.fill(Some(Choice::Ours));
+            }
+
+            let side = if staged { "staged" } else { "unstaged" };
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let side_width = ui
+                .painter()
+                .layout_no_wrap(side.to_string(), font, egui::Color32::PLACEHOLDER)
+                .size()
+                .x;
+            let gap = ui.spacing().item_spacing.x;
+            let path_max_width = (ui.available_width() - side_width - gap).max(0.0);
+
+            let leftover = egui::vec2(ui.available_width(), ui.available_height());
+            ui.allocate_ui_with_layout(
+                leftover,
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.scope(|ui| {
+                        ui.set_max_width(path_max_width);
+                        ui.add(
+                            egui::Label::new(RichText::new(path).color(TEXT).strong()).truncate(),
+                        );
+                    });
+                    ui.label(RichText::new(side).color(DIM));
+                },
+            );
+        });
+    });
+    ui.separator();
+
+    ui.horizontal_top(|ui| {
+        let gap = ui.spacing().item_spacing.x;
+        let divider_w = 6.0;
+        let col_w = ((ui.available_width() - divider_w - gap * 2.0) / 2.0).max(0.0);
+        let col_h = ui.available_height();
+
+        // Left pane: the picker, one block at a time.
+        ui.allocate_ui_with_layout(
+            egui::vec2(col_w, col_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |left| {
+                egui::ScrollArea::vertical()
+                    .id_salt("resolve_picker_scroll")
+                    .auto_shrink([false, false])
+                    .show(left, |ui| {
+                        let mut block = 0;
+                        for segment in &resolve.file.segments {
+                            match segment {
+                                Segment::Text(text) => {
+                                    if !text.trim().is_empty() {
+                                        ui.label(RichText::new(text).color(DIM).monospace());
+                                    }
+                                }
+                                Segment::Conflict {
+                                    ours_label,
+                                    theirs_label,
+                                    ours,
+                                    theirs,
+                                } => {
+                                    conflict_block_view(
+                                        ui,
+                                        ours_label,
+                                        theirs_label,
+                                        ours,
+                                        theirs,
+                                        &mut resolve.choices[block],
+                                    );
+                                    block += 1;
+                                }
+                            }
+                        }
+                    });
+            },
+        );
+
+        ui.separator();
+
+        // Right pane: the live preview of what Resolve would write.
+        ui.allocate_ui_with_layout(
+            egui::vec2(col_w, col_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |right| {
+                right.label(RichText::new("PREVIEW").color(DIM).size(11.0));
+                egui::ScrollArea::vertical()
+                    .id_salt("resolve_preview_scroll")
+                    .auto_shrink([false, false])
+                    .show(right, |ui| {
+                        if path.ends_with(".json") {
+                            // A partially decided preview still carries
+                            // conflict markers and is not valid JSON;
+                            // `highlight_json` handles non-JSON text without
+                            // panicking, so this stays safe for every state.
+                            let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+                            let job = crate::ui::syntax_highlighting::highlight_json(
+                                &rendered, font_id,
+                            );
+                            ui.label(job);
+                        } else {
+                            ui.label(RichText::new(&rendered).monospace());
+                        }
+                    });
+                if path.ends_with(".json") && apic_core::json::validate(&rendered).is_err() {
+                    right.add_space(SPACE_EXTRA_SMALL);
+                    right.label(
+                        RichText::new(
+                            "This resolution is not valid JSON. You can still resolve it and fix it in the repair editor.",
+                        )
+                        .color(AMBER),
+                    );
+                }
+            },
+        );
+    });
+
+    action
+}
+
+/// The Resolve button's label: how many of the file's blocks are decided
+/// while any remain undecided, so a disabled button explains itself instead
+/// of leaving the user to count blocks by eye, or plain "Resolve" once every
+/// block has a choice.
+fn resolve_label(choices: &[Option<Choice>]) -> String {
+    let decided = choices.iter().filter(|c| c.is_some()).count();
+    if decided == choices.len() {
+        "Resolve".to_string()
+    } else {
+        format!("Resolve ({decided}/{})", choices.len())
+    }
+}
+
+/// One conflict block, shaped like VS Code's inline merge view: a row of
+/// named actions, a line stating what the current choice will write, then
+/// the block stacked in file order with the real `<<<<<<<`, `=======` and
+/// `>>>>>>>` marker lines still visible so the pane reads like the file on
+/// disk. Ours is tinted green, theirs is tinted cyan.
+fn conflict_block_view(
+    ui: &mut egui::Ui,
+    ours_label: &str,
+    theirs_label: &str,
+    ours: &str,
+    theirs: &str,
+    choice: &mut Option<Choice>,
+) {
+    ui.group(|ui| {
+        ui.horizontal(|ui| {
+            if text_button(ui, "Accept ours", GREEN) {
+                *choice = Some(Choice::Ours);
+            }
+            if text_button(ui, "Accept theirs", CYAN) {
+                *choice = Some(Choice::Theirs);
+            }
+            if text_button(ui, "Accept both", DIM) {
+                *choice = Some(Choice::Both);
+            }
+        });
+        ui.label(
+            RichText::new(current_choice_summary(*choice, ours_label, theirs_label)).color(DIM),
+        );
+        ui.add_space(SPACE_EXTRA_SMALL);
+
+        conflict_side_view(
+            ui,
+            GREEN,
+            &format!("<<<<<<< {ours_label}"),
+            ours,
+            MarkerPosition::Before,
+        );
+        ui.label(RichText::new("=======").color(DIM).monospace());
+        conflict_side_view(
+            ui,
+            CYAN,
+            &format!(">>>>>>> {theirs_label}"),
+            theirs,
+            MarkerPosition::After,
+        );
+    });
+    ui.add_space(SPACE_SMALL);
+}
+
+/// States what Resolve will write for this block, so a decided block looks
+/// decided instead of leaving the choice only visible in the button state.
+fn current_choice_summary(choice: Option<Choice>, ours_label: &str, theirs_label: &str) -> String {
+    match choice {
+        Some(Choice::Ours) => format!("Resolve will write {ours_label}"),
+        Some(Choice::Theirs) => format!("Resolve will write {theirs_label}"),
+        Some(Choice::Both) => format!("Resolve will write both {ours_label} and {theirs_label}"),
+        None => "Not decided yet".to_string(),
+    }
+}
+
+/// Where the marker line sits relative to a side's content, matching where
+/// git placed `<<<<<<<` (before ours) and `>>>>>>>` (after theirs).
+enum MarkerPosition {
+    Before,
+    After,
+}
+
+/// One tinted side of a conflict block: the marker line plus the side's text,
+/// painted in `color` over a background derived from the same token via
+/// `gamma_multiply` rather than a new colour, so the panel keeps one
+/// palette.
+fn conflict_side_view(
+    ui: &mut egui::Ui,
+    color: egui::Color32,
+    marker: &str,
+    text: &str,
+    marker_position: MarkerPosition,
+) {
+    let background = color.gamma_multiply(0.15);
+    egui::Frame::new()
+        .fill(background)
+        .inner_margin(SPACE_EXTRA_SMALL)
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                if matches!(marker_position, MarkerPosition::Before) {
+                    ui.label(RichText::new(marker).color(color).monospace());
+                }
+                for line in text.lines() {
+                    ui.label(RichText::new(line).color(color).monospace());
+                }
+                if matches!(marker_position, MarkerPosition::After) {
+                    ui.label(RichText::new(marker).color(color).monospace());
+                }
+            });
+        });
 }
 
 /// The centered placeholder shown before a selection exists and while the
@@ -817,22 +1238,40 @@ fn multiline_change_view(ui: &mut egui::Ui, change: &FieldChange) {
     }
 }
 
-/// Renders raw `git diff` text line by line: `+` lines `GREEN`, `-` lines
-/// `RED`, everything else `TEXT`. Scrolls inside its own area so a large diff
-/// does not force the panel to content height.
+/// Drops the `diff --git`, `index`, `---`, `+++` and `@@` header lines,
+/// leaving the file content the diff carries: everything after and
+/// including the first `@@` line is plumbing, not content. The
+/// untracked-file path synthesises `+` lines with no header at all, so a
+/// diff with no `@@` line is returned unchanged rather than assuming a
+/// header is always there.
+fn strip_diff_header(raw: &str) -> &str {
+    let mut consumed = 0;
+    for line in raw.lines() {
+        consumed += line.len() + 1;
+        if line.starts_with("@@") {
+            return raw.get(consumed..).unwrap_or("");
+        }
+    }
+    raw
+}
+
+/// Renders a diff body (header already stripped) as the file itself: each
+/// line's one-character marker, ` ` for context, `+` for added, `-` for
+/// removed, picks the colour and is then dropped, so what remains is the
+/// file's own text at its own indentation. Scrolls inside its own area, a
+/// full file is longer than a hunk ever was.
 fn raw_diff_view(ui: &mut egui::Ui, raw: &str) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for line in raw.lines() {
-                let color = if line.starts_with('+') && !line.starts_with("+++") {
-                    GREEN
-                } else if line.starts_with('-') && !line.starts_with("---") {
-                    RED
-                } else {
-                    TEXT
+            for line in strip_diff_header(raw).lines() {
+                let mut chars = line.chars();
+                let color = match chars.next() {
+                    Some('+') => GREEN,
+                    Some('-') => RED,
+                    _ => TEXT,
                 };
-                ui.label(RichText::new(line).color(color).monospace());
+                ui.label(RichText::new(chars.as_str()).color(color).monospace());
             }
         });
 }
@@ -892,6 +1331,24 @@ mod tests {
         let dir = tree.dirs.get("dir").expect("dir node");
         assert_eq!(dir.tracked_count(), 1);
         assert!(!files[1].tracked());
+    }
+
+    #[test]
+    fn a_conflicted_entry_appears_once_in_the_conflicts_group_only() {
+        let files = [file("contracts/login.json", true)];
+        let (conflicted, staged, unstaged) = sections(&files);
+        assert_eq!(conflicted.len(), 1);
+        assert!(staged.is_empty());
+        assert!(unstaged.is_empty());
+    }
+
+    #[test]
+    fn a_file_modified_on_both_sides_without_conflict_still_lists_in_both_groups() {
+        let files = [file("src/both.rs", false)];
+        let (conflicted, staged, unstaged) = sections(&files);
+        assert!(conflicted.is_empty());
+        assert_eq!(staged.len(), 1);
+        assert_eq!(unstaged.len(), 1);
     }
 
     #[test]
@@ -1030,6 +1487,26 @@ mod tests {
                 new_blob: Some(CONTRACT_POST.into()),
             },
         );
+        // The field list is behind the toggle now, not the default, so it
+        // has to be switched on to exercise this path.
+        state.show_changed_fields = true;
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+    }
+
+    #[test]
+    fn central_renders_the_full_file_by_default_for_a_changed_contract() {
+        let mut state = state_with_diff(
+            "contracts/login.json",
+            true,
+            DiffData {
+                raw: "diff --git a/contracts/login.json b/contracts/login.json\nindex 2a4e428..5d3ef15 100644\n--- a/contracts/login.json\n+++ b/contracts/login.json\n@@ -1,3 +1,3 @@\n {\n-    \"name\": \"user-login\",\n+    \"name\": \"login-v2\",\n }\n".into(),
+                old_blob: Some(CONTRACT_GET.into()),
+                new_blob: Some(CONTRACT_POST.into()),
+            },
+        );
+        assert!(!state.show_changed_fields);
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });
@@ -1052,7 +1529,7 @@ mod tests {
     }
 
     #[test]
-    fn central_reports_a_reformatting_only_change_and_offers_raw_view() {
+    fn central_reports_a_reformatting_only_change_and_offers_the_full_file_view() {
         let old = diff::parse(CONTRACT_GET).expect("valid contract");
         let new = diff::parse(CONTRACT_GET_REFORMATTED).expect("valid contract");
         assert!(diff::diff_models(&old, &new).is_empty());
@@ -1066,9 +1543,215 @@ mod tests {
                 new_blob: Some(CONTRACT_GET_REFORMATTED.into()),
             },
         );
+        state.show_changed_fields = true;
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });
+    }
+
+    #[test]
+    fn strip_diff_header_drops_everything_through_the_first_hunk_marker() {
+        let raw = "diff --git a/contracts/login.json b/contracts/login.json\nindex 2a4e428..5d3ef15 100644\n--- a/contracts/login.json\n+++ b/contracts/login.json\n@@ -1,3 +1,3 @@\n {\n-    \"name\": \"user-login\",\n+    \"name\": \"login-v2\",\n }\n";
+        let body = strip_diff_header(raw);
+        assert!(!body.contains("diff --git"));
+        assert!(!body.contains("index "));
+        assert!(!body.contains("---"));
+        assert!(!body.contains("+++"));
+        assert!(!body.contains("@@"));
+        assert_eq!(
+            body,
+            " {\n-    \"name\": \"user-login\",\n+    \"name\": \"login-v2\",\n }\n"
+        );
+    }
+
+    #[test]
+    fn strip_diff_header_leaves_a_headerless_diff_unchanged() {
+        // The untracked-file path synthesises `+` lines with no header at
+        // all, so a diff with no `@@` line must pass through untouched.
+        let raw = "+first\n+second\n";
+        assert_eq!(strip_diff_header(raw), raw);
+    }
+
+    const CONFLICT_TEXT: &str = "{\n<<<<<<< HEAD\n  \"name\": \"main\",\n=======\n  \"name\": \"side\",\n>>>>>>> side\n  \"method\": \"GET\",\n<<<<<<< HEAD\n  \"url\": \"http://a\"\n=======\n  \"url\": \"http://b\"\n>>>>>>> side\n}\n";
+
+    #[test]
+    fn current_choice_summary_names_the_undecided_state() {
+        assert_eq!(
+            current_choice_summary(None, "HEAD", "feature"),
+            "Not decided yet"
+        );
+    }
+
+    #[test]
+    fn current_choice_summary_names_what_resolve_will_write_for_ours() {
+        assert_eq!(
+            current_choice_summary(Some(Choice::Ours), "HEAD", "feature"),
+            "Resolve will write HEAD"
+        );
+    }
+
+    #[test]
+    fn current_choice_summary_names_what_resolve_will_write_for_theirs() {
+        assert_eq!(
+            current_choice_summary(Some(Choice::Theirs), "HEAD", "feature"),
+            "Resolve will write feature"
+        );
+    }
+
+    #[test]
+    fn current_choice_summary_names_both_sides_when_both_are_taken() {
+        assert_eq!(
+            current_choice_summary(Some(Choice::Both), "HEAD", "feature"),
+            "Resolve will write both HEAD and feature"
+        );
+    }
+
+    #[test]
+    fn resolve_label_shows_progress_while_blocks_remain_undecided() {
+        assert_eq!(resolve_label(&[None, None, None]), "Resolve (0/3)");
+        assert_eq!(
+            resolve_label(&[Some(Choice::Ours), None, Some(Choice::Theirs)]),
+            "Resolve (2/3)"
+        );
+    }
+
+    #[test]
+    fn resolve_label_reads_plain_resolve_once_every_block_is_decided() {
+        assert_eq!(
+            resolve_label(&[Some(Choice::Ours), Some(Choice::Theirs)]),
+            "Resolve"
+        );
+    }
+
+    /// A conflicted `GitState` selecting `path`, its working file (with
+    /// markers) as `new_blob`, and a matching conflicted `FileStatus` so
+    /// `central_body` takes the resolver branch rather than the plain diff
+    /// one.
+    fn conflict_state(path: &str, text: &str) -> GitState {
+        let mut state = state_with_diff(
+            path,
+            false,
+            DiffData {
+                raw: "@@ -1,3 +1,7 @@\n conflict".into(),
+                old_blob: None,
+                new_blob: Some(text.to_string()),
+            },
+        );
+        state.status = Status {
+            inside: vec![file(path, true)],
+            outside: vec![],
+        };
+        state
+    }
+
+    #[test]
+    fn central_renders_the_conflict_resolver_with_nothing_decided_without_panicking() {
+        let mut state = conflict_state("contracts/sample.json", CONFLICT_TEXT);
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+        let resolve = state.resolve.as_ref().expect("markers must parse");
+        assert_eq!(resolve.choices, vec![None, None]);
+    }
+
+    #[test]
+    fn central_renders_the_conflict_resolver_with_everything_decided_without_panicking() {
+        let mut state = conflict_state("contracts/sample.json", CONFLICT_TEXT);
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+        state
+            .resolve
+            .as_mut()
+            .expect("markers must parse")
+            .choices
+            .fill(Some(Choice::Ours));
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+    }
+
+    #[test]
+    fn central_renders_a_warning_when_the_resolution_would_not_be_valid_json() {
+        let text = "{\n<<<<<<< HEAD\n  invalid,,\n=======\n  \"name\": \"side\"\n>>>>>>> side\n}\n";
+        let mut state = conflict_state("contracts/sample.json", text);
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+        let resolve = state.resolve.as_ref().expect("markers must parse");
+        let rendered = conflict::render(&resolve.file, &resolve.choices);
+        assert!(apic_core::json::validate(&rendered).is_err());
+    }
+
+    /// Picking choices, including via take-all-ours, must never itself write
+    /// to disk. Resolve is the single path to disk, so a fixture file
+    /// carrying markers must still carry them after rendering through both
+    /// undecided and fully-decided states.
+    #[test]
+    fn resolving_choices_in_the_view_never_writes_the_file_to_disk() {
+        let dir = std::env::temp_dir().join(format!(
+            "apic-gui-conflict-resolve-test-{:?}",
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir creates");
+        let path = dir.join("sample.json");
+        std::fs::write(&path, CONFLICT_TEXT).expect("fixture file writes");
+
+        let mut state = conflict_state("sample.json", CONFLICT_TEXT);
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+        state
+            .resolve
+            .as_mut()
+            .expect("markers must parse")
+            .choices
+            .fill(Some(Choice::Ours));
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+
+        let on_disk = std::fs::read_to_string(&path).expect("fixture file reads");
+        assert!(
+            on_disk.contains("<<<<<<<"),
+            "the file on disk must still carry conflict markers: {on_disk:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A path long enough to need truncation must not push the header's
+    /// buttons out of reach or squeeze the side label to nothing. Nothing
+    /// here caught that before: every other resolver test uses a short
+    /// path, so a regression that hides the buttons behind a long path
+    /// would pass unnoticed. `__run_test_ui` sends no synthetic clicks, so
+    /// this checks what a click would produce (`resolve_label`, and the
+    /// text a Resolve click writes) rather than a click itself, the same
+    /// way `resolving_choices_in_the_view_never_writes_the_file_to_disk`
+    /// exercises Resolve's output without simulating the click.
+    #[test]
+    fn central_renders_the_conflict_resolver_with_a_long_path_without_panicking() {
+        let long_path = format!(
+            "contracts/{}/logout.json",
+            "deeply/nested/folder/".repeat(10)
+        );
+        let mut state = conflict_state(&long_path, CONFLICT_TEXT);
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+        let resolve = state.resolve.as_mut().expect("markers must parse");
+        assert_eq!(resolve_label(&resolve.choices), "Resolve (0/2)");
+
+        resolve.choices.fill(Some(Choice::Ours));
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+        let resolve = state.resolve.as_ref().expect("markers must parse");
+        assert_eq!(resolve_label(&resolve.choices), "Resolve");
+        let rendered = conflict::render(&resolve.file, &resolve.choices);
+        assert!(
+            !rendered.contains("<<<<<<<"),
+            "a fully decided resolution must not still carry markers: {rendered:?}"
+        );
     }
 
     #[test]

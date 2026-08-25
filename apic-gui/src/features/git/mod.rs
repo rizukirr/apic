@@ -5,6 +5,7 @@
 //! two contracts, `state` is what the panel remembers, `view` renders it. No
 //! module here imports `crate::features::contracts`.
 
+pub(crate) mod conflict;
 pub(crate) mod diff;
 pub(crate) mod model;
 pub(crate) mod service;

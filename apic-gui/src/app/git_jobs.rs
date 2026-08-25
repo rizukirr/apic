@@ -70,11 +70,19 @@ impl App {
         let Some(repo_root) = self.shell.repo_root.clone() else {
             return;
         };
+        let conflicted = self
+            .git
+            .status
+            .inside
+            .iter()
+            .chain(self.git.status.outside.iter())
+            .find(|f| f.path == path)
+            .is_some_and(|f| f.conflicted);
         let key = (path.clone(), staged);
         let (tx, rx) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let result = diff_job(&repo_root, &path, staged);
+            let result = diff_job(&repo_root, &path, staged, conflicted);
             let _ = tx.send(JobResult::Diff(key, result));
             ctx.request_repaint();
         });
@@ -85,10 +93,16 @@ impl App {
     /// background thread, followed by a status refresh in the same job so a
     /// successful mutation lands on screen in one poll. Refuses to start a
     /// second job while one is pending, the same rule as `spawn`.
+    ///
+    /// `message` names what the mutation did, for `shell.status` on success.
+    /// It is built by the caller rather than derived here or in the poll,
+    /// since the caller already has the path or branch name in scope and
+    /// `MutateKind` would otherwise have no use for one.
     fn spawn_mutation(
         &mut self,
         ctx: &egui::Context,
         kind: MutateKind,
+        message: String,
         op: impl FnOnce(&Path) -> Result<(), String> + Send + 'static,
     ) {
         if self.git.pending.is_some() {
@@ -104,7 +118,7 @@ impl App {
         std::thread::spawn(move || {
             let refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
             let result = op(&repo_root).and_then(|()| service::status(&repo_root, &refs));
-            let _ = tx.send(JobResult::Mutate(kind, result));
+            let _ = tx.send(JobResult::Mutate(kind, message, result));
             ctx.request_repaint();
         });
         self.git.pending = Some(rx);
@@ -112,50 +126,73 @@ impl App {
 
     /// Stages `path`.
     pub(crate) fn spawn_stage(&mut self, ctx: &egui::Context, path: String) {
-        self.spawn_mutation(ctx, MutateKind::Stage, move |root| {
+        let message = format!("staged {path}");
+        self.spawn_mutation(ctx, MutateKind::Stage, message, move |root| {
             service::stage(root, &path)
         });
     }
 
     /// Unstages `path`.
     pub(crate) fn spawn_unstage(&mut self, ctx: &egui::Context, path: String) {
-        self.spawn_mutation(ctx, MutateKind::Unstage, move |root| {
+        let message = format!("unstaged {path}");
+        self.spawn_mutation(ctx, MutateKind::Unstage, message, move |root| {
             service::unstage(root, &path)
         });
     }
 
     /// Discards `path`. Called only after the discard confirmation.
     pub(crate) fn spawn_discard(&mut self, ctx: &egui::Context, path: String) {
-        self.spawn_mutation(ctx, MutateKind::Discard, move |root| {
+        let message = format!("discarded {path}");
+        self.spawn_mutation(ctx, MutateKind::Discard, message, move |root| {
             service::discard(root, &path)
         });
     }
 
     /// Commits the index with `message`.
     pub(crate) fn spawn_commit(&mut self, ctx: &egui::Context, message: String) {
-        self.spawn_mutation(ctx, MutateKind::Commit, move |root| {
+        let status_message = "committed the staged changes".to_string();
+        self.spawn_mutation(ctx, MutateKind::Commit, status_message, move |root| {
             service::commit(root, &message)
         });
     }
 
     /// Checks out an existing branch.
     pub(crate) fn spawn_switch_branch(&mut self, ctx: &egui::Context, name: String) {
-        self.spawn_mutation(ctx, MutateKind::SwitchBranch, move |root| {
+        let message = format!("switched to branch {name}");
+        self.spawn_mutation(ctx, MutateKind::SwitchBranch, message, move |root| {
             service::switch_branch(root, &name)
         });
     }
 
     /// Creates a branch without switching to it.
     pub(crate) fn spawn_create_branch(&mut self, ctx: &egui::Context, name: String) {
-        self.spawn_mutation(ctx, MutateKind::CreateBranch, move |root| {
+        let message = format!("created branch {name}");
+        self.spawn_mutation(ctx, MutateKind::CreateBranch, message, move |root| {
             service::create_branch(root, &name)
         });
     }
 
     /// Deletes a branch. Called only after the delete confirmation.
     pub(crate) fn spawn_delete_branch(&mut self, ctx: &egui::Context, name: String) {
-        self.spawn_mutation(ctx, MutateKind::DeleteBranch, move |root| {
+        let message = format!("deleted branch {name}");
+        self.spawn_mutation(ctx, MutateKind::DeleteBranch, message, move |root| {
             service::delete_branch(root, &name)
+        });
+    }
+
+    /// Writes the rendered resolution `text` for `path` and stages it.
+    ///
+    /// The write and the stage are two halves of one operation: editing the
+    /// file does not clear the conflict in git, only `git add` does. If the
+    /// write succeeds and the stage then fails, that failure must still
+    /// reach the user as an error rather than being swallowed, a file that
+    /// looks resolved while git still calls it conflicted is worse than a
+    /// resolve that failed outright.
+    pub(crate) fn spawn_resolve(&mut self, ctx: &egui::Context, path: String, text: String) {
+        let message = format!("resolved {path}");
+        self.spawn_mutation(ctx, MutateKind::Resolve, message, move |root| {
+            std::fs::write(root.join(&path), text).map_err(|e| e.to_string())?;
+            service::stage(root, &path)
         });
     }
 
@@ -222,10 +259,11 @@ impl App {
                 self.git.pending = None;
                 self.git.error = e;
             }
-            Ok(JobResult::Mutate(kind, Ok(status))) => {
+            Ok(JobResult::Mutate(kind, message, Ok(status))) => {
                 self.git.pending = None;
                 self.git.status = status;
                 self.git.error = String::new();
+                self.shell.status = message;
                 if let Some((path, _)) = &self.git.selected
                     && !self
                         .git
@@ -251,7 +289,7 @@ impl App {
                     self.spawn_branches(ctx);
                 }
             }
-            Ok(JobResult::Mutate(_, Err(e))) => {
+            Ok(JobResult::Mutate(_, _, Err(e))) => {
                 self.git.pending = None;
                 self.git.error = e.clone();
                 self.shell.status = e;
@@ -276,13 +314,14 @@ impl App {
     }
 }
 
-/// Builds one `DiffData`: the line diff plus, for a `.json` path, each side's
-/// content so the caller can attempt a semantic comparison.
+/// Builds one `DiffData`: the line diff plus, for a `.json` path or a
+/// conflicted path, each side's content so the caller can attempt a semantic
+/// comparison or, for a conflict, parse the working file's markers.
 ///
 /// Staged compares the index against `HEAD`; unstaged compares the working
 /// file against the index. `git show :<path>` reads the index (stage 0),
 /// which is what an empty revision means to `service::blob`.
-fn diff_job(root: &Path, path: &str, staged: bool) -> Result<DiffData, String> {
+fn diff_job(root: &Path, path: &str, staged: bool, conflicted: bool) -> Result<DiffData, String> {
     let mut raw = service::diff_text(root, path, staged)?;
     let head_blob = service::blob(root, "HEAD", path)?;
     let index_blob = service::blob(root, "", path)?;
@@ -303,7 +342,7 @@ fn diff_job(root: &Path, path: &str, staged: bool) -> Result<DiffData, String> {
             .unwrap_or_default();
     }
 
-    let (old_blob, new_blob) = if path.ends_with(".json") {
+    let (old_blob, new_blob) = if path.ends_with(".json") || conflicted {
         if staged {
             (head_blob, index_blob)
         } else {
@@ -363,6 +402,101 @@ fn scopes(root: &Path, project_root: Option<&Path>, repo_root: &Path) -> Vec<Str
 mod tests {
     use super::*;
 
+    use crate::app::actions::{Action, GitAction};
+    use crate::app::test_support::{
+        app_at, conflict_fixture, git_available, project_fixture, settle,
+    };
+
+    /// Runs `git -C root <args>` and returns stdout, for assertions that read
+    /// the repository directly rather than the app's own cache.
+    fn git_output(root: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .expect("git spawns");
+        assert!(out.status.success(), "git {args:?} failed: {out:?}");
+        String::from_utf8(out.stdout).expect("git output is utf8")
+    }
+
+    /// A successful resolve must leave `shell.status` non-empty and naming
+    /// the resolved path, so the user learns the resolve happened instead of
+    /// noticing it only by a row moving between sections. This is the
+    /// regression the whole task exists to fix.
+    #[test]
+    fn resolve_conflict_reports_success_in_shell_status() {
+        if !git_available() {
+            return;
+        }
+        let root = conflict_fixture();
+        let mut app = app_at(root);
+        let ctx = egui::Context::default();
+        app.reload_project();
+
+        app.apply(
+            Action::Git(GitAction::ResolveConflict {
+                path: "contracts/sample.json".to_string(),
+                text: apic_core::template::DEFAULT.to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        assert!(
+            !app.shell.status.is_empty(),
+            "a successful resolve must report itself in shell.status"
+        );
+        assert!(
+            app.shell.status.contains("contracts/sample.json"),
+            "the status must name the resolved path, got: {:?}",
+            app.shell.status
+        );
+    }
+
+    /// A failing mutation must still put git's own error text in
+    /// `shell.status`, so a success message can never quietly replace a real
+    /// error. Deleting a branch with unmerged commits is refused by git with
+    /// a message on stderr, which is what `spawn_delete_branch` surfaces.
+    #[test]
+    fn failing_mutation_still_reports_git_error_in_shell_status() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
+        app.reload_project();
+
+        app.apply(
+            Action::Git(GitAction::RequestBranchDelete {
+                name: "apic-second".to_string(),
+            }),
+            &ctx,
+        );
+        app.apply(Action::Git(GitAction::ConfirmBranchDelete), &ctx);
+        settle(&mut app, &ctx);
+
+        let listed = git_output(&root, &["branch", "--list", "apic-second"]);
+        assert!(
+            listed.contains("apic-second"),
+            "the delete must actually have been refused: {listed:?}"
+        );
+        assert!(
+            !app.shell.status.is_empty(),
+            "a failing mutation must still report something in shell.status"
+        );
+        assert!(
+            !app.shell.status.contains("deleted branch"),
+            "a success message must never replace git's own error, got: {:?}",
+            app.shell.status
+        );
+        assert_eq!(
+            app.shell.status, app.git.error,
+            "shell.status must carry git's own stderr, the same text as git.error"
+        );
+    }
+
     /// An untracked file has no committed and no staged side, so `diff_text`
     /// and both `blob` calls return nothing for it. The diff must still show
     /// the file's own content rather than an empty body.
@@ -374,7 +508,7 @@ mod tests {
         let root = crate::app::test_support::project_fixture();
         std::fs::write(root.join("contracts").join("untracked.json"), "hello\n").unwrap();
 
-        let data = diff_job(&root, "contracts/untracked.json", false).unwrap();
+        let data = diff_job(&root, "contracts/untracked.json", false, false).unwrap();
 
         assert!(
             data.raw.contains("hello"),

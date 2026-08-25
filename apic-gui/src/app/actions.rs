@@ -70,6 +70,11 @@ pub(crate) enum GitAction {
 
     /// The pending branch delete was confirmed, delete it.
     ConfirmBranchDelete,
+
+    /// Write the rendered resolution `text` for this conflicted path and
+    /// stage it. The text is already rendered, this action carries no
+    /// markers for the job to parse.
+    ResolveConflict { path: String, text: String },
 }
 
 /// Anything a view returned this frame, from either sidebar tab.

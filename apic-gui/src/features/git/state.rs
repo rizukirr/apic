@@ -1,6 +1,7 @@
 //! State owned by the git feature: the current status, the selected diff, and
 //! the in-flight background job (if any).
 
+use crate::features::git::conflict::{Choice, ConflictFile};
 use crate::features::git::model::{Branches, Status};
 
 /// One completed diff fetch: the raw line diff plus each side's file content,
@@ -33,6 +34,7 @@ pub(crate) enum MutateKind {
     SwitchBranch,
     CreateBranch,
     DeleteBranch,
+    Resolve,
 }
 
 /// The result of a completed background git job, sent back over `pending`.
@@ -47,11 +49,28 @@ pub(crate) enum JobResult {
     /// A stage, unstage, discard, commit, or branch switch, create or
     /// delete, run then followed by a status refresh in the same background
     /// job. The refreshed status travels with the result so a successful
-    /// mutation lands on screen in one poll.
-    Mutate(MutateKind, Result<Status, String>),
+    /// mutation lands on screen in one poll. The message names what the
+    /// mutation did, built at spawn time where the path or branch name is
+    /// already in hand, and is written to `shell.status` on success.
+    Mutate(MutateKind, String, Result<Status, String>),
 
     /// A branch listing.
     Branches(Result<Branches, String>),
+}
+
+/// A conflicted file parsed into its blocks, plus the choice made for each
+/// one so far. Rebuilt from scratch whenever the selected path changes, so it
+/// never carries choices belonging to a different file.
+pub(crate) struct ResolveState {
+    /// The repo-relative path being resolved.
+    pub(crate) path: String,
+
+    /// The parsed segments: text and conflict blocks, in order.
+    pub(crate) file: ConflictFile,
+
+    /// One entry per conflict block in `file`, in the same order. `None`
+    /// until the user picks a side for that block.
+    pub(crate) choices: Vec<Option<Choice>>,
 }
 
 /// Everything the git feature owns. `App` holds one of these; no other
@@ -85,11 +104,11 @@ pub(crate) struct GitState {
     /// first fetch for the current selection is still in flight.
     pub(crate) diff: Option<((String, bool), DiffData)>,
 
-    /// Forces the line diff for the current file even when a semantic view
-    /// is available. Reset to `false` when the selection changes, so the
-    /// toggle applies to the file it was set on rather than persisting
-    /// across selections.
-    pub(crate) raw_view: bool,
+    /// Whether the field list (the semantic diff) is shown instead of the
+    /// default full-file view. Reset to `false` when the selection changes,
+    /// so the toggle applies to the file it was set on rather than
+    /// persisting across selections.
+    pub(crate) show_changed_fields: bool,
 
     /// The commit message box, bound to the commit row's text field. Cleared
     /// after a successful commit.
@@ -118,4 +137,10 @@ pub(crate) struct GitState {
     /// git command runs at a time: concurrent commands contend for
     /// `index.lock`.
     pub(crate) pending: Option<std::sync::mpsc::Receiver<JobResult>>,
+
+    /// The in-progress resolution of the selected conflicted file, if its
+    /// text parsed. `None` both before a conflicted file is selected and
+    /// when its text failed to parse, in which case the panel falls back to
+    /// the read-only diff view instead.
+    pub(crate) resolve: Option<ResolveState>,
 }

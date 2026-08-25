@@ -240,12 +240,19 @@ impl App {
     /// need `&mut App`, which the body itself does not have.
     fn central(&mut self, ui: &mut egui::Ui) {
         let mut out = CentralOutcome::default();
+        let mut git_action = None;
         egui::CentralPanel::default().show(ui, |ui| match self.shell.sidebar_tab {
             SidebarTab::Explorer => {
                 central_body(ui, &mut self.shell, &mut self.contracts, &mut out);
             }
-            SidebarTab::Git => view::central_body(ui, &mut self.git),
+            SidebarTab::Git => git_action = view::central_body(ui, &mut self.git),
         });
+        // Applied after the panel closure ends: `apply` needs `&mut self`,
+        // and the closure above is still holding a borrow of `self.git`.
+        if let Some(action) = git_action {
+            let ctx = ui.ctx().clone();
+            self.apply(Action::Git(action), &ctx);
+        }
         if out.toggle_edit {
             if self.contracts.editing {
                 self.cancel_edit();
@@ -321,7 +328,7 @@ impl App {
                 self.spawn(ctx);
             }
             Action::Git(GitAction::Select { path, staged }) => {
-                self.git.raw_view = false;
+                self.git.show_changed_fields = false;
                 self.git.selected = Some((path.clone(), staged));
                 let cached =
                     matches!(&self.git.diff, Some((key, _)) if *key == (path.clone(), staged));
@@ -375,6 +382,9 @@ impl App {
                     self.spawn_delete_branch(ctx, name);
                 }
             }
+            Action::Git(GitAction::ResolveConflict { path, text }) => {
+                self.spawn_resolve(ctx, path, text);
+            }
         }
     }
 }
@@ -409,7 +419,9 @@ mod tests {
     use apic_core::edit::EditModel;
 
     use crate::app::state::SidebarTab;
-    use crate::app::test_support::{app_at, git_available, project_fixture, settle, tempdir};
+    use crate::app::test_support::{
+        app_at, conflict_fixture, git_available, project_fixture, settle, tempdir,
+    };
 
     /// Appends a newline to `path`, a change that dirties the working tree
     /// without breaking JSON validity (trailing whitespace is legal JSON).
@@ -933,5 +945,84 @@ mod tests {
             !app.git.error.is_empty(),
             "git's refusal must land in git.error"
         );
+    }
+
+    /// Resolving a real conflict through `App::apply` must both write the
+    /// resolved text and stage it, since a written file that is not staged
+    /// still reads as unmerged. Read the outcome from `git status
+    /// --porcelain=v2` against the temp repo, not from `app.git`, so this
+    /// cannot pass on the app agreeing with itself. `u`-prefixed lines are
+    /// git's unmerged entries, so their absence for this path is what proves
+    /// the conflict actually cleared.
+    #[test]
+    fn resolve_conflict_stages_the_file_and_clears_the_unmerged_entry() {
+        if !git_available() {
+            return;
+        }
+        let root = conflict_fixture();
+        let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
+        app.reload_project();
+
+        app.apply(
+            Action::Git(GitAction::ResolveConflict {
+                path: "contracts/sample.json".to_string(),
+                text: apic_core::template::DEFAULT.to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        assert!(
+            app.git.error.is_empty(),
+            "resolve must not report an error: {}",
+            app.git.error
+        );
+
+        let porcelain = git_output(&root, &["status", "--porcelain=v2"]);
+        assert!(
+            !porcelain
+                .lines()
+                .any(|l| l.starts_with("u ") && l.ends_with("contracts/sample.json")),
+            "the path must no longer show as unmerged: {porcelain:?}"
+        );
+        let line = porcelain
+            .lines()
+            .find(|l| l.ends_with("contracts/sample.json"))
+            .unwrap_or_else(|| panic!("git must still report the file: {porcelain:?}"));
+        let xy = line.split(' ').nth(1).expect("an XY field");
+        assert_ne!(
+            xy.as_bytes()[0],
+            b'.',
+            "the index column must show a staged change, got {line:?}"
+        );
+    }
+
+    /// After a resolve, the file on disk must carry none of the conflict
+    /// markers: a leftover marker means the write half of the resolve did
+    /// not actually apply the rendered text.
+    #[test]
+    fn resolve_conflict_removes_the_markers_from_disk() {
+        if !git_available() {
+            return;
+        }
+        let root = conflict_fixture();
+        let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
+        app.reload_project();
+
+        app.apply(
+            Action::Git(GitAction::ResolveConflict {
+                path: "contracts/sample.json".to_string(),
+                text: apic_core::template::DEFAULT.to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        let content = std::fs::read_to_string(root.join("contracts").join("sample.json")).unwrap();
+        assert!(!content.contains("<<<<<<<"), "got: {content:?}");
+        assert!(!content.contains("======="), "got: {content:?}");
+        assert!(!content.contains(">>>>>>>"), "got: {content:?}");
     }
 }

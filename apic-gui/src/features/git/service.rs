@@ -58,9 +58,13 @@ pub(crate) fn status(root: &Path, scopes: &[&str]) -> Result<Status, String> {
     Ok(parse_status(&out, scopes))
 }
 
-/// The line diff for one path, staged or unstaged.
+/// The line diff for one path, staged or unstaged. `-U100000` asks git for
+/// the whole file as context around the change rather than a few lines of
+/// a hunk, so the panel can render the file itself with the change
+/// highlighted. Git caps the context at the file length, so the number is
+/// safe even for a one-line file.
 pub(crate) fn diff_text(root: &Path, path: &str, staged: bool) -> Result<String, String> {
-    let mut args = vec!["diff", "--no-color"];
+    let mut args = vec!["diff", "--no-color", "-U100000"];
     if staged {
         args.push("--cached");
     }
@@ -232,6 +236,31 @@ mod tests {
 
         let st = status(&root, &[]).unwrap();
         assert!(st.inside.is_empty());
+    }
+
+    #[test]
+    fn diff_text_carries_the_unchanged_lines_around_a_one_line_change() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        assert!(run(&dir, &["init"]).is_ok());
+        assert!(run(&dir, &["config", "user.email", "test@example.com"]).is_ok());
+        assert!(run(&dir, &["config", "user.name", "Test User"]).is_ok());
+        fs::write(dir.join("file.txt"), "first\nsecond\nthird\n").unwrap();
+        assert!(run(&dir, &["add", "--", "file.txt"]).is_ok());
+        assert!(commit(&dir, "initial").is_ok());
+
+        fs::write(dir.join("file.txt"), "first\nCHANGED\nthird\n").unwrap();
+
+        let diff = diff_text(&dir, "file.txt", false).unwrap();
+        // A hunk sized to the change alone would drop "first" and "third".
+        // `-U100000` is what keeps them in, so a future reader who drops the
+        // flag sees this test fail rather than a silently shrunken diff.
+        assert!(diff.contains("first"));
+        assert!(diff.contains("third"));
+        assert!(diff.contains("-second"));
+        assert!(diff.contains("+CHANGED"));
     }
 
     #[test]

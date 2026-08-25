@@ -99,6 +99,46 @@ pub(crate) fn project_fixture() -> PathBuf {
     root
 }
 
+/// Builds on `project_fixture`, producing a real, unresolved merge conflict
+/// in `contracts/sample.json` and returns the project root. Callers know the
+/// conflicted path is `contracts/sample.json`.
+///
+/// Branches off `apic-test`, changes the same line of `sample.json`
+/// differently on each side, then merges the branch back. `git merge` exits
+/// non-zero here, that is the successful outcome of a conflicting merge, not
+/// a failure, so the exit status is discarded rather than checked. What
+/// matters is the file left on disk, with `<<<<<<<`, `=======` and
+/// `>>>>>>>` markers, and unmerged in `git status`.
+pub(crate) fn conflict_fixture() -> PathBuf {
+    let root = project_fixture();
+    let path = root.join("contracts").join("sample.json");
+
+    run_git(&root, &["checkout", "-b", "conflict-branch"]);
+    std::fs::write(
+        &path,
+        apic_core::template::DEFAULT.replace("\"name\": \"", "\"name\": \"branch-"),
+    )
+    .unwrap();
+    run_git(&root, &["commit", "-am", "branch change"]);
+
+    run_git(&root, &["checkout", "apic-test"]);
+    std::fs::write(
+        &path,
+        apic_core::template::DEFAULT.replace("\"name\": \"", "\"name\": \"main-"),
+    )
+    .unwrap();
+    run_git(&root, &["commit", "-am", "main change"]);
+
+    let _ = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["merge", "conflict-branch"])
+        .status()
+        .expect("git spawns");
+
+    root
+}
+
 /// Builds `App` with a struct literal rooted at `root`. Never calls
 /// `App::new()`: that loads `Settings::load()`, which reads the developer's
 /// real `~/.config/apic-gui/config.toml` and can open their last project.
