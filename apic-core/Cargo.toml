@@ -10,7 +10,7 @@ repository = "https://github.com/rizukirr/apic"
 homepage = "https://github.com/rizukirr/apic"
 
 [dependencies]
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.150", features = ["preserve_order"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
 toml = "1.1.2"
 walkdir = "2.5.0"
