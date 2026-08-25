@@ -15,7 +15,7 @@ A feature release on top of 0.4.1. The CLI, the TUI, and the contract format are
 
 - **Git panel in the desktop GUI.** A new Git sidebar tab shows the working tree's status, nested by folder, with a dirty indicator on the tab and per-file symbol buttons for staging. A worker thread keeps status current, the central panel renders a diff for the selected file (including the content of untracked files, not just a field list), and stage, unstage, discard, and commit actions are wired to a git service layer built on the porcelain v2 status format.
 - **Branch support.** List, switch, create, and delete branches from a branch row in the git panel. Switching guards against unsaved edits and reconciles open contracts against the new branch's state, and the branch list stops retrying indefinitely when a fetch comes back empty.
-- **Merge conflict resolution.** Conflicted files get their own sidebar section. A conflict parser renders each conflict block as a colorized diff with a live preview of the resolved result, whole-file take-ours and take-theirs actions sit in a pinned action bar, and resolving a conflict writes the merged content and stages it.
+- **Merge conflict resolution.** Conflicted files get their own sidebar section. A conflict parser renders each conflict block as a colorized diff with a live preview of the resolved result, whole-file take-ours, take-theirs and resolve actions sit in the file's header row, and resolving a conflict writes the merged content and stages it.
 - **Semantic diff for contracts.** Git status for a contract file is summarized field by field (what actually changed in the JSON) rather than shown as a raw text diff.
 
 ### Changed
