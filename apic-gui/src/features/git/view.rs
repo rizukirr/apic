@@ -868,9 +868,11 @@ fn resolve_view(ui: &mut egui::Ui, path: &str, resolve: &mut ResolveState) -> Op
     action
 }
 
-/// One conflict block: three buttons picking ours, theirs or both, then both
-/// sides shown labeled with the names git wrote rather than the words ours
-/// and theirs.
+/// One conflict block, shaped like VS Code's inline merge view: a row of
+/// named actions, a line stating what the current choice will write, then
+/// the block stacked in file order with the real `<<<<<<<`, `=======` and
+/// `>>>>>>>` marker lines still visible so the pane reads like the file on
+/// disk. Ours is tinted green, theirs is tinted cyan.
 fn conflict_block_view(
     ui: &mut egui::Ui,
     ours_label: &str,
@@ -881,33 +883,86 @@ fn conflict_block_view(
 ) {
     ui.group(|ui| {
         ui.horizontal(|ui| {
-            if ui
-                .selectable_label(*choice == Some(Choice::Ours), ours_label)
-                .clicked()
-            {
+            if text_button(ui, "Accept ours", GREEN) {
                 *choice = Some(Choice::Ours);
             }
-            if ui
-                .selectable_label(*choice == Some(Choice::Theirs), theirs_label)
-                .clicked()
-            {
+            if text_button(ui, "Accept theirs", CYAN) {
                 *choice = Some(Choice::Theirs);
             }
-            if ui
-                .selectable_label(*choice == Some(Choice::Both), "both")
-                .clicked()
-            {
+            if text_button(ui, "Accept both", DIM) {
                 *choice = Some(Choice::Both);
             }
         });
-        ui.columns(2, |cols| {
-            cols[0].label(RichText::new(ours_label).color(DIM));
-            cols[0].label(RichText::new(ours).color(TEXT).monospace());
-            cols[1].label(RichText::new(theirs_label).color(DIM));
-            cols[1].label(RichText::new(theirs).color(TEXT).monospace());
-        });
+        ui.label(
+            RichText::new(current_choice_summary(*choice, ours_label, theirs_label)).color(DIM),
+        );
+        ui.add_space(SPACE_EXTRA_SMALL);
+
+        conflict_side_view(
+            ui,
+            GREEN,
+            &format!("<<<<<<< {ours_label}"),
+            ours,
+            MarkerPosition::Before,
+        );
+        ui.label(RichText::new("=======").color(DIM).monospace());
+        conflict_side_view(
+            ui,
+            CYAN,
+            &format!(">>>>>>> {theirs_label}"),
+            theirs,
+            MarkerPosition::After,
+        );
     });
     ui.add_space(SPACE_SMALL);
+}
+
+/// States what Resolve will write for this block, so a decided block looks
+/// decided instead of leaving the choice only visible in the button state.
+fn current_choice_summary(choice: Option<Choice>, ours_label: &str, theirs_label: &str) -> String {
+    match choice {
+        Some(Choice::Ours) => format!("Resolve will write {ours_label}"),
+        Some(Choice::Theirs) => format!("Resolve will write {theirs_label}"),
+        Some(Choice::Both) => format!("Resolve will write both {ours_label} and {theirs_label}"),
+        None => "Not decided yet".to_string(),
+    }
+}
+
+/// Where the marker line sits relative to a side's content, matching where
+/// git placed `<<<<<<<` (before ours) and `>>>>>>>` (after theirs).
+enum MarkerPosition {
+    Before,
+    After,
+}
+
+/// One tinted side of a conflict block: the marker line plus the side's text,
+/// painted in `color` over a background derived from the same token via
+/// `gamma_multiply` rather than a new colour, so the panel keeps one
+/// palette.
+fn conflict_side_view(
+    ui: &mut egui::Ui,
+    color: egui::Color32,
+    marker: &str,
+    text: &str,
+    marker_position: MarkerPosition,
+) {
+    let background = color.gamma_multiply(0.15);
+    egui::Frame::new()
+        .fill(background)
+        .inner_margin(SPACE_EXTRA_SMALL)
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                if matches!(marker_position, MarkerPosition::Before) {
+                    ui.label(RichText::new(marker).color(color).monospace());
+                }
+                for line in text.lines() {
+                    ui.label(RichText::new(line).color(color).monospace());
+                }
+                if matches!(marker_position, MarkerPosition::After) {
+                    ui.label(RichText::new(marker).color(color).monospace());
+                }
+            });
+        });
 }
 
 /// The centered placeholder shown before a selection exists and while the
@@ -1242,6 +1297,38 @@ mod tests {
     }
 
     const CONFLICT_TEXT: &str = "{\n<<<<<<< HEAD\n  \"name\": \"main\",\n=======\n  \"name\": \"side\",\n>>>>>>> side\n  \"method\": \"GET\",\n<<<<<<< HEAD\n  \"url\": \"http://a\"\n=======\n  \"url\": \"http://b\"\n>>>>>>> side\n}\n";
+
+    #[test]
+    fn current_choice_summary_names_the_undecided_state() {
+        assert_eq!(
+            current_choice_summary(None, "HEAD", "feature"),
+            "Not decided yet"
+        );
+    }
+
+    #[test]
+    fn current_choice_summary_names_what_resolve_will_write_for_ours() {
+        assert_eq!(
+            current_choice_summary(Some(Choice::Ours), "HEAD", "feature"),
+            "Resolve will write HEAD"
+        );
+    }
+
+    #[test]
+    fn current_choice_summary_names_what_resolve_will_write_for_theirs() {
+        assert_eq!(
+            current_choice_summary(Some(Choice::Theirs), "HEAD", "feature"),
+            "Resolve will write feature"
+        );
+    }
+
+    #[test]
+    fn current_choice_summary_names_both_sides_when_both_are_taken() {
+        assert_eq!(
+            current_choice_summary(Some(Choice::Both), "HEAD", "feature"),
+            "Resolve will write both HEAD and feature"
+        );
+    }
 
     /// A conflicted `GitState` selecting `path`, its working file (with
     /// markers) as `new_blob`, and a matching conflicted `FileStatus` so
