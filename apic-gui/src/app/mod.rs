@@ -533,7 +533,7 @@ mod tests {
                 // `run_ui` hands the closure a root `Ui`, exactly like eframe's
                 // `App::ui` (egui 0.35 replaced the old `Context::run`, which
                 // passed a `Context`).
-                let out = ctx.run_ui(input.clone(), |ui| {
+                let mut out = ctx.run_ui(input.clone(), |ui| {
                     app.top_bar(ui);
                     app.bottom_bar(ui);
                     app.sidebar(ui);
@@ -545,6 +545,11 @@ mod tests {
                         .map(|v| v.repaint_delay)
                         .unwrap_or(std::time::Duration::MAX),
                 );
+                // egui 0.36's `TexturesDelta` panics on drop if it still holds
+                // unapplied deltas. This harness stands in for eframe's
+                // integration, which normally consumes the delta by uploading
+                // it to the GPU, so clear it here instead.
+                out.textures_delta.clear();
             }
             delays
         };
