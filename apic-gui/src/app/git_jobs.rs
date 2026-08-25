@@ -138,6 +138,65 @@ impl App {
         });
     }
 
+    /// Checks out an existing branch.
+    pub(crate) fn spawn_switch_branch(&mut self, ctx: &egui::Context, name: String) {
+        self.spawn_mutation(ctx, MutateKind::SwitchBranch, move |root| {
+            service::switch_branch(root, &name)
+        });
+    }
+
+    /// Creates a branch without switching to it.
+    pub(crate) fn spawn_create_branch(&mut self, ctx: &egui::Context, name: String) {
+        self.spawn_mutation(ctx, MutateKind::CreateBranch, move |root| {
+            service::create_branch(root, &name)
+        });
+    }
+
+    /// Deletes a branch. Called only after the delete confirmation.
+    pub(crate) fn spawn_delete_branch(&mut self, ctx: &egui::Context, name: String) {
+        self.spawn_mutation(ctx, MutateKind::DeleteBranch, move |root| {
+            service::delete_branch(root, &name)
+        });
+    }
+
+    /// Spawns `git branch` on a background thread. Refuses to start a second
+    /// job while one is pending, the same rule as `spawn`. Follows `spawn`
+    /// rather than `spawn_mutation` since listing branches mutates nothing.
+    pub(crate) fn spawn_branches(&mut self, ctx: &egui::Context) {
+        if self.git.pending.is_some() {
+            return;
+        }
+        let Some(repo_root) = self.shell.repo_root.clone() else {
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = service::branches(&repo_root);
+            let _ = tx.send(JobResult::Branches(result));
+            ctx.request_repaint();
+        });
+        self.git.pending = Some(rx);
+    }
+
+    /// Reconciles the open contract with the freshly checked-out branch.
+    /// A checkout can change or remove the tree behind every piece of
+    /// derived contract state at once, and `reload_project` only rebuilds
+    /// `contracts.entries`. Does not touch `shell.project_root` or persisted
+    /// settings, unlike `activate_project`: a checkout changes neither.
+    fn reconcile_after_checkout(&mut self) {
+        self.reload_project();
+        let path = self.contracts.path.clone();
+        match path.and_then(|p| self.contracts.entries.iter().position(|e| e.path == p)) {
+            Some(i) => self.load(i),
+            None => {
+                self.contracts.model = None;
+                self.contracts.path = None;
+                self.contracts.selected = None;
+            }
+        }
+    }
+
     /// Polls the in-flight git job and applies its result. Called every frame
     /// from `App::ui`, next to `poll_dialog`.
     pub(crate) fn poll_git(&mut self, ctx: &egui::Context) {
@@ -182,11 +241,29 @@ impl App {
                 if matches!(kind, MutateKind::Commit) {
                     self.git.commit_message.clear();
                 }
+                if matches!(kind, MutateKind::SwitchBranch) {
+                    self.reconcile_after_checkout();
+                }
+                if matches!(
+                    kind,
+                    MutateKind::SwitchBranch | MutateKind::CreateBranch | MutateKind::DeleteBranch
+                ) {
+                    self.spawn_branches(ctx);
+                }
             }
             Ok(JobResult::Mutate(_, Err(e))) => {
                 self.git.pending = None;
                 self.git.error = e.clone();
                 self.shell.status = e;
+            }
+            Ok(JobResult::Branches(Ok(branches))) => {
+                self.git.pending = None;
+                self.git.branches = branches;
+                self.git.error = String::new();
+            }
+            Ok(JobResult::Branches(Err(e))) => {
+                self.git.pending = None;
+                self.git.error = e;
             }
             Err(TryRecvError::Empty) => ctx.request_repaint(),
             // A panicking worker must not leave the panel disabled forever:

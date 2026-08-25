@@ -77,6 +77,25 @@ pub(crate) fn project_fixture() -> PathBuf {
     run_git(&root, &["add", "--all"]);
     run_git(&root, &["commit", "-m", "initial"]);
 
+    // A second branch, differing from `apic-test` in two ways the wiring
+    // tests depend on: `sample.json` carries different content, and
+    // `other.json` exists only here.
+    run_git(&root, &["branch", "apic-second", "apic-test"]);
+    run_git(&root, &["checkout", "apic-second"]);
+    std::fs::write(
+        contracts_dir.join("sample.json"),
+        apic_core::template::DEFAULT.replace("\"name\": \"", "\"name\": \"second-"),
+    )
+    .unwrap();
+    std::fs::write(
+        contracts_dir.join("other.json"),
+        apic_core::template::DEFAULT,
+    )
+    .unwrap();
+    run_git(&root, &["add", "--all"]);
+    run_git(&root, &["commit", "-m", "second branch contracts"]);
+    run_git(&root, &["checkout", "apic-test"]);
+
     root
 }
 

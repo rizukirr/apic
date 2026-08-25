@@ -346,6 +346,35 @@ impl App {
             Action::Git(GitAction::Commit) => {
                 self.spawn_commit(ctx, self.git.commit_message.clone());
             }
+            Action::Git(GitAction::RefreshBranches) => {
+                self.spawn_branches(ctx);
+            }
+            Action::Git(GitAction::SwitchBranch { name }) => {
+                if self.contracts.editing && self.contracts.model != self.contracts.original_model {
+                    let open = self
+                        .contracts
+                        .path
+                        .as_deref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "the open contract".to_string());
+                    let msg = format!("cannot switch branch, {open} has unsaved edits");
+                    self.git.error = msg.clone();
+                    self.shell.status = msg;
+                } else {
+                    self.spawn_switch_branch(ctx, name);
+                }
+            }
+            Action::Git(GitAction::CreateBranch { name }) => {
+                self.spawn_create_branch(ctx, name);
+            }
+            Action::Git(GitAction::RequestBranchDelete { name }) => {
+                self.git.pending_branch_delete = Some(name);
+            }
+            Action::Git(GitAction::ConfirmBranchDelete) => {
+                if let Some(name) = self.git.pending_branch_delete.take() {
+                    self.spawn_delete_branch(ctx, name);
+                }
+            }
         }
     }
 }
@@ -698,5 +727,212 @@ mod tests {
         app.git.pending = Some(rx);
 
         settle(&mut app, &ctx);
+    }
+
+    /// Reads the branch currently checked out in `root` directly from git,
+    /// never from `app.git`.
+    fn current_branch(root: &std::path::Path) -> String {
+        git_output(root, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string()
+    }
+
+    /// A switch must be refused, before anything is spawned, while the open
+    /// contract has edits that differ from its pre-edit snapshot. Otherwise
+    /// a checkout would silently discard them.
+    #[test]
+    fn switch_branch_is_refused_with_unsaved_edits() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        let i = app
+            .contracts
+            .entries
+            .iter()
+            .position(|e| e.rel == "sample.json")
+            .expect("sample.json is in the fixture");
+        app.load(i);
+
+        app.begin_edit();
+        app.contracts.model.as_mut().unwrap().name = "dirtied".to_string();
+
+        app.apply(
+            Action::Git(GitAction::SwitchBranch {
+                name: "apic-second".to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        assert_eq!(
+            current_branch(&root),
+            "apic-test",
+            "a refused switch must not touch the checked-out branch"
+        );
+        assert!(
+            !app.git.error.is_empty(),
+            "the refusal must be surfaced in git.error"
+        );
+    }
+
+    /// A switch to a branch that still has the open contract reopens it, so
+    /// the body shows the new branch's version rather than a stale one.
+    #[test]
+    fn switch_branch_reconciles_a_contract_present_on_both_branches() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        let i = app
+            .contracts
+            .entries
+            .iter()
+            .position(|e| e.rel == "sample.json")
+            .expect("sample.json is in the fixture");
+        app.load(i);
+        let path_before = app.contracts.path.clone();
+
+        app.apply(
+            Action::Git(GitAction::SwitchBranch {
+                name: "apic-second".to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        assert_eq!(current_branch(&root), "apic-second");
+        assert_eq!(
+            app.contracts.path, path_before,
+            "the same file stays open across the switch"
+        );
+        let on_disk = std::fs::read_to_string(root.join("contracts").join("sample.json"))
+            .expect("sample.json reads on the new branch");
+        assert!(
+            on_disk.contains("second-"),
+            "the new branch's content must be on disk: {on_disk}"
+        );
+        assert_eq!(
+            app.contracts.model.as_ref().map(|m| m.name.as_str()),
+            Some("second-endpoint-name"),
+            "the reopened model must reflect the new branch's file"
+        );
+    }
+
+    /// A switch to a branch that lacks the open contract clears it, rather
+    /// than leaving a stale model, path or index pointing at a file the new
+    /// branch does not have.
+    #[test]
+    fn switch_branch_clears_a_contract_absent_from_the_new_branch() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
+        app.reload_project();
+
+        app.apply(
+            Action::Git(GitAction::SwitchBranch {
+                name: "apic-second".to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+        assert_eq!(current_branch(&root), "apic-second");
+
+        let i = app
+            .contracts
+            .entries
+            .iter()
+            .position(|e| e.rel == "other.json")
+            .expect("other.json only exists on apic-second");
+        app.load(i);
+        assert!(app.contracts.model.is_some());
+
+        app.apply(
+            Action::Git(GitAction::SwitchBranch {
+                name: "apic-test".to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        assert_eq!(current_branch(&root), "apic-test");
+        assert!(
+            app.contracts.model.is_none(),
+            "a contract absent from the new branch must be cleared"
+        );
+        assert!(app.contracts.path.is_none());
+        assert!(app.contracts.selected.is_none());
+    }
+
+    /// A create must add the branch without switching the repository to it.
+    #[test]
+    fn create_branch_adds_without_switching() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
+        app.reload_project();
+
+        app.apply(
+            Action::Git(GitAction::CreateBranch {
+                name: "apic-third".to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        assert_eq!(
+            current_branch(&root),
+            "apic-test",
+            "a create must not change the checked-out branch"
+        );
+        let listed = git_output(&root, &["branch", "--list", "apic-third"]);
+        assert!(
+            listed.contains("apic-third"),
+            "the new branch must be listed: {listed:?}"
+        );
+    }
+
+    /// A delete git refuses (unmerged commits) must leave the branch in
+    /// place and surface git's own message in `git.error`.
+    #[test]
+    fn refused_delete_leaves_the_branch_and_reports_git_error() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
+        app.reload_project();
+
+        app.apply(
+            Action::Git(GitAction::RequestBranchDelete {
+                name: "apic-second".to_string(),
+            }),
+            &ctx,
+        );
+        app.apply(Action::Git(GitAction::ConfirmBranchDelete), &ctx);
+        settle(&mut app, &ctx);
+
+        let listed = git_output(&root, &["branch", "--list", "apic-second"]);
+        assert!(
+            listed.contains("apic-second"),
+            "a refused delete must leave the branch present: {listed:?}"
+        );
+        assert!(
+            !app.git.error.is_empty(),
+            "git's refusal must land in git.error"
+        );
     }
 }

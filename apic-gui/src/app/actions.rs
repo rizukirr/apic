@@ -54,6 +54,37 @@ pub(crate) enum GitAction {
 
     /// Commit the currently staged changes with `GitState::commit_message`.
     Commit,
+
+    /// Re-read the branch list.
+    ///
+    /// Not yet constructed outside tests, Task 3 wires it into the view.
+    #[allow(dead_code)]
+    RefreshBranches,
+
+    /// Switch to this local branch.
+    ///
+    /// Not yet constructed outside tests, Task 3 wires it into the view.
+    #[allow(dead_code)]
+    SwitchBranch { name: String },
+
+    /// Create this branch without switching to it.
+    ///
+    /// Not yet constructed outside tests, Task 3 wires it into the view.
+    #[allow(dead_code)]
+    CreateBranch { name: String },
+
+    /// Ask to delete this branch, shows a confirmation before anything is
+    /// removed.
+    ///
+    /// Not yet constructed outside tests, Task 3 wires it into the view.
+    #[allow(dead_code)]
+    RequestBranchDelete { name: String },
+
+    /// The pending branch delete was confirmed, delete it.
+    ///
+    /// Not yet constructed outside tests, Task 3 wires it into the view.
+    #[allow(dead_code)]
+    ConfirmBranchDelete,
 }
 
 /// Anything a view returned this frame, from either sidebar tab.

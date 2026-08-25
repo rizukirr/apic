@@ -1,7 +1,7 @@
 //! State owned by the git feature: the current status, the selected diff, and
 //! the in-flight background job (if any).
 
-use crate::features::git::model::Status;
+use crate::features::git::model::{Branches, Status};
 
 /// One completed diff fetch: the raw line diff plus each side's file content,
 /// fetched only for a `.json` path since that is the only shape `diff::parse`
@@ -30,6 +30,9 @@ pub(crate) enum MutateKind {
     Unstage,
     Discard,
     Commit,
+    SwitchBranch,
+    CreateBranch,
+    DeleteBranch,
 }
 
 /// The result of a completed background git job, sent back over `pending`.
@@ -41,10 +44,14 @@ pub(crate) enum JobResult {
     /// unselected, does not get filed under the wrong key.
     Diff((String, bool), Result<DiffData, String>),
 
-    /// A stage, unstage, discard or commit, run then followed by a status
-    /// refresh in the same background job. The refreshed status travels with
-    /// the result so a successful mutation lands on screen in one poll.
+    /// A stage, unstage, discard, commit, or branch switch, create or
+    /// delete, run then followed by a status refresh in the same background
+    /// job. The refreshed status travels with the result so a successful
+    /// mutation lands on screen in one poll.
     Mutate(MutateKind, Result<Status, String>),
+
+    /// A branch listing.
+    Branches(Result<Branches, String>),
 }
 
 /// Everything the git feature owns. `App` holds one of these; no other
@@ -54,6 +61,10 @@ pub(crate) struct GitState {
     /// The last status read from the repository, scoped to the contracts
     /// working dir plus a count of changes elsewhere.
     pub(crate) status: Status,
+
+    /// The local branches and which one is checked out, from the last
+    /// listing.
+    pub(crate) branches: Branches,
 
     /// The path and side (staged or unstaged) whose diff is shown, when one
     /// is selected.
@@ -76,6 +87,9 @@ pub(crate) struct GitState {
 
     /// The repo-relative path of a discard awaiting confirmation, if any.
     pub(crate) pending_discard: Option<String>,
+
+    /// The name of a branch delete awaiting confirmation, if any.
+    pub(crate) pending_branch_delete: Option<String>,
 
     /// The last git error, shown in the panel; empty when there is none.
     pub(crate) error: String,
