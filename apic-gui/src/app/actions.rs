@@ -54,6 +54,22 @@ pub(crate) enum GitAction {
 
     /// Commit the currently staged changes with `GitState::commit_message`.
     Commit,
+
+    /// Re-read the branch list.
+    RefreshBranches,
+
+    /// Switch to this local branch.
+    SwitchBranch { name: String },
+
+    /// Create this branch without switching to it.
+    CreateBranch { name: String },
+
+    /// Ask to delete this branch, shows a confirmation before anything is
+    /// removed.
+    RequestBranchDelete { name: String },
+
+    /// The pending branch delete was confirmed, delete it.
+    ConfirmBranchDelete,
 }
 
 /// Anything a view returned this frame, from either sidebar tab.
