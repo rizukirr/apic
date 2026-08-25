@@ -49,8 +49,10 @@ pub(crate) enum JobResult {
     /// A stage, unstage, discard, commit, or branch switch, create or
     /// delete, run then followed by a status refresh in the same background
     /// job. The refreshed status travels with the result so a successful
-    /// mutation lands on screen in one poll.
-    Mutate(MutateKind, Result<Status, String>),
+    /// mutation lands on screen in one poll. The message names what the
+    /// mutation did, built at spawn time where the path or branch name is
+    /// already in hand, and is written to `shell.status` on success.
+    Mutate(MutateKind, String, Result<Status, String>),
 
     /// A branch listing.
     Branches(Result<Branches, String>),
