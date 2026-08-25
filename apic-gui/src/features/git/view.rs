@@ -776,15 +776,15 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
         .unwrap_or(false);
 
     ui.add_space(SPACE_SMALL);
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(&path).color(TEXT).strong());
-        let side = if staged { "staged" } else { "unstaged" };
-        ui.label(RichText::new(side).color(DIM));
-        if !conflicted {
+    if !conflicted {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&path).color(TEXT).strong());
+            let side = if staged { "staged" } else { "unstaged" };
+            ui.label(RichText::new(side).color(DIM));
             ui.checkbox(&mut state.raw_view, "Show changed fields");
-        }
-    });
-    ui.separator();
+        });
+        ui.separator();
+    }
 
     if conflicted {
         // Cloned out of `data` before it is dropped, so `state` can be
@@ -792,7 +792,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
         // reference into `state.diff`.
         let raw = data.raw.clone();
         let new_blob = data.new_blob.clone();
-        return conflict_resolver(ui, state, &path, &raw, new_blob.as_deref());
+        return conflict_resolver(ui, state, &path, staged, &raw, new_blob.as_deref());
     }
 
     // The whole file with the change highlighted is the default: it is what
@@ -834,6 +834,7 @@ fn conflict_resolver(
     ui: &mut egui::Ui,
     state: &mut GitState,
     path: &str,
+    staged: bool,
     raw: &str,
     new_blob: Option<&str>,
 ) -> Option<GitAction> {
@@ -854,6 +855,12 @@ fn conflict_resolver(
     }
 
     let Some(resolve) = state.resolve.as_mut() else {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(path).color(TEXT).strong());
+            let side = if staged { "staged" } else { "unstaged" };
+            ui.label(RichText::new(side).color(DIM));
+        });
+        ui.separator();
         raw_diff_view(ui, raw);
         ui.add_space(SPACE_SMALL);
         ui.label(
@@ -864,7 +871,7 @@ fn conflict_resolver(
         );
         return None;
     };
-    resolve_view(ui, path, resolve)
+    resolve_view(ui, path, staged, resolve)
 }
 
 /// The conflict resolver: take-all shortcuts, a 50:50 split with the picker
@@ -877,7 +884,20 @@ fn conflict_resolver(
 /// can drift from what actually reaches disk. Split shape matches
 /// `features::contracts::view`: `horizontal_top` with `allocate_ui_with_layout`
 /// and a reserved divider width, rather than a second way to split a panel.
-fn resolve_view(ui: &mut egui::Ui, path: &str, resolve: &mut ResolveState) -> Option<GitAction> {
+///
+/// The whole-file actions live in this header row rather than a pinned bar
+/// below the panes: the header is laid out first, at the top of the body, so
+/// nothing rendered below it can push it off screen. The buttons are
+/// reserved first with a right-to-left layout, and the path is nested inside
+/// a left-to-right layout marked `.truncate()`, the pattern `file_row` uses,
+/// so a deeply nested contract path truncates instead of pushing the actions
+/// off the right edge.
+fn resolve_view(
+    ui: &mut egui::Ui,
+    path: &str,
+    staged: bool,
+    resolve: &mut ResolveState,
+) -> Option<GitAction> {
     let mut action = None;
 
     // Rendered fresh every frame from the current choices, by the exact
@@ -885,38 +905,36 @@ fn resolve_view(ui: &mut egui::Ui, path: &str, resolve: &mut ResolveState) -> Op
     // what pressing Resolve would write, including for still-undecided
     // blocks, which render as their original marker text.
     let rendered = conflict::render(&resolve.file, &resolve.choices);
-
-    // Pinned below the panes rather than placed after them, so it stays on
-    // screen regardless of how much height the panes end up wanting.
-    // Declared before the panes below, the same order as the commit bar in
-    // `sidebar_body`.
     let all_chosen = resolve.choices.iter().all(Option::is_some);
-    egui::Panel::bottom("resolve_action_bar")
-        .show_separator_line(false)
-        .show(ui, |ui| {
-            ui.separator();
-            // Right-aligned, and inserted in right_to_left order so Resolve
-            // lands rightmost and last: it is the only one of the three that
-            // writes to disk, so a stray click one button off lands on a
-            // take-all, which only fills in a choice, rather than on Resolve.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_enabled_ui(all_chosen, |ui| {
-                    if text_button(ui, &resolve_label(&resolve.choices), GREEN) {
-                        action = Some(GitAction::ResolveConflict {
-                            path: path.to_string(),
-                            text: rendered.clone(),
-                        });
-                    }
-                });
-                if text_button(ui, "Take all theirs", GREEN) {
-                    resolve.choices.fill(Some(Choice::Theirs));
-                }
-                if text_button(ui, "Take all ours", GREEN) {
-                    resolve.choices.fill(Some(Choice::Ours));
+
+    ui.horizontal(|ui| {
+        // Right-aligned, and inserted in right_to_left order so Resolve
+        // lands rightmost and last: it is the only one of the three that
+        // writes to disk, so a stray click one button off lands on a
+        // take-all, which only fills in a choice, rather than on Resolve.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_enabled_ui(all_chosen, |ui| {
+                if text_button(ui, &resolve_label(&resolve.choices), GREEN) {
+                    action = Some(GitAction::ResolveConflict {
+                        path: path.to_string(),
+                        text: rendered.clone(),
+                    });
                 }
             });
-            ui.add_space(SPACE_EXTRA_SMALL);
+            if text_button(ui, "Take all theirs", GREEN) {
+                resolve.choices.fill(Some(Choice::Theirs));
+            }
+            if text_button(ui, "Take all ours", GREEN) {
+                resolve.choices.fill(Some(Choice::Ours));
+            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let side = if staged { "staged" } else { "unstaged" };
+                ui.label(RichText::new(side).color(DIM));
+                ui.add(egui::Label::new(RichText::new(path).color(TEXT).strong()).truncate());
+            });
         });
+    });
+    ui.separator();
 
     ui.horizontal_top(|ui| {
         let gap = ui.spacing().item_spacing.x;
