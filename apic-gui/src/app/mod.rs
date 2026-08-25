@@ -114,20 +114,25 @@ impl App {
                     ui.add_space(SPACE_MEDIUM); // left padding so the title isn't flush to the edge
                     ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
                     ui.add_space(SPACE_MEDIUM);
-                    egui::MenuBar::new().ui(ui, |ui| {
-                        if ui.button(RichText::new("Open").color(GREEN)).clicked() {
-                            action = Some(SidebarAction::OpenProject);
-                        }
-                        if ui.button(RichText::new("New").color(GREEN)).clicked() {
-                            action = Some(SidebarAction::NewProject);
-                        }
-                        ui.menu_button(RichText::new("Import").color(GREEN), |ui| {
-                            if ui.button("Postman collection").clicked() {
-                                action = Some(SidebarAction::ImportPostman);
-                                ui.close();
+                    egui::MenuBar::new()
+                        .style(|style: &mut egui::Style| {
+                            egui::containers::menu::menu_style(style);
+                            style.spacing.button_padding = egui::vec2(8.0, 4.0);
+                        })
+                        .ui(ui, |ui| {
+                            if ui.button(RichText::new("Open").color(GREEN)).clicked() {
+                                action = Some(SidebarAction::OpenProject);
                             }
+                            if ui.button(RichText::new("New").color(GREEN)).clicked() {
+                                action = Some(SidebarAction::NewProject);
+                            }
+                            ui.menu_button(RichText::new("Import").color(GREEN), |ui| {
+                                if ui.button("Postman collection").clicked() {
+                                    action = Some(SidebarAction::ImportPostman);
+                                    ui.close();
+                                }
+                            });
                         });
-                    });
                 });
             });
             ui.add_space(SPACE_EXTRA_SMALL);
