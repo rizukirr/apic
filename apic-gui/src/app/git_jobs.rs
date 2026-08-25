@@ -70,11 +70,19 @@ impl App {
         let Some(repo_root) = self.shell.repo_root.clone() else {
             return;
         };
+        let conflicted = self
+            .git
+            .status
+            .inside
+            .iter()
+            .chain(self.git.status.outside.iter())
+            .find(|f| f.path == path)
+            .is_some_and(|f| f.conflicted);
         let key = (path.clone(), staged);
         let (tx, rx) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let result = diff_job(&repo_root, &path, staged);
+            let result = diff_job(&repo_root, &path, staged, conflicted);
             let _ = tx.send(JobResult::Diff(key, result));
             ctx.request_repaint();
         });
@@ -156,6 +164,21 @@ impl App {
     pub(crate) fn spawn_delete_branch(&mut self, ctx: &egui::Context, name: String) {
         self.spawn_mutation(ctx, MutateKind::DeleteBranch, move |root| {
             service::delete_branch(root, &name)
+        });
+    }
+
+    /// Writes the rendered resolution `text` for `path` and stages it.
+    ///
+    /// The write and the stage are two halves of one operation: editing the
+    /// file does not clear the conflict in git, only `git add` does. If the
+    /// write succeeds and the stage then fails, that failure must still
+    /// reach the user as an error rather than being swallowed, a file that
+    /// looks resolved while git still calls it conflicted is worse than a
+    /// resolve that failed outright.
+    pub(crate) fn spawn_resolve(&mut self, ctx: &egui::Context, path: String, text: String) {
+        self.spawn_mutation(ctx, MutateKind::Resolve, move |root| {
+            std::fs::write(root.join(&path), text).map_err(|e| e.to_string())?;
+            service::stage(root, &path)
         });
     }
 
@@ -276,13 +299,14 @@ impl App {
     }
 }
 
-/// Builds one `DiffData`: the line diff plus, for a `.json` path, each side's
-/// content so the caller can attempt a semantic comparison.
+/// Builds one `DiffData`: the line diff plus, for a `.json` path or a
+/// conflicted path, each side's content so the caller can attempt a semantic
+/// comparison or, for a conflict, parse the working file's markers.
 ///
 /// Staged compares the index against `HEAD`; unstaged compares the working
 /// file against the index. `git show :<path>` reads the index (stage 0),
 /// which is what an empty revision means to `service::blob`.
-fn diff_job(root: &Path, path: &str, staged: bool) -> Result<DiffData, String> {
+fn diff_job(root: &Path, path: &str, staged: bool, conflicted: bool) -> Result<DiffData, String> {
     let mut raw = service::diff_text(root, path, staged)?;
     let head_blob = service::blob(root, "HEAD", path)?;
     let index_blob = service::blob(root, "", path)?;
@@ -303,7 +327,7 @@ fn diff_job(root: &Path, path: &str, staged: bool) -> Result<DiffData, String> {
             .unwrap_or_default();
     }
 
-    let (old_blob, new_blob) = if path.ends_with(".json") {
+    let (old_blob, new_blob) = if path.ends_with(".json") || conflicted {
         if staged {
             (head_blob, index_blob)
         } else {
@@ -374,7 +398,7 @@ mod tests {
         let root = crate::app::test_support::project_fixture();
         std::fs::write(root.join("contracts").join("untracked.json"), "hello\n").unwrap();
 
-        let data = diff_job(&root, "contracts/untracked.json", false).unwrap();
+        let data = diff_job(&root, "contracts/untracked.json", false, false).unwrap();
 
         assert!(
             data.raw.contains("hello"),

@@ -33,6 +33,7 @@ pub(crate) enum MutateKind {
     SwitchBranch,
     CreateBranch,
     DeleteBranch,
+    Resolve,
 }
 
 /// The result of a completed background git job, sent back over `pending`.
