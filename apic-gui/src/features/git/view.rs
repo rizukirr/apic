@@ -9,9 +9,10 @@ use eframe::egui;
 use egui::RichText;
 
 use crate::app::actions::GitAction;
+use crate::features::git::conflict::{self, Choice, Segment};
 use crate::features::git::diff::{self, FieldChange};
 use crate::features::git::model::{FileStatus, Status};
-use crate::features::git::state::GitState;
+use crate::features::git::state::{GitState, ResolveState};
 use crate::ui::components::{bordered_input, text_button};
 use crate::ui::theme::*;
 
@@ -677,13 +678,15 @@ fn folder_row(
 }
 
 /// The central body for the Git tab: the diff view once selected, an empty
-/// state until then.
+/// state until then, or the conflict resolver for a conflicted file.
 ///
 /// The panel frame is owned by the app shell. This only sees the git slice.
-pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) {
+/// Returns the resolve action once the user clicks Resolve, for the app
+/// shell to apply after this closure ends.
+pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
     let Some((path, staged)) = state.selected.clone() else {
         empty_state(ui, "No file selected", "Select a changed file on the left.");
-        return;
+        return None;
     };
 
     let loaded = match &state.diff {
@@ -692,7 +695,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) {
     };
     let Some(data) = loaded else {
         empty_state(ui, "Loading diff...", "");
-        return;
+        return None;
     };
 
     let conflicted = find_file(state, &path)
@@ -711,10 +714,12 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) {
     ui.separator();
 
     if conflicted {
-        raw_diff_view(ui, &data.raw);
-        ui.add_space(SPACE_SMALL);
-        ui.label(RichText::new("Resolve conflicts in your editor.").color(AMBER));
-        return;
+        // Cloned out of `data` before it is dropped, so `state` can be
+        // borrowed mutably below without fighting the borrow checker over a
+        // reference into `state.diff`.
+        let raw = data.raw.clone();
+        let new_blob = data.new_blob.clone();
+        return conflict_resolver(ui, state, &path, &raw, new_blob.as_deref());
     }
 
     let semantic = if state.raw_view {
@@ -738,6 +743,171 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) {
         }
         None => raw_diff_view(ui, &data.raw),
     }
+    None
+}
+
+/// Ensures `state.resolve` holds the parsed conflict for `path`, parsing
+/// `new_blob` (the working file, markers and all) the first time this path is
+/// seen, then renders either the resolver or, when the text did not parse,
+/// the same read-only view a conflict showed before this panel existed.
+fn conflict_resolver(
+    ui: &mut egui::Ui,
+    state: &mut GitState,
+    path: &str,
+    raw: &str,
+    new_blob: Option<&str>,
+) -> Option<GitAction> {
+    let matches_path = state.resolve.as_ref().is_some_and(|r| r.path == path);
+    if !matches_path {
+        state.resolve = new_blob.and_then(conflict::parse).map(|file| {
+            let block_count = file
+                .segments
+                .iter()
+                .filter(|s| matches!(s, Segment::Conflict { .. }))
+                .count();
+            ResolveState {
+                path: path.to_string(),
+                file,
+                choices: vec![None; block_count],
+            }
+        });
+    }
+
+    let Some(resolve) = state.resolve.as_mut() else {
+        raw_diff_view(ui, raw);
+        ui.add_space(SPACE_SMALL);
+        ui.label(
+            RichText::new(
+                "This file's conflict markers could not be read. Resolve it in your editor.",
+            )
+            .color(AMBER),
+        );
+        return None;
+    };
+    resolve_view(ui, path, resolve)
+}
+
+/// The conflict resolver: take-all shortcuts, every block with its two named
+/// sides, the unconflicted text between them so the file still reads in
+/// order, a JSON validity warning, and Resolve.
+fn resolve_view(ui: &mut egui::Ui, path: &str, resolve: &mut ResolveState) -> Option<GitAction> {
+    let mut action = None;
+
+    ui.horizontal(|ui| {
+        if text_button(ui, "Take all ours", GREEN) {
+            resolve.choices.fill(Some(Choice::Ours));
+        }
+        if text_button(ui, "Take all theirs", GREEN) {
+            resolve.choices.fill(Some(Choice::Theirs));
+        }
+    });
+    ui.add_space(SPACE_SMALL);
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .max_height(ui.available_height() - 90.0)
+        .show(ui, |ui| {
+            let mut block = 0;
+            for segment in &resolve.file.segments {
+                match segment {
+                    Segment::Text(text) => {
+                        if !text.trim().is_empty() {
+                            ui.label(RichText::new(text).color(DIM).monospace());
+                        }
+                    }
+                    Segment::Conflict {
+                        ours_label,
+                        theirs_label,
+                        ours,
+                        theirs,
+                    } => {
+                        conflict_block_view(
+                            ui,
+                            ours_label,
+                            theirs_label,
+                            ours,
+                            theirs,
+                            &mut resolve.choices[block],
+                        );
+                        block += 1;
+                    }
+                }
+            }
+        });
+    ui.separator();
+
+    // Preview what Resolve would write, filling any undecided block with its
+    // default so the warning is useful before every choice is made, not only
+    // once Resolve is enabled.
+    let preview_choices: Vec<Choice> = resolve
+        .choices
+        .iter()
+        .map(|c| c.unwrap_or(Choice::Ours))
+        .collect();
+    let rendered = conflict::render(&resolve.file, &preview_choices);
+    if path.ends_with(".json") && apic_core::json::validate(&rendered).is_err() {
+        ui.label(
+            RichText::new(
+                "This resolution is not valid JSON. You can still resolve it and fix it in the repair editor.",
+            )
+            .color(AMBER),
+        );
+        ui.add_space(SPACE_EXTRA_SMALL);
+    }
+
+    let all_chosen = resolve.choices.iter().all(Option::is_some);
+    ui.add_enabled_ui(all_chosen, |ui| {
+        if text_button(ui, "Resolve", GREEN) {
+            action = Some(GitAction::ResolveConflict {
+                path: path.to_string(),
+                text: rendered,
+            });
+        }
+    });
+
+    action
+}
+
+/// One conflict block: three buttons picking ours, theirs or both, then both
+/// sides shown labeled with the names git wrote rather than the words ours
+/// and theirs.
+fn conflict_block_view(
+    ui: &mut egui::Ui,
+    ours_label: &str,
+    theirs_label: &str,
+    ours: &str,
+    theirs: &str,
+    choice: &mut Option<Choice>,
+) {
+    ui.group(|ui| {
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(*choice == Some(Choice::Ours), ours_label)
+                .clicked()
+            {
+                *choice = Some(Choice::Ours);
+            }
+            if ui
+                .selectable_label(*choice == Some(Choice::Theirs), theirs_label)
+                .clicked()
+            {
+                *choice = Some(Choice::Theirs);
+            }
+            if ui
+                .selectable_label(*choice == Some(Choice::Both), "both")
+                .clicked()
+            {
+                *choice = Some(Choice::Both);
+            }
+        });
+        ui.columns(2, |cols| {
+            cols[0].label(RichText::new(ours_label).color(DIM));
+            cols[0].label(RichText::new(ours).color(TEXT).monospace());
+            cols[1].label(RichText::new(theirs_label).color(DIM));
+            cols[1].label(RichText::new(theirs).color(TEXT).monospace());
+        });
+    });
+    ui.add_space(SPACE_SMALL);
 }
 
 /// The centered placeholder shown before a selection exists and while the
@@ -1069,6 +1239,109 @@ mod tests {
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });
+    }
+
+    const CONFLICT_TEXT: &str = "{\n<<<<<<< HEAD\n  \"name\": \"main\",\n=======\n  \"name\": \"side\",\n>>>>>>> side\n  \"method\": \"GET\",\n<<<<<<< HEAD\n  \"url\": \"http://a\"\n=======\n  \"url\": \"http://b\"\n>>>>>>> side\n}\n";
+
+    /// A conflicted `GitState` selecting `path`, its working file (with
+    /// markers) as `new_blob`, and a matching conflicted `FileStatus` so
+    /// `central_body` takes the resolver branch rather than the plain diff
+    /// one.
+    fn conflict_state(path: &str, text: &str) -> GitState {
+        let mut state = state_with_diff(
+            path,
+            false,
+            DiffData {
+                raw: "@@ -1,3 +1,7 @@\n conflict".into(),
+                old_blob: None,
+                new_blob: Some(text.to_string()),
+            },
+        );
+        state.status = Status {
+            inside: vec![file(path, true)],
+            outside: vec![],
+        };
+        state
+    }
+
+    #[test]
+    fn central_renders_the_conflict_resolver_with_nothing_decided_without_panicking() {
+        let mut state = conflict_state("contracts/sample.json", CONFLICT_TEXT);
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+        let resolve = state.resolve.as_ref().expect("markers must parse");
+        assert_eq!(resolve.choices, vec![None, None]);
+    }
+
+    #[test]
+    fn central_renders_the_conflict_resolver_with_everything_decided_without_panicking() {
+        let mut state = conflict_state("contracts/sample.json", CONFLICT_TEXT);
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+        state
+            .resolve
+            .as_mut()
+            .expect("markers must parse")
+            .choices
+            .fill(Some(Choice::Ours));
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+    }
+
+    #[test]
+    fn central_renders_a_warning_when_the_resolution_would_not_be_valid_json() {
+        let text = "{\n<<<<<<< HEAD\n  invalid,,\n=======\n  \"name\": \"side\"\n>>>>>>> side\n}\n";
+        let mut state = conflict_state("contracts/sample.json", text);
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+        let resolve = state.resolve.as_ref().expect("markers must parse");
+        let choices: Vec<Choice> = resolve
+            .choices
+            .iter()
+            .map(|c| c.unwrap_or(Choice::Ours))
+            .collect();
+        let rendered = conflict::render(&resolve.file, &choices);
+        assert!(apic_core::json::validate(&rendered).is_err());
+    }
+
+    /// Picking choices, including via take-all-ours, must never itself write
+    /// to disk. Resolve is the single path to disk, so a fixture file
+    /// carrying markers must still carry them after rendering through both
+    /// undecided and fully-decided states.
+    #[test]
+    fn resolving_choices_in_the_view_never_writes_the_file_to_disk() {
+        let dir = std::env::temp_dir().join(format!(
+            "apic-gui-conflict-resolve-test-{:?}",
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir creates");
+        let path = dir.join("sample.json");
+        std::fs::write(&path, CONFLICT_TEXT).expect("fixture file writes");
+
+        let mut state = conflict_state("sample.json", CONFLICT_TEXT);
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+        state
+            .resolve
+            .as_mut()
+            .expect("markers must parse")
+            .choices
+            .fill(Some(Choice::Ours));
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+
+        let on_disk = std::fs::read_to_string(&path).expect("fixture file reads");
+        assert!(
+            on_disk.contains("<<<<<<<"),
+            "the file on disk must still carry conflict markers: {on_disk:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

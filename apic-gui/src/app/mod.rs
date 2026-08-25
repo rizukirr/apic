@@ -240,12 +240,19 @@ impl App {
     /// need `&mut App`, which the body itself does not have.
     fn central(&mut self, ui: &mut egui::Ui) {
         let mut out = CentralOutcome::default();
+        let mut git_action = None;
         egui::CentralPanel::default().show(ui, |ui| match self.shell.sidebar_tab {
             SidebarTab::Explorer => {
                 central_body(ui, &mut self.shell, &mut self.contracts, &mut out);
             }
-            SidebarTab::Git => view::central_body(ui, &mut self.git),
+            SidebarTab::Git => git_action = view::central_body(ui, &mut self.git),
         });
+        // Applied after the panel closure ends: `apply` needs `&mut self`,
+        // and the closure above is still holding a borrow of `self.git`.
+        if let Some(action) = git_action {
+            let ctx = ui.ctx().clone();
+            self.apply(Action::Git(action), &ctx);
+        }
         if out.toggle_edit {
             if self.contracts.editing {
                 self.cancel_edit();

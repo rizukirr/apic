@@ -10,10 +10,6 @@
 
 /// One piece of a conflicted file: plain text that survives untouched, or a
 /// conflict block with two labeled sides.
-// vibekit: nothing constructs these fields outside this module's own tests
-// yet. Task 2 wires the conflict panel to `parse`, which is what makes them
-// live code.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Segment {
     Text(String),
@@ -28,19 +24,12 @@ pub(crate) enum Segment {
 }
 
 /// A file split into text and conflict segments, in order.
-// vibekit: Task 2 wires the conflict panel to `parse`, which is what makes
-// this live code.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConflictFile {
     pub(crate) segments: Vec<Segment>,
 }
 
 /// Which side to keep when rendering one conflict block.
-// vibekit: `Ours` is already reachable through `render`'s default, but
-// `Theirs` and `Both` have no caller until Task 2 wires the conflict panel
-// to `render`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Choice {
     Ours,
@@ -62,9 +51,6 @@ enum State {
 /// `>>>>>>>`, or a `=======` or `>>>>>>>` with no `<<<<<<<` open. A malformed
 /// file is declined rather than guessed at, so the caller can fall back to
 /// the read-only view instead of writing a wrong file.
-// vibekit: no caller yet outside this module's tests. Task 2 wires the
-// conflict panel to this function.
-#[allow(dead_code)]
 pub(crate) fn parse(text: &str) -> Option<ConflictFile> {
     let mut segments = Vec::new();
     let mut saw_marker = false;
@@ -140,10 +126,9 @@ pub(crate) fn parse(text: &str) -> Option<ConflictFile> {
 /// order, not interleaved and not deduplicated. Line endings inside a segment
 /// are whatever `parse` captured, so they are preserved exactly.
 ///
-// vibekit: a `choices` shorter than the file's conflict count silently
-// leaves the remaining blocks as `Ours`. Task 2 always supplies one choice
-// per block, so this has no caller yet that could hit it.
-#[allow(dead_code)] // Task 2 wires this into the conflict panel.
+/// A `choices` shorter than the file's conflict count silently leaves the
+/// remaining blocks as `Ours`. The view always supplies one choice per block,
+/// so this only fires if a future caller does not.
 pub(crate) fn render(file: &ConflictFile, choices: &[Choice]) -> String {
     let mut out = String::new();
     let mut choice_idx = 0;

@@ -1,6 +1,7 @@
 //! State owned by the git feature: the current status, the selected diff, and
 //! the in-flight background job (if any).
 
+use crate::features::git::conflict::{Choice, ConflictFile};
 use crate::features::git::model::{Branches, Status};
 
 /// One completed diff fetch: the raw line diff plus each side's file content,
@@ -53,6 +54,21 @@ pub(crate) enum JobResult {
 
     /// A branch listing.
     Branches(Result<Branches, String>),
+}
+
+/// A conflicted file parsed into its blocks, plus the choice made for each
+/// one so far. Rebuilt from scratch whenever the selected path changes, so it
+/// never carries choices belonging to a different file.
+pub(crate) struct ResolveState {
+    /// The repo-relative path being resolved.
+    pub(crate) path: String,
+
+    /// The parsed segments: text and conflict blocks, in order.
+    pub(crate) file: ConflictFile,
+
+    /// One entry per conflict block in `file`, in the same order. `None`
+    /// until the user picks a side for that block.
+    pub(crate) choices: Vec<Option<Choice>>,
 }
 
 /// Everything the git feature owns. `App` holds one of these; no other
@@ -119,4 +135,10 @@ pub(crate) struct GitState {
     /// git command runs at a time: concurrent commands contend for
     /// `index.lock`.
     pub(crate) pending: Option<std::sync::mpsc::Receiver<JobResult>>,
+
+    /// The in-progress resolution of the selected conflicted file, if its
+    /// text parsed. `None` both before a conflicted file is selected and
+    /// when its text failed to parse, in which case the panel falls back to
+    /// the read-only diff view instead.
+    pub(crate) resolve: Option<ResolveState>,
 }
