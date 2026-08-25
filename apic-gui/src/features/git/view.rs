@@ -105,33 +105,46 @@ pub(crate) fn sidebar_body(
         });
 
     let selected = state.selected.clone();
+    let (conflicted, staged, unstaged) = sections(&state.status.inside);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            if !conflicted.is_empty() {
+                ui.label(RichText::new("CONFLICTS").color(DIM).size(11.0));
+                FileTree::from_files(&conflicted).show(
+                    ui,
+                    "",
+                    RowMode::Conflicted,
+                    selected.as_ref(),
+                    &mut action,
+                );
+                ui.add_space(SPACE_SMALL);
+            }
+
             ui.label(RichText::new("STAGED").color(DIM).size(11.0));
-            let staged: Vec<&FileStatus> = state
-                .status
-                .inside
-                .iter()
-                .filter(|f| f.has_staged_change())
-                .collect();
             if staged.is_empty() {
                 ui.label(RichText::new("(none)").color(DIM));
             }
-            FileTree::from_files(&staged).show(ui, "", true, selected.as_ref(), &mut action);
+            FileTree::from_files(&staged).show(
+                ui,
+                "",
+                RowMode::Staged,
+                selected.as_ref(),
+                &mut action,
+            );
 
             ui.add_space(SPACE_SMALL);
             ui.label(RichText::new("UNSTAGED").color(DIM).size(11.0));
-            let unstaged: Vec<&FileStatus> = state
-                .status
-                .inside
-                .iter()
-                .filter(|f| f.has_worktree_change())
-                .collect();
             if unstaged.is_empty() {
                 ui.label(RichText::new("(none)").color(DIM));
             }
-            FileTree::from_files(&unstaged).show(ui, "", false, selected.as_ref(), &mut action);
+            FileTree::from_files(&unstaged).show(
+                ui,
+                "",
+                RowMode::Unstaged,
+                selected.as_ref(),
+                &mut action,
+            );
 
             if !state.status.outside.is_empty() {
                 ui.add_space(SPACE_SMALL);
@@ -150,8 +163,14 @@ pub(crate) fn sidebar_body(
                 }
                 if state.show_outside {
                     for file in &state.status.outside {
-                        let staged = file.has_staged_change();
-                        if let Some(a) = file_row(ui, file, staged, selected.as_ref()) {
+                        let mode = if file.conflicted {
+                            RowMode::Conflicted
+                        } else if file.has_staged_change() {
+                            RowMode::Staged
+                        } else {
+                            RowMode::Unstaged
+                        };
+                        if let Some(a) = file_row(ui, file, mode, selected.as_ref()) {
                             action = Some(a);
                         }
                     }
@@ -467,6 +486,51 @@ fn discard_target(state: &GitState, path: &str) -> DiscardTarget {
     DiscardTarget::Folder(count)
 }
 
+/// Splits a section's files into the three sidebar groups: unresolved
+/// conflicts, staged, and unstaged. `unmerged` in `model.rs` sets both
+/// `index` and `worktree` to `Modified` for a conflicted entry, which makes
+/// it satisfy `has_staged_change` and `has_worktree_change` at once; staged
+/// and unstaged are not meaningful for a file mid-merge, so a conflicted
+/// entry is excluded from both and only listed here, keeping every file in
+/// exactly one group.
+fn sections(files: &[FileStatus]) -> (Vec<&FileStatus>, Vec<&FileStatus>, Vec<&FileStatus>) {
+    let conflicted: Vec<&FileStatus> = files.iter().filter(|f| f.conflicted).collect();
+    let staged: Vec<&FileStatus> = files
+        .iter()
+        .filter(|f| !f.conflicted && f.has_staged_change())
+        .collect();
+    let unstaged: Vec<&FileStatus> = files
+        .iter()
+        .filter(|f| !f.conflicted && f.has_worktree_change())
+        .collect();
+    (conflicted, staged, unstaged)
+}
+
+/// Which of the sidebar's three groups a row belongs to, deciding both the
+/// buttons it offers and which side (`index` or `worktree`) it reads.
+///
+/// A conflicted row offers no stage, unstage or discard control: `git add`
+/// on a conflicted file marks it resolved with its conflict markers still
+/// inside it, so a stage button here would let one click write a broken file
+/// into the index, which is exactly what the resolver exists to prevent.
+/// Clicking the row is the only action, and it opens the resolver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RowMode {
+    Staged,
+    Unstaged,
+    Conflicted,
+}
+
+impl RowMode {
+    /// Whether this row reads `index` (true) or `worktree` (false), and the
+    /// `staged` half of the `(path, staged)` selection key. Conflicted rows
+    /// read `worktree`: `diff_job` only populates `new_blob`, the working
+    /// file with its markers, when `staged` is false.
+    fn staged(self) -> bool {
+        matches!(self, RowMode::Staged)
+    }
+}
+
 /// One changed-file row: the change letter, the file name (truncated), and a
 /// red conflict indicator when the file is in a merge conflict.
 ///
@@ -477,10 +541,11 @@ fn discard_target(state: &GitState, path: &str) -> DiscardTarget {
 fn file_row(
     ui: &mut egui::Ui,
     file: &FileStatus,
-    staged: bool,
+    mode: RowMode,
     selected: Option<&(String, bool)>,
 ) -> Option<GitAction> {
     let mut action = None;
+    let staged = mode.staged();
     let change = if staged { file.index } else { file.worktree };
     let name = Path::new(&file.path)
         .file_name()
@@ -489,36 +554,40 @@ fn file_row(
     let is_selected = selected == Some(&(file.path.clone(), staged));
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if staged {
-                if ui
-                    .small_button(RichText::new("-").color(DIM))
-                    .on_hover_text(format!("Unstage {}", file.path))
-                    .clicked()
-                {
-                    action = Some(GitAction::Unstage {
-                        path: file.path.clone(),
-                    });
-                }
-            } else {
-                if file.tracked()
-                    && ui
-                        .small_button(RichText::new("x").color(RED))
-                        .on_hover_text(format!("Discard {}", file.path))
+            match mode {
+                RowMode::Staged => {
+                    if ui
+                        .small_button(RichText::new("-").color(DIM))
+                        .on_hover_text(format!("Unstage {}", file.path))
                         .clicked()
-                {
-                    action = Some(GitAction::RequestDiscard {
-                        path: file.path.clone(),
-                    });
+                    {
+                        action = Some(GitAction::Unstage {
+                            path: file.path.clone(),
+                        });
+                    }
                 }
-                if ui
-                    .small_button(RichText::new("+").color(GREEN))
-                    .on_hover_text(format!("Stage {}", file.path))
-                    .clicked()
-                {
-                    action = Some(GitAction::Stage {
-                        path: file.path.clone(),
-                    });
+                RowMode::Unstaged => {
+                    if file.tracked()
+                        && ui
+                            .small_button(RichText::new("x").color(RED))
+                            .on_hover_text(format!("Discard {}", file.path))
+                            .clicked()
+                    {
+                        action = Some(GitAction::RequestDiscard {
+                            path: file.path.clone(),
+                        });
+                    }
+                    if ui
+                        .small_button(RichText::new("+").color(GREEN))
+                        .on_hover_text(format!("Stage {}", file.path))
+                        .clicked()
+                    {
+                        action = Some(GitAction::Stage {
+                            path: file.path.clone(),
+                        });
+                    }
                 }
+                RowMode::Conflicted => {}
             }
             if file.conflicted {
                 ui.label(RichText::new("●").color(RED))
@@ -595,7 +664,7 @@ impl<'a> FileTree<'a> {
         &self,
         ui: &mut egui::Ui,
         prefix: &str,
-        staged: bool,
+        mode: RowMode,
         selected: Option<&(String, bool)>,
         action: &mut Option<GitAction>,
     ) {
@@ -605,17 +674,17 @@ impl<'a> FileTree<'a> {
             } else {
                 format!("{prefix}/{name}")
             };
-            let id = ui.make_persistent_id(("git_tree", staged, &folder_path));
+            let id = ui.make_persistent_id(("git_tree", mode, &folder_path));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    if let Some(a) = folder_row(ui, &folder_path, name, staged, child) {
+                    if let Some(a) = folder_row(ui, &folder_path, name, mode, child) {
                         *action = Some(a);
                     }
                 })
-                .body(|ui| child.show(ui, &folder_path, staged, selected, action));
+                .body(|ui| child.show(ui, &folder_path, mode, selected, action));
         }
         for file in &self.files {
-            if let Some(a) = file_row(ui, file, staged, selected) {
+            if let Some(a) = file_row(ui, file, mode, selected) {
                 *action = Some(a);
             }
         }
@@ -629,46 +698,50 @@ fn folder_row(
     ui: &mut egui::Ui,
     folder_path: &str,
     name: &str,
-    staged: bool,
+    mode: RowMode,
     node: &FileTree,
 ) -> Option<GitAction> {
     let mut action = None;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if staged {
-            if node.any_staged()
-                && ui
-                    .small_button(RichText::new("-").color(DIM))
-                    .on_hover_text(format!("Unstage {folder_path}"))
+        match mode {
+            RowMode::Staged => {
+                if node.any_staged()
+                    && ui
+                        .small_button(RichText::new("-").color(DIM))
+                        .on_hover_text(format!("Unstage {folder_path}"))
+                        .clicked()
+                {
+                    action = Some(GitAction::Unstage {
+                        path: folder_path.to_string(),
+                    });
+                }
+            }
+            RowMode::Unstaged => {
+                let tracked_count = node.tracked_count();
+                if tracked_count > 0
+                    && ui
+                        .small_button(RichText::new("x").color(RED))
+                        .on_hover_text(format!(
+                            "Discard {folder_path} ({tracked_count} tracked file{})",
+                            if tracked_count == 1 { "" } else { "s" }
+                        ))
+                        .clicked()
+                {
+                    action = Some(GitAction::RequestDiscard {
+                        path: folder_path.to_string(),
+                    });
+                }
+                if ui
+                    .small_button(RichText::new("+").color(GREEN))
+                    .on_hover_text(format!("Stage {folder_path}"))
                     .clicked()
-            {
-                action = Some(GitAction::Unstage {
-                    path: folder_path.to_string(),
-                });
+                {
+                    action = Some(GitAction::Stage {
+                        path: folder_path.to_string(),
+                    });
+                }
             }
-        } else {
-            let tracked_count = node.tracked_count();
-            if tracked_count > 0
-                && ui
-                    .small_button(RichText::new("x").color(RED))
-                    .on_hover_text(format!(
-                        "Discard {folder_path} ({tracked_count} tracked file{})",
-                        if tracked_count == 1 { "" } else { "s" }
-                    ))
-                    .clicked()
-            {
-                action = Some(GitAction::RequestDiscard {
-                    path: folder_path.to_string(),
-                });
-            }
-            if ui
-                .small_button(RichText::new("+").color(GREEN))
-                .on_hover_text(format!("Stage {folder_path}"))
-                .clicked()
-            {
-                action = Some(GitAction::Stage {
-                    path: folder_path.to_string(),
-                });
-            }
+            RowMode::Conflicted => {}
         }
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.add(egui::Label::new(RichText::new(name).color(DIM)).truncate());
@@ -1117,6 +1190,24 @@ mod tests {
         let dir = tree.dirs.get("dir").expect("dir node");
         assert_eq!(dir.tracked_count(), 1);
         assert!(!files[1].tracked());
+    }
+
+    #[test]
+    fn a_conflicted_entry_appears_once_in_the_conflicts_group_only() {
+        let files = [file("contracts/login.json", true)];
+        let (conflicted, staged, unstaged) = sections(&files);
+        assert_eq!(conflicted.len(), 1);
+        assert!(staged.is_empty());
+        assert!(unstaged.is_empty());
+    }
+
+    #[test]
+    fn a_file_modified_on_both_sides_without_conflict_still_lists_in_both_groups() {
+        let files = [file("src/both.rs", false)];
+        let (conflicted, staged, unstaged) = sections(&files);
+        assert!(conflicted.is_empty());
+        assert_eq!(staged.len(), 1);
+        assert_eq!(unstaged.len(), 1);
     }
 
     #[test]
