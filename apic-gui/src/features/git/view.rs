@@ -781,7 +781,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
             ui.label(RichText::new(&path).color(TEXT).strong());
             let side = if staged { "staged" } else { "unstaged" };
             ui.label(RichText::new(side).color(DIM));
-            ui.checkbox(&mut state.raw_view, "Show changed fields");
+            ui.checkbox(&mut state.show_changed_fields, "Show changed fields");
         });
         ui.separator();
     }
@@ -799,7 +799,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
     // someone clicking a changed file wants to see. The field list is better
     // for a schema change buried in a large contract, so it stays reachable
     // through the checkbox rather than being the default.
-    let semantic = if state.raw_view {
+    let semantic = if state.show_changed_fields {
         match (
             data.old_blob.as_deref().and_then(diff::parse),
             data.new_blob.as_deref().and_then(diff::parse),
@@ -887,11 +887,12 @@ fn conflict_resolver(
 ///
 /// The whole-file actions live in this header row rather than a pinned bar
 /// below the panes: the header is laid out first, at the top of the body, so
-/// nothing rendered below it can push it off screen. The buttons are
-/// reserved first with a right-to-left layout, and the path is nested inside
-/// a left-to-right layout marked `.truncate()`, the pattern `file_row` uses,
-/// so a deeply nested contract path truncates instead of pushing the actions
-/// off the right edge.
+/// nothing rendered below it can push it off screen. The buttons and the
+/// side label are reserved first, in the same right-to-left layout, and the
+/// path is rendered last, nested inside a left-to-right layout marked
+/// `.truncate()`, the pattern `file_row` uses, so a deeply nested contract
+/// path truncates instead of pushing the actions off the right edge, and the
+/// row still reads path, side, buttons like every other header.
 fn resolve_view(
     ui: &mut egui::Ui,
     path: &str,
@@ -927,9 +928,9 @@ fn resolve_view(
             if text_button(ui, "Take all ours", GREEN) {
                 resolve.choices.fill(Some(Choice::Ours));
             }
+            let side = if staged { "staged" } else { "unstaged" };
+            ui.label(RichText::new(side).color(DIM));
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                let side = if staged { "staged" } else { "unstaged" };
-                ui.label(RichText::new(side).color(DIM));
                 ui.add(egui::Label::new(RichText::new(path).color(TEXT).strong()).truncate());
             });
         });
@@ -1461,7 +1462,7 @@ mod tests {
         );
         // The field list is behind the toggle now, not the default, so it
         // has to be switched on to exercise this path.
-        state.raw_view = true;
+        state.show_changed_fields = true;
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });
@@ -1478,7 +1479,7 @@ mod tests {
                 new_blob: Some(CONTRACT_POST.into()),
             },
         );
-        assert!(!state.raw_view);
+        assert!(!state.show_changed_fields);
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });
@@ -1501,7 +1502,7 @@ mod tests {
     }
 
     #[test]
-    fn central_reports_a_reformatting_only_change_and_offers_raw_view() {
+    fn central_reports_a_reformatting_only_change_and_offers_the_full_file_view() {
         let old = diff::parse(CONTRACT_GET).expect("valid contract");
         let new = diff::parse(CONTRACT_GET_REFORMATTED).expect("valid contract");
         assert!(diff::diff_models(&old, &new).is_empty());
@@ -1515,7 +1516,7 @@ mod tests {
                 new_blob: Some(CONTRACT_GET_REFORMATTED.into()),
             },
         );
-        state.raw_view = true;
+        state.show_changed_fields = true;
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });

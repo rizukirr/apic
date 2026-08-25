@@ -328,7 +328,7 @@ impl App {
                 self.spawn(ctx);
             }
             Action::Git(GitAction::Select { path, staged }) => {
-                self.git.raw_view = false;
+                self.git.show_changed_fields = false;
                 self.git.selected = Some((path.clone(), staged));
                 let cached =
                     matches!(&self.git.diff, Some((key, _)) if *key == (path.clone(), staged));
