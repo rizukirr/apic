@@ -781,7 +781,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
         let side = if staged { "staged" } else { "unstaged" };
         ui.label(RichText::new(side).color(DIM));
         if !conflicted {
-            ui.checkbox(&mut state.raw_view, "Raw diff");
+            ui.checkbox(&mut state.raw_view, "Show changed fields");
         }
     });
     ui.separator();
@@ -795,9 +795,11 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
         return conflict_resolver(ui, state, &path, &raw, new_blob.as_deref());
     }
 
+    // The whole file with the change highlighted is the default: it is what
+    // someone clicking a changed file wants to see. The field list is better
+    // for a schema change buried in a large contract, so it stays reachable
+    // through the checkbox rather than being the default.
     let semantic = if state.raw_view {
-        None
-    } else {
         match (
             data.old_blob.as_deref().and_then(diff::parse),
             data.new_blob.as_deref().and_then(diff::parse),
@@ -805,6 +807,8 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
             (Some(old), Some(new)) => Some(diff::diff_models(&old, &new)),
             _ => None,
         }
+    } else {
+        None
     };
 
     match semantic {
@@ -812,7 +816,10 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
         Some(_) => {
             ui.label(RichText::new("No semantic changes (formatting only).").color(DIM));
             ui.add_space(SPACE_SMALL);
-            ui.label(RichText::new("Check \"Raw diff\" above to see the raw text.").color(DIM));
+            ui.label(
+                RichText::new("Uncheck \"Show changed fields\" above to see the full file.")
+                    .color(DIM),
+            );
         }
         None => raw_diff_view(ui, &data.raw),
     }
@@ -1162,22 +1169,40 @@ fn multiline_change_view(ui: &mut egui::Ui, change: &FieldChange) {
     }
 }
 
-/// Renders raw `git diff` text line by line: `+` lines `GREEN`, `-` lines
-/// `RED`, everything else `TEXT`. Scrolls inside its own area so a large diff
-/// does not force the panel to content height.
+/// Drops the `diff --git`, `index`, `---`, `+++` and `@@` header lines,
+/// leaving the file content the diff carries: everything after and
+/// including the first `@@` line is plumbing, not content. The
+/// untracked-file path synthesises `+` lines with no header at all, so a
+/// diff with no `@@` line is returned unchanged rather than assuming a
+/// header is always there.
+fn strip_diff_header(raw: &str) -> &str {
+    let mut consumed = 0;
+    for line in raw.lines() {
+        consumed += line.len() + 1;
+        if line.starts_with("@@") {
+            return raw.get(consumed..).unwrap_or("");
+        }
+    }
+    raw
+}
+
+/// Renders a diff body (header already stripped) as the file itself: each
+/// line's one-character marker, ` ` for context, `+` for added, `-` for
+/// removed, picks the colour and is then dropped, so what remains is the
+/// file's own text at its own indentation. Scrolls inside its own area, a
+/// full file is longer than a hunk ever was.
 fn raw_diff_view(ui: &mut egui::Ui, raw: &str) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for line in raw.lines() {
-                let color = if line.starts_with('+') && !line.starts_with("+++") {
-                    GREEN
-                } else if line.starts_with('-') && !line.starts_with("---") {
-                    RED
-                } else {
-                    TEXT
+            for line in strip_diff_header(raw).lines() {
+                let mut chars = line.chars();
+                let color = match chars.next() {
+                    Some('+') => GREEN,
+                    Some('-') => RED,
+                    _ => TEXT,
                 };
-                ui.label(RichText::new(line).color(color).monospace());
+                ui.label(RichText::new(chars.as_str()).color(color).monospace());
             }
         });
 }
@@ -1393,6 +1418,26 @@ mod tests {
                 new_blob: Some(CONTRACT_POST.into()),
             },
         );
+        // The field list is behind the toggle now, not the default, so it
+        // has to be switched on to exercise this path.
+        state.raw_view = true;
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+    }
+
+    #[test]
+    fn central_renders_the_full_file_by_default_for_a_changed_contract() {
+        let mut state = state_with_diff(
+            "contracts/login.json",
+            true,
+            DiffData {
+                raw: "diff --git a/contracts/login.json b/contracts/login.json\nindex 2a4e428..5d3ef15 100644\n--- a/contracts/login.json\n+++ b/contracts/login.json\n@@ -1,3 +1,3 @@\n {\n-    \"name\": \"user-login\",\n+    \"name\": \"login-v2\",\n }\n".into(),
+                old_blob: Some(CONTRACT_GET.into()),
+                new_blob: Some(CONTRACT_POST.into()),
+            },
+        );
+        assert!(!state.raw_view);
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });
@@ -1429,9 +1474,33 @@ mod tests {
                 new_blob: Some(CONTRACT_GET_REFORMATTED.into()),
             },
         );
+        state.raw_view = true;
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });
+    }
+
+    #[test]
+    fn strip_diff_header_drops_everything_through_the_first_hunk_marker() {
+        let raw = "diff --git a/contracts/login.json b/contracts/login.json\nindex 2a4e428..5d3ef15 100644\n--- a/contracts/login.json\n+++ b/contracts/login.json\n@@ -1,3 +1,3 @@\n {\n-    \"name\": \"user-login\",\n+    \"name\": \"login-v2\",\n }\n";
+        let body = strip_diff_header(raw);
+        assert!(!body.contains("diff --git"));
+        assert!(!body.contains("index "));
+        assert!(!body.contains("---"));
+        assert!(!body.contains("+++"));
+        assert!(!body.contains("@@"));
+        assert_eq!(
+            body,
+            " {\n-    \"name\": \"user-login\",\n+    \"name\": \"login-v2\",\n }\n"
+        );
+    }
+
+    #[test]
+    fn strip_diff_header_leaves_a_headerless_diff_unchanged() {
+        // The untracked-file path synthesises `+` lines with no header at
+        // all, so a diff with no `@@` line must pass through untouched.
+        let raw = "+first\n+second\n";
+        assert_eq!(strip_diff_header(raw), raw);
     }
 
     const CONFLICT_TEXT: &str = "{\n<<<<<<< HEAD\n  \"name\": \"main\",\n=======\n  \"name\": \"side\",\n>>>>>>> side\n  \"method\": \"GET\",\n<<<<<<< HEAD\n  \"url\": \"http://a\"\n=======\n  \"url\": \"http://b\"\n>>>>>>> side\n}\n";
