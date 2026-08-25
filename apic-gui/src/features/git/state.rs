@@ -66,6 +66,16 @@ pub(crate) struct GitState {
     /// listing.
     pub(crate) branches: Branches,
 
+    /// Whether the initial branch fetch has already been requested. An empty
+    /// `branches.all` is a valid result, a repository with no commits has no
+    /// branches, so emptiness alone cannot tell "not fetched yet" from
+    /// "fetched and there are none". Set true by the sidebar the moment it
+    /// asks for that first fetch, so the request never repeats regardless of
+    /// whether the fetch succeeds, fails, or comes back empty. Branch
+    /// mutations (switch, create, delete) refresh the list through their own
+    /// call in the app shell and do not depend on this flag.
+    pub(crate) branches_loaded: bool,
+
     /// The path and side (staged or unstaged) whose diff is shown, when one
     /// is selected.
     pub(crate) selected: Option<(String, bool)>,

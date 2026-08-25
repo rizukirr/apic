@@ -63,8 +63,13 @@ pub(crate) fn sidebar_body(
 
     // Populate the branch list once, and again after every branch mutation
     // (handled in the app shell). `pending` guards against piling up a
-    // second git command while one is already in flight.
-    if state.branches.all.is_empty() && state.pending.is_none() {
+    // second git command while one is already in flight. `branches_loaded`
+    // guards against retrying forever: a repository with no commits has no
+    // branches, so an empty list after a completed fetch is not itself a
+    // reason to refetch. Set right here, the moment the request is made, so
+    // the condition cannot fire again regardless of how the fetch resolves.
+    if !state.branches_loaded && state.pending.is_none() {
+        state.branches_loaded = true;
         action = Some(GitAction::RefreshBranches);
     }
     if let Some(a) = branch_row(ui, state) {
@@ -1037,6 +1042,25 @@ mod tests {
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });
+    }
+
+    #[test]
+    fn refresh_branches_does_not_refire_once_a_fetch_has_completed_with_no_branches() {
+        let mut state = GitState::default();
+        let mut first = None;
+        eframe::egui::__run_test_ui(|ui| {
+            first = sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+        });
+        assert!(matches!(first, Some(GitAction::RefreshBranches)));
+
+        // Stand in for a completed fetch that found no branches, the state a
+        // commitless repository leaves behind for good.
+        state.branches_loaded = true;
+        let mut second = None;
+        eframe::egui::__run_test_ui(|ui| {
+            second = sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+        });
+        assert!(!matches!(second, Some(GitAction::RefreshBranches)));
     }
 
     #[test]
