@@ -74,7 +74,6 @@ pub(crate) enum GitAction {
     /// Write the rendered resolution `text` for this conflicted path and
     /// stage it. The text is already rendered, this action carries no
     /// markers for the job to parse.
-    #[allow(dead_code)] // Task 3 wires this into the conflict panel.
     ResolveConflict { path: String, text: String },
 }
 
