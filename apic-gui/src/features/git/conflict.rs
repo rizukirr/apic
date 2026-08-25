@@ -119,32 +119,50 @@ pub(crate) fn parse(text: &str) -> Option<ConflictFile> {
 }
 
 /// Rebuilds a file from `file`, resolving each conflict block in order with
-/// the matching entry in `choices`.
+/// the matching entry in `choices`. This is the only function that writes a
+/// resolved file, and the only function that renders a preview of one, so the
+/// preview shown before Resolve is pressed can never drift from what Resolve
+/// actually writes.
 ///
-/// Text segments pass through unchanged. A conflict becomes the chosen side,
-/// or for `Choice::Both` the ours text followed by the theirs text, in that
-/// order, not interleaved and not deduplicated. Line endings inside a segment
-/// are whatever `parse` captured, so they are preserved exactly.
-///
-/// A `choices` shorter than the file's conflict count silently leaves the
-/// remaining blocks as `Ours`. The view always supplies one choice per block,
-/// so this only fires if a future caller does not.
-pub(crate) fn render(file: &ConflictFile, choices: &[Choice]) -> String {
+/// Text segments pass through unchanged. A decided conflict becomes the
+/// chosen side, or for `Choice::Both` the ours text followed by the theirs
+/// text, in that order, not interleaved and not deduplicated. An undecided
+/// block (`None`, or a block past the end of `choices`) renders as its
+/// original conflict, markers included, so a preview built from a partially
+/// decided file shows plainly what is still unresolved. Line endings inside a
+/// segment are whatever `parse` captured, so they are preserved exactly.
+pub(crate) fn render(file: &ConflictFile, choices: &[Option<Choice>]) -> String {
     let mut out = String::new();
     let mut choice_idx = 0;
 
     for segment in &file.segments {
         match segment {
             Segment::Text(text) => out.push_str(text),
-            Segment::Conflict { ours, theirs, .. } => {
-                let choice = choices.get(choice_idx).copied().unwrap_or(Choice::Ours);
+            Segment::Conflict {
+                ours_label,
+                theirs_label,
+                ours,
+                theirs,
+            } => {
+                let choice = choices.get(choice_idx).copied().flatten();
                 choice_idx += 1;
                 match choice {
-                    Choice::Ours => out.push_str(ours),
-                    Choice::Theirs => out.push_str(theirs),
-                    Choice::Both => {
+                    Some(Choice::Ours) => out.push_str(ours),
+                    Some(Choice::Theirs) => out.push_str(theirs),
+                    Some(Choice::Both) => {
                         out.push_str(ours);
                         out.push_str(theirs);
+                    }
+                    None => {
+                        out.push_str("<<<<<<< ");
+                        out.push_str(ours_label);
+                        out.push('\n');
+                        out.push_str(ours);
+                        out.push_str("=======\n");
+                        out.push_str(theirs);
+                        out.push_str(">>>>>>> ");
+                        out.push_str(theirs_label);
+                        out.push('\n');
                     }
                 }
             }
@@ -168,7 +186,7 @@ mod tests {
     fn single_block_round_trips_ours() {
         let text = "{\n<<<<<<< HEAD\n  \"name\": \"main\",\n=======\n  \"name\": \"side\",\n>>>>>>> side\n  \"method\": \"GET\"\n}\n";
         let file = parse(text).expect("markers present");
-        let rendered = render(&file, &[Choice::Ours]);
+        let rendered = render(&file, &[Some(Choice::Ours)]);
         assert_eq!(
             rendered,
             "{\n  \"name\": \"main\",\n  \"method\": \"GET\"\n}\n"
@@ -179,7 +197,7 @@ mod tests {
     fn single_block_round_trips_theirs() {
         let text = "{\n<<<<<<< HEAD\n  \"name\": \"main\",\n=======\n  \"name\": \"side\",\n>>>>>>> side\n  \"method\": \"GET\"\n}\n";
         let file = parse(text).expect("markers present");
-        let rendered = render(&file, &[Choice::Theirs]);
+        let rendered = render(&file, &[Some(Choice::Theirs)]);
         assert_eq!(
             rendered,
             "{\n  \"name\": \"side\",\n  \"method\": \"GET\"\n}\n"
@@ -190,7 +208,7 @@ mod tests {
     fn single_block_round_trips_both() {
         let text = "{\n<<<<<<< HEAD\n  \"name\": \"main\",\n=======\n  \"name\": \"side\",\n>>>>>>> side\n  \"method\": \"GET\"\n}\n";
         let file = parse(text).expect("markers present");
-        let rendered = render(&file, &[Choice::Both]);
+        let rendered = render(&file, &[Some(Choice::Both)]);
         assert_eq!(
             rendered,
             "{\n  \"name\": \"main\",\n  \"name\": \"side\",\n  \"method\": \"GET\"\n}\n"
@@ -198,10 +216,18 @@ mod tests {
     }
 
     #[test]
+    fn undecided_block_round_trips_to_its_original_marker_text() {
+        let text = "{\n<<<<<<< HEAD\n  \"name\": \"main\",\n=======\n  \"name\": \"side\",\n>>>>>>> side\n  \"method\": \"GET\"\n}\n";
+        let file = parse(text).expect("markers present");
+        let rendered = render(&file, &[None]);
+        assert_eq!(rendered, text);
+    }
+
+    #[test]
     fn two_blocks_resolve_independently() {
         let text = "a\n<<<<<<< HEAD\nours-1\n=======\ntheirs-1\n>>>>>>> side\nb\n<<<<<<< HEAD\nours-2\n=======\ntheirs-2\n>>>>>>> side\nc\n";
         let file = parse(text).expect("markers present");
-        let rendered = render(&file, &[Choice::Ours, Choice::Theirs]);
+        let rendered = render(&file, &[Some(Choice::Ours), Some(Choice::Theirs)]);
         assert_eq!(rendered, "a\nours-1\nb\ntheirs-2\nc\n");
     }
 
@@ -238,7 +264,7 @@ mod tests {
     fn text_outside_blocks_survives_byte_for_byte() {
         let text = "line one\n\n  line three with trailing spaces   \n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> side\n\nlast line, no newline at end";
         let file = parse(text).expect("markers present");
-        let rendered = render(&file, &[Choice::Ours]);
+        let rendered = render(&file, &[Some(Choice::Ours)]);
         assert_eq!(
             rendered,
             "line one\n\n  line three with trailing spaces   \nours\n\nlast line, no newline at end"
@@ -249,11 +275,11 @@ mod tests {
     fn render_of_unmodified_parse_taking_ours_reproduces_ours_side() {
         let text = "{\n<<<<<<< HEAD\n  \"name\": \"main\",\n=======\n  \"name\": \"side\",\n>>>>>>> side\n  \"method\": \"GET\"\n}\n";
         let file = parse(text).expect("markers present");
-        let choices: Vec<Choice> = file
+        let choices: Vec<Option<Choice>> = file
             .segments
             .iter()
             .filter(|s| matches!(s, Segment::Conflict { .. }))
-            .map(|_| Choice::Ours)
+            .map(|_| Some(Choice::Ours))
             .collect();
         let rendered = render(&file, &choices);
         assert_eq!(

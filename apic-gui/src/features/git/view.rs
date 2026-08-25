@@ -860,9 +860,16 @@ fn conflict_resolver(
     resolve_view(ui, path, resolve)
 }
 
-/// The conflict resolver: take-all shortcuts, every block with its two named
-/// sides, the unconflicted text between them so the file still reads in
-/// order, a JSON validity warning, and Resolve.
+/// The conflict resolver: take-all shortcuts, a 50:50 split with the picker
+/// on the left (every block with its two named sides, the unconflicted text
+/// between them so the file still reads in order) and a live preview of what
+/// Resolve would write on the right, then Resolve.
+///
+/// The preview is `conflict::render` called with the current choices, the
+/// same function Resolve calls with the same choices, so nothing shown here
+/// can drift from what actually reaches disk. Split shape matches
+/// `features::contracts::view`: `horizontal_top` with `allocate_ui_with_layout`
+/// and a reserved divider width, rather than a second way to split a panel.
 fn resolve_view(ui: &mut egui::Ui, path: &str, resolve: &mut ResolveState) -> Option<GitAction> {
     let mut action = None;
 
@@ -876,64 +883,104 @@ fn resolve_view(ui: &mut egui::Ui, path: &str, resolve: &mut ResolveState) -> Op
     });
     ui.add_space(SPACE_SMALL);
 
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .max_height(ui.available_height() - 90.0)
-        .show(ui, |ui| {
-            let mut block = 0;
-            for segment in &resolve.file.segments {
-                match segment {
-                    Segment::Text(text) => {
-                        if !text.trim().is_empty() {
-                            ui.label(RichText::new(text).color(DIM).monospace());
-                        }
-                    }
-                    Segment::Conflict {
-                        ours_label,
-                        theirs_label,
-                        ours,
-                        theirs,
-                    } => {
-                        conflict_block_view(
-                            ui,
-                            ours_label,
-                            theirs_label,
-                            ours,
-                            theirs,
-                            &mut resolve.choices[block],
-                        );
-                        block += 1;
-                    }
-                }
-            }
-        });
-    ui.separator();
+    // Rendered fresh every frame from the current choices, by the exact
+    // function Resolve calls below, so the right pane is always honest about
+    // what pressing Resolve would write, including for still-undecided
+    // blocks, which render as their original marker text.
+    let rendered = conflict::render(&resolve.file, &resolve.choices);
 
-    // Preview what Resolve would write, filling any undecided block with its
-    // default so the warning is useful before every choice is made, not only
-    // once Resolve is enabled.
-    let preview_choices: Vec<Choice> = resolve
-        .choices
-        .iter()
-        .map(|c| c.unwrap_or(Choice::Ours))
-        .collect();
-    let rendered = conflict::render(&resolve.file, &preview_choices);
-    if path.ends_with(".json") && apic_core::json::validate(&rendered).is_err() {
-        ui.label(
-            RichText::new(
-                "This resolution is not valid JSON. You can still resolve it and fix it in the repair editor.",
-            )
-            .color(AMBER),
+    ui.horizontal_top(|ui| {
+        let gap = ui.spacing().item_spacing.x;
+        let divider_w = 6.0;
+        let col_w = ((ui.available_width() - divider_w - gap * 2.0) / 2.0).max(0.0);
+        let col_h = (ui.available_height() - 60.0).max(0.0);
+
+        // Left pane: the picker, one block at a time.
+        ui.allocate_ui_with_layout(
+            egui::vec2(col_w, col_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |left| {
+                egui::ScrollArea::vertical()
+                    .id_salt("resolve_picker_scroll")
+                    .auto_shrink([false, false])
+                    .show(left, |ui| {
+                        let mut block = 0;
+                        for segment in &resolve.file.segments {
+                            match segment {
+                                Segment::Text(text) => {
+                                    if !text.trim().is_empty() {
+                                        ui.label(RichText::new(text).color(DIM).monospace());
+                                    }
+                                }
+                                Segment::Conflict {
+                                    ours_label,
+                                    theirs_label,
+                                    ours,
+                                    theirs,
+                                } => {
+                                    conflict_block_view(
+                                        ui,
+                                        ours_label,
+                                        theirs_label,
+                                        ours,
+                                        theirs,
+                                        &mut resolve.choices[block],
+                                    );
+                                    block += 1;
+                                }
+                            }
+                        }
+                    });
+            },
         );
-        ui.add_space(SPACE_EXTRA_SMALL);
-    }
+
+        ui.separator();
+
+        // Right pane: the live preview of what Resolve would write.
+        ui.allocate_ui_with_layout(
+            egui::vec2(col_w, col_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |right| {
+                right.label(RichText::new("PREVIEW").color(DIM).size(11.0));
+                egui::ScrollArea::vertical()
+                    .id_salt("resolve_preview_scroll")
+                    .auto_shrink([false, false])
+                    .show(right, |ui| {
+                        if path.ends_with(".json") {
+                            // A partially decided preview still carries
+                            // conflict markers and is not valid JSON;
+                            // `highlight_json` handles non-JSON text without
+                            // panicking, so this stays safe for every state.
+                            let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+                            let job = crate::ui::syntax_highlighting::highlight_json(
+                                &rendered, font_id,
+                            );
+                            ui.label(job);
+                        } else {
+                            ui.label(RichText::new(&rendered).monospace());
+                        }
+                    });
+                if path.ends_with(".json") && apic_core::json::validate(&rendered).is_err() {
+                    right.add_space(SPACE_EXTRA_SMALL);
+                    right.label(
+                        RichText::new(
+                            "This resolution is not valid JSON. You can still resolve it and fix it in the repair editor.",
+                        )
+                        .color(AMBER),
+                    );
+                }
+            },
+        );
+    });
+
+    ui.separator();
 
     let all_chosen = resolve.choices.iter().all(Option::is_some);
     ui.add_enabled_ui(all_chosen, |ui| {
         if text_button(ui, "Resolve", GREEN) {
             action = Some(GitAction::ResolveConflict {
                 path: path.to_string(),
-                text: rendered,
+                text: rendered.clone(),
             });
         }
     });
@@ -1477,12 +1524,7 @@ mod tests {
             central_body(ui, &mut state);
         });
         let resolve = state.resolve.as_ref().expect("markers must parse");
-        let choices: Vec<Choice> = resolve
-            .choices
-            .iter()
-            .map(|c| c.unwrap_or(Choice::Ours))
-            .collect();
-        let rendered = conflict::render(&resolve.file, &choices);
+        let rendered = conflict::render(&resolve.file, &resolve.choices);
         assert!(apic_core::json::validate(&rendered).is_err());
     }
 
