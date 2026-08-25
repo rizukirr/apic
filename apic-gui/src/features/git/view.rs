@@ -895,13 +895,11 @@ fn resolve_view(ui: &mut egui::Ui, path: &str, resolve: &mut ResolveState) -> Op
         .show_separator_line(false)
         .show(ui, |ui| {
             ui.separator();
-            ui.horizontal(|ui| {
-                if text_button(ui, "Take all ours", GREEN) {
-                    resolve.choices.fill(Some(Choice::Ours));
-                }
-                if text_button(ui, "Take all theirs", GREEN) {
-                    resolve.choices.fill(Some(Choice::Theirs));
-                }
+            // Right-aligned, and inserted in right_to_left order so Resolve
+            // lands rightmost and last: it is the only one of the three that
+            // writes to disk, so a stray click one button off lands on a
+            // take-all, which only fills in a choice, rather than on Resolve.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_enabled_ui(all_chosen, |ui| {
                     if text_button(ui, &resolve_label(&resolve.choices), GREEN) {
                         action = Some(GitAction::ResolveConflict {
@@ -910,6 +908,12 @@ fn resolve_view(ui: &mut egui::Ui, path: &str, resolve: &mut ResolveState) -> Op
                         });
                     }
                 });
+                if text_button(ui, "Take all theirs", GREEN) {
+                    resolve.choices.fill(Some(Choice::Theirs));
+                }
+                if text_button(ui, "Take all ours", GREEN) {
+                    resolve.choices.fill(Some(Choice::Ours));
+                }
             });
             ui.add_space(SPACE_EXTRA_SMALL);
         });
