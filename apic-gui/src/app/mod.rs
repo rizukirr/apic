@@ -26,7 +26,6 @@ use crate::features::contracts::view::{
 use crate::features::git::state::GitState;
 use crate::features::git::view;
 use crate::settings::Settings;
-use crate::ui::components::text_button;
 use crate::ui::theme::*;
 
 /// Fixed row height shared by the top bar and the sidebar tab row, so a
@@ -115,19 +114,19 @@ impl App {
                     ui.add_space(SPACE_MEDIUM); // left padding so the title isn't flush to the edge
                     ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
                     ui.add_space(SPACE_MEDIUM);
-                    if text_button(ui, "Open", GREEN) {
-                        action = Some(SidebarAction::OpenProject);
-                    }
-                    ui.add_space(2.0);
-                    if text_button(ui, "New", GREEN) {
-                        action = Some(SidebarAction::NewProject);
-                    }
-                    ui.add_space(2.0);
-                    ui.menu_button(RichText::new("Import").color(GREEN), |ui| {
-                        if ui.button("Postman collection").clicked() {
-                            action = Some(SidebarAction::ImportPostman);
-                            ui.close();
+                    egui::MenuBar::new().ui(ui, |ui| {
+                        if ui.button(RichText::new("Open").color(GREEN)).clicked() {
+                            action = Some(SidebarAction::OpenProject);
                         }
+                        if ui.button(RichText::new("New").color(GREEN)).clicked() {
+                            action = Some(SidebarAction::NewProject);
+                        }
+                        ui.menu_button(RichText::new("Import").color(GREEN), |ui| {
+                            if ui.button("Postman collection").clicked() {
+                                action = Some(SidebarAction::ImportPostman);
+                                ui.close();
+                            }
+                        });
                     });
                 });
             });
