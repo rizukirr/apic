@@ -101,7 +101,11 @@ pub(crate) struct GitState {
     /// The name typed into the create-branch dialog, if it is open.
     pub(crate) new_branch: Option<String>,
 
-    /// The name of a branch delete awaiting confirmation, if any.
+    /// The branch a delete would target, when the delete dialog is open.
+    /// Doubles as the dialog's own picker: it starts on whichever branch the
+    /// `x` button was clicked for, and changes as the user picks a different
+    /// one from the dialog's dropdown before confirming. `None` when the
+    /// dialog is closed.
     pub(crate) pending_branch_delete: Option<String>,
 
     /// The last git error, shown in the panel; empty when there is none.
