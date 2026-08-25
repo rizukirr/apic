@@ -283,17 +283,32 @@ impl App {
 /// file against the index. `git show :<path>` reads the index (stage 0),
 /// which is what an empty revision means to `service::blob`.
 fn diff_job(root: &Path, path: &str, staged: bool) -> Result<DiffData, String> {
-    let raw = service::diff_text(root, path, staged)?;
+    let mut raw = service::diff_text(root, path, staged)?;
+    let head_blob = service::blob(root, "HEAD", path)?;
+    let index_blob = service::blob(root, "", path)?;
+
+    // Untracked: absent from both the last commit and the index. `git diff`
+    // has nothing to say about a file it has never seen, so build the raw
+    // text ourselves from the working file, every line marked added. No
+    // hunk header is invented: the renderer only reads the `+` prefix, and
+    // a line number nobody computed would be a number nobody should trust.
+    if head_blob.is_none() && index_blob.is_none() {
+        raw = std::fs::read_to_string(root.join(path))
+            .map(|content| {
+                content
+                    .lines()
+                    .map(|line| format!("+{line}\n"))
+                    .collect::<String>()
+            })
+            .unwrap_or_default();
+    }
+
     let (old_blob, new_blob) = if path.ends_with(".json") {
         if staged {
-            (
-                service::blob(root, "HEAD", path)?,
-                service::blob(root, "", path)?,
-            )
+            (head_blob, index_blob)
         } else {
-            let old = service::blob(root, "", path)?;
             let new = std::fs::read_to_string(root.join(path)).ok();
-            (old, new)
+            (index_blob, new)
         }
     } else {
         (None, None)
@@ -347,6 +362,26 @@ fn scopes(root: &Path, project_root: Option<&Path>, repo_root: &Path) -> Vec<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An untracked file has no committed and no staged side, so `diff_text`
+    /// and both `blob` calls return nothing for it. The diff must still show
+    /// the file's own content rather than an empty body.
+    #[test]
+    fn diff_job_shows_content_for_an_untracked_file() {
+        if !crate::app::test_support::git_available() {
+            return;
+        }
+        let root = crate::app::test_support::project_fixture();
+        std::fs::write(root.join("contracts").join("untracked.json"), "hello\n").unwrap();
+
+        let data = diff_job(&root, "contracts/untracked.json", false).unwrap();
+
+        assert!(
+            data.raw.contains("hello"),
+            "an untracked file's diff must carry its own content, got: {:?}",
+            data.raw
+        );
+    }
 
     /// `project_root` reaches the fixture through a symlink while
     /// `repo_root` is already resolved, the same shape `git rev-parse
