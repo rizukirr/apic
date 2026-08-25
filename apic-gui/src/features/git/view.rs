@@ -887,12 +887,19 @@ fn conflict_resolver(
 ///
 /// The whole-file actions live in this header row rather than a pinned bar
 /// below the panes: the header is laid out first, at the top of the body, so
-/// nothing rendered below it can push it off screen. The buttons and the
-/// side label are reserved first, in the same right-to-left layout, and the
-/// path is rendered last, nested inside a left-to-right layout marked
-/// `.truncate()`, the pattern `file_row` uses, so a deeply nested contract
-/// path truncates instead of pushing the actions off the right edge, and the
-/// row still reads path, side, buttons like every other header.
+/// nothing rendered below it can push it off screen. The three buttons are
+/// reserved first, in a right-to-left layout, so a long path can never push
+/// them off the right edge, matching a real defect earlier in this cycle
+/// where Resolve rendered off screen and could not be clicked.
+///
+/// What remains is given to a left-aligned group holding the path then the
+/// side label, matching the non-conflicted header in `central_body`. The
+/// side label's width is measured first with `layout_no_wrap` (the same
+/// idiom `features::contracts::view` uses to size a field to its text) so
+/// the path's truncate width can be capped to leave room for it. Without
+/// that cap, a `.truncate()` label sizes itself against all remaining
+/// width, which is why the side label was pushed next to the buttons in an
+/// earlier pass of this same header.
 fn resolve_view(
     ui: &mut egui::Ui,
     path: &str,
@@ -928,11 +935,31 @@ fn resolve_view(
             if text_button(ui, "Take all ours", GREEN) {
                 resolve.choices.fill(Some(Choice::Ours));
             }
+
             let side = if staged { "staged" } else { "unstaged" };
-            ui.label(RichText::new(side).color(DIM));
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add(egui::Label::new(RichText::new(path).color(TEXT).strong()).truncate());
-            });
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let side_width = ui
+                .painter()
+                .layout_no_wrap(side.to_string(), font, egui::Color32::PLACEHOLDER)
+                .size()
+                .x;
+            let gap = ui.spacing().item_spacing.x;
+            let path_max_width = (ui.available_width() - side_width - gap).max(0.0);
+
+            let leftover = egui::vec2(ui.available_width(), ui.available_height());
+            ui.allocate_ui_with_layout(
+                leftover,
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.scope(|ui| {
+                        ui.set_max_width(path_max_width);
+                        ui.add(
+                            egui::Label::new(RichText::new(path).color(TEXT).strong()).truncate(),
+                        );
+                    });
+                    ui.label(RichText::new(side).color(DIM));
+                },
+            );
         });
     });
     ui.separator();
@@ -1690,6 +1717,41 @@ mod tests {
             "the file on disk must still carry conflict markers: {on_disk:?}"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A path long enough to need truncation must not push the header's
+    /// buttons out of reach or squeeze the side label to nothing. Nothing
+    /// here caught that before: every other resolver test uses a short
+    /// path, so a regression that hides the buttons behind a long path
+    /// would pass unnoticed. `__run_test_ui` sends no synthetic clicks, so
+    /// this checks what a click would produce (`resolve_label`, and the
+    /// text a Resolve click writes) rather than a click itself, the same
+    /// way `resolving_choices_in_the_view_never_writes_the_file_to_disk`
+    /// exercises Resolve's output without simulating the click.
+    #[test]
+    fn central_renders_the_conflict_resolver_with_a_long_path_without_panicking() {
+        let long_path = format!(
+            "contracts/{}/logout.json",
+            "deeply/nested/folder/".repeat(10)
+        );
+        let mut state = conflict_state(&long_path, CONFLICT_TEXT);
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+        let resolve = state.resolve.as_mut().expect("markers must parse");
+        assert_eq!(resolve_label(&resolve.choices), "Resolve (0/2)");
+
+        resolve.choices.fill(Some(Choice::Ours));
+        eframe::egui::__run_test_ui(|ui| {
+            central_body(ui, &mut state);
+        });
+        let resolve = state.resolve.as_ref().expect("markers must parse");
+        assert_eq!(resolve_label(&resolve.choices), "Resolve");
+        let rendered = conflict::render(&resolve.file, &resolve.choices);
+        assert!(
+            !rendered.contains("<<<<<<<"),
+            "a fully decided resolution must not still carry markers: {rendered:?}"
+        );
     }
 
     #[test]
