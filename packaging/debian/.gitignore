@@ -1,0 +1,11 @@
+# Local source-package build artifacts. The orig tarball is 86 MB and is
+# regenerated from a tag by mk-orig.sh, so none of this belongs in git.
+build/
+*.orig.tar.gz
+*.debian.tar.xz
+*.dsc
+*.changes
+*.build
+*.buildinfo
+*.upload
+*.deb
