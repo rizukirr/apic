@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
 PackageIdentifier: rizukirr.apic
-PackageVersion: 0.4.1
+PackageVersion: 0.5.0
 InstallerType: zip
 NestedInstallerType: portable
 NestedInstallerFiles:
@@ -8,7 +8,7 @@ NestedInstallerFiles:
   PortableCommandAlias: apic
 Installers:
 - Architecture: x64
-  InstallerUrl: https://github.com/rizukirr/apic/releases/download/v0.4.1/apic-v0.4.1-x86_64-pc-windows-msvc.zip
-  InstallerSha256: EF1B8A49078D1D2D9EE07A950CB547CA7AB54D32BEC458D48FDE295E5C56ECAE
+  InstallerUrl: https://github.com/rizukirr/apic/releases/download/v0.5.0/apic-v0.5.0-x86_64-pc-windows-msvc.zip
+  InstallerSha256: DEF171B59C7A0E3A58A58FF548A749CDB432E273969CFC7EEB7F57F569D09BEA
 ManifestType: installer
 ManifestVersion: 1.6.0

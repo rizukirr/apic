@@ -33,6 +33,10 @@ A feature release on top of 0.4.1. The CLI, the TUI, and the contract format are
 
 - README documents the new git panel.
 
+### Packaging
+
+- The AUR `apic-bin` PKGBUILD and `.SRCINFO`, the Copr `apic.spec`, the winget manifests for `rizukirr.apic` and `rizukirr.apic-gui`, and the Flatpak manifest and metainfo were synced to the 0.5.0 artifacts and checksums. The winget GUI ProductCode was refreshed to the value baked into the 0.5.0 MSI, since `apic-gui/wix/main.wxs` declares `Product Id='*'` and so mints a new one on every build.
+
 ## [0.4.1] - 2026-07-30
 
 A maintenance release on top of 0.4.0. No contract format changes and no new

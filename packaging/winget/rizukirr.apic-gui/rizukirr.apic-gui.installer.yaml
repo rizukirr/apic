@@ -1,11 +1,11 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
 PackageIdentifier: rizukirr.apic-gui
-PackageVersion: 0.4.1
+PackageVersion: 0.5.0
 InstallerType: wix
-ProductCode: '{652242C1-00E1-4D1B-AFD5-DA356A607D77}'
+ProductCode: '{253758B5-8B80-4A8D-B3BD-211F74235393}'
 Installers:
 - Architecture: x64
-  InstallerUrl: https://github.com/rizukirr/apic/releases/download/v0.4.1/apic-gui-v0.4.1-x86_64.msi
-  InstallerSha256: D65685AADADB89CA3ED4FBBAB14CCFBD5D72E84A3D0664848B0CC38B2CE02E89
+  InstallerUrl: https://github.com/rizukirr/apic/releases/download/v0.5.0/apic-gui-v0.5.0-x86_64.msi
+  InstallerSha256: 411437E918D7E47A08567A10060A01252DD8A3198DAD8A112C5698EEC5D2E6DD
 ManifestType: installer
 ManifestVersion: 1.6.0
