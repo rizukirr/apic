@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `eframe` and `egui_extras` moved back to 0.35, and the declared MSRV dropped to 1.92, so the workspace builds with the rustc that Ubuntu 26.04 ships, which is what makes the Launchpad PPA possible. The CLI, the TUI, and the contract format are unchanged.
+
 ## [0.5.0] - 2026-08-25
 
 A feature release on top of 0.4.1. The CLI, the TUI, and the contract format are unchanged, so existing projects need no migration. Everything new lives in the desktop GUI, which gained a git panel, and that panel is the headline: status, staging, commit, branch switching, branch creation and deletion, and merge conflict resolution, all built on top of a restructured `apic-gui` codebase.
