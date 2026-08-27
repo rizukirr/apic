@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-27
+
+A packaging release on top of 0.5.0. The CLI, the TUI, the desktop GUI, and the contract format are all unchanged, so existing projects need no migration. The work here makes apic installable from `apt` on Ubuntu, which required moving the GUI back one egui release.
+
+### Added
+
+- **Debian source package for Launchpad.** `packaging/debian/` builds `apic` and `apic-gui` as native `.deb` packages for Ubuntu 26.04 on amd64 and arm64, published through the PPA `ppa:rizukirr/apic`. Unlike the AUR and Copr packages, which ship prebuilt binaries, Launchpad compiles from source on builders with no network access, so `mk-orig.sh` vendors all 566 crate dependencies into the orig tarball and verifies the vendor tree is internally consistent before writing it. `apic-gui` now declares the `git` runtime dependency it has always needed.
+- **MSRV guard in CI.** A new `msrv` job builds and tests the workspace on the minimum supported Rust version, so a routine dependency update cannot silently push the project past what the Ubuntu archive can compile.
+
 ### Changed
 
-- `eframe` and `egui_extras` moved back to 0.35, and the declared MSRV dropped to 1.92, so the workspace builds with the rustc that Ubuntu 26.04 ships, which is what makes the Launchpad PPA possible. The CLI, the TUI, and the contract format are unchanged.
+- `eframe` and `egui_extras` moved back to 0.35, and the declared MSRV dropped from 1.97 to 1.92. `epaint 0.36.1` requires Rust 1.95, while Ubuntu 26.04 ships 1.93 as its newest archive toolchain, which put the desktop GUI out of reach of the current LTS. The downgrade needed no source change and the full test suite passes on 1.92.
 
 ## [0.5.0] - 2026-08-25
 
@@ -411,7 +420,8 @@ Initial beta release.
 - CI (fmt, clippy, build, test) and unit + end-to-end test suites.
 - MIT license.
 
-[Unreleased]: https://github.com/rizukirr/apic/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/rizukirr/apic/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/rizukirr/apic/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/rizukirr/apic/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/rizukirr/apic/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/rizukirr/apic/compare/v0.3.6...v0.4.0
