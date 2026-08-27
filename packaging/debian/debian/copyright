@@ -7,6 +7,8 @@ Files: *
 Copyright: 2026 Rizki Rakasiwi
 License: MIT
 
+# vibekit: License: various is a shortcut adequate for a PPA build, not for
+# Debian proper, which needs a per-crate licence audit of all 566 vendored crates.
 Files: vendor/*
 Copyright: the respective crate authors
 License: various

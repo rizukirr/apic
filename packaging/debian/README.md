@@ -28,14 +28,14 @@ Run from the repo root.
 1. Roll the orig tarball for the release tag:
 
    ```bash
-   packaging/debian/mk-orig.sh 0.5.0 v0.5.0
+   packaging/debian/mk-orig.sh 0.5.1 v0.5.1
    ```
 
 2. Build and sign the source package in the container, with `~/.gnupg`
    bind-mounted so `debuild` can reach the maintainer's key:
 
    ```bash
-   podman run --rm -v "$PWD/packaging/debian":/work -v "$HOME/.gnupg":/root/.gnupg -w /work/build/apic-0.5.0 ubuntu:26.04 bash -lc '
+   podman run --rm -v "$PWD/packaging/debian":/work -v "$HOME/.gnupg":/root/.gnupg -w /work/build/apic-0.5.1 ubuntu:26.04 bash -lc '
      set -e
      apt-get update >/dev/null
      DEBIAN_FRONTEND=noninteractive apt-get install -y devscripts dput >/dev/null
@@ -45,7 +45,7 @@ Run from the repo root.
 3. Upload the signed source changes file:
 
    ```bash
-   dput ppa:rizukirr/apic packaging/debian/build/apic_0.5.0-1~resolute1_source.changes
+   dput ppa:rizukirr/apic packaging/debian/build/apic_0.5.1-1~resolute1_source.changes
    ```
 
 `gpg --list-secret-keys --keyid-format=long` gives the value to substitute for
@@ -97,7 +97,9 @@ podman run --rm -v "$PWD/packaging/debian/build":/work -w /work ubuntu:26.04 bas
 
 ## Bump for a new release
 
-Edit only the `Version` in `packaging/debian/debian/changelog` (add a new
-entry at the top). No other file needs to change; `mk-orig.sh` and the
-container build steps read the version from the changelog and the tag you
-pass them.
+The version must be kept in step in two places: the new entry at the top of
+`packaging/debian/debian/changelog`, and the version argument passed to
+`mk-orig.sh`. They must match exactly. `mk-orig.sh` takes its version as a
+plain argument, it never reads the changelog, so `dpkg-buildpackage` will
+reject the source package if the tarball name and top-level directory
+disagree with the changelog version.
