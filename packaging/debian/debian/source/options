@@ -1,0 +1,3 @@
+# A stale target/ directory in the build tree would otherwise land in the
+# Debian diff, which must contain nothing but debian/.
+extend-diff-ignore = "^target/"

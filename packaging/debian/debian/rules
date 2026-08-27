@@ -1,0 +1,42 @@
+#!/usr/bin/make -f
+
+# Keep cargo's state inside the build tree, and make any accidental network
+# access fail loudly rather than silently succeed on a developer machine and
+# then fail on Launchpad, whose builders have no network at all.
+export CARGO_HOME = $(CURDIR)/debian/cargo_home
+export CARGO_NET_OFFLINE = true
+
+%:
+	dh $@
+
+# dpkg-buildpackage runs `debian/rules clean` first, and dh_clean recursively
+# deletes *.orig, *.rej and *.bak across the whole tree. That strips
+# Cargo.toml.orig from every vendored crate, and cargo then fails checksum
+# validation on the first crate it reads. -X.orig keeps them.
+override_dh_clean:
+	dh_clean -X.orig
+
+# --workspace is required: apic-gui is excluded from default-members in the
+# workspace Cargo.toml, so a bare cargo build silently skips the GUI.
+override_dh_auto_build:
+	cargo build --release --locked --offline --workspace
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	cargo test --release --locked --offline --workspace
+endif
+
+override_dh_auto_install:
+	install -Dm755 target/release/apic \
+		debian/apic/usr/bin/apic
+	install -Dm755 target/release/apic-gui \
+		debian/apic-gui/usr/bin/apic-gui
+	install -Dm644 apic-gui/dist/apic-gui.desktop \
+		debian/apic-gui/usr/share/applications/apic-gui.desktop
+	install -Dm644 apic-gui/assets/icon.png \
+		debian/apic-gui/usr/share/icons/hicolor/256x256/apps/apic-gui.png
+	install -Dm644 packaging/flatpak/io.github.rizukirr.apic.metainfo.xml \
+		debian/apic-gui/usr/share/metainfo/io.github.rizukirr.apic.metainfo.xml
+
+override_dh_auto_clean:
+	rm -rf target debian/cargo_home
