@@ -104,11 +104,10 @@ pub(crate) struct GitState {
     /// first fetch for the current selection is still in flight.
     pub(crate) diff: Option<((String, bool), DiffData)>,
 
-    /// Whether the field list (the semantic diff) is shown instead of the
-    /// default full-file view. Reset to `false` when the selection changes,
-    /// so the toggle applies to the file it was set on rather than
-    /// persisting across selections.
-    pub(crate) show_changed_fields: bool,
+    /// Whether the raw git diff is shown instead of the default field list.
+    /// Persists across selections: the panel keeps showing diffs until the
+    /// box is unchecked, rather than snapping back on every file clicked.
+    pub(crate) show_raw_diff: bool,
 
     /// The commit message box, bound to the commit row's text field. Cleared
     /// after a successful commit.
