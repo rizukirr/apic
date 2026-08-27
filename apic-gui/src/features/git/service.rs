@@ -58,13 +58,13 @@ pub(crate) fn status(root: &Path, scopes: &[&str]) -> Result<Status, String> {
     Ok(parse_status(&out, scopes))
 }
 
-/// The line diff for one path, staged or unstaged. `-U100000` asks git for
-/// the whole file as context around the change rather than a few lines of
-/// a hunk, so the panel can render the file itself with the change
-/// highlighted. Git caps the context at the file length, so the number is
-/// safe even for a one-line file.
+/// The line diff for one path, staged or unstaged. Git's default context is
+/// what the panel renders, so what comes back is a real diff with hunk
+/// headers rather than the whole file with the change tinted. The field list
+/// answers "what changed" for a contract; this is the view for everything
+/// else, and for anyone who wants the diff itself.
 pub(crate) fn diff_text(root: &Path, path: &str, staged: bool) -> Result<String, String> {
-    let mut args = vec!["diff", "--no-color", "-U100000"];
+    let mut args = vec!["diff", "--no-color"];
     if staged {
         args.push("--cached");
     }
@@ -239,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn diff_text_carries_the_unchanged_lines_around_a_one_line_change() {
+    fn diff_text_leaves_out_lines_far_from_the_change() {
         if git_missing() {
             return;
         }
@@ -247,20 +247,23 @@ mod tests {
         assert!(run(&dir, &["init"]).is_ok());
         assert!(run(&dir, &["config", "user.email", "test@example.com"]).is_ok());
         assert!(run(&dir, &["config", "user.name", "Test User"]).is_ok());
-        fs::write(dir.join("file.txt"), "first\nsecond\nthird\n").unwrap();
+        let before: String = (0..40).map(|i| format!("line{i}\n")).collect();
+        fs::write(dir.join("file.txt"), &before).unwrap();
         assert!(run(&dir, &["add", "--", "file.txt"]).is_ok());
         assert!(commit(&dir, "initial").is_ok());
 
-        fs::write(dir.join("file.txt"), "first\nCHANGED\nthird\n").unwrap();
+        let after = before.replace("line20\n", "CHANGED\n");
+        fs::write(dir.join("file.txt"), &after).unwrap();
 
         let diff = diff_text(&dir, "file.txt", false).unwrap();
-        // A hunk sized to the change alone would drop "first" and "third".
-        // `-U100000` is what keeps them in, so a future reader who drops the
-        // flag sees this test fail rather than a silently shrunken diff.
-        assert!(diff.contains("first"));
-        assert!(diff.contains("third"));
-        assert!(diff.contains("-second"));
+        // Git's default context is a few lines, so both ends of a 40-line
+        // file fall outside the hunk. A future reader who puts `-U100000`
+        // back sees this fail rather than a silently whole-file diff.
+        assert!(diff.contains("@@"));
+        assert!(diff.contains("-line20"));
         assert!(diff.contains("+CHANGED"));
+        assert!(!diff.contains("line0\n"));
+        assert!(!diff.contains("line39"));
     }
 
     #[test]

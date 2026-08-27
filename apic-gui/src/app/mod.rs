@@ -332,7 +332,6 @@ impl App {
                 self.spawn(ctx);
             }
             Action::Git(GitAction::Select { path, staged }) => {
-                self.git.show_changed_fields = false;
                 self.git.selected = Some((path.clone(), staged));
                 let cached =
                     matches!(&self.git.diff, Some((key, _)) if *key == (path.clone(), staged));
@@ -656,6 +655,32 @@ mod tests {
             index_char, b'.',
             "the index column must show a staged change, got {line:?}"
         );
+    }
+
+    #[test]
+    fn selecting_another_file_keeps_the_raw_diff_toggle() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
+        app.reload_project();
+
+        app.git.show_raw_diff = true;
+        app.apply(
+            Action::Git(GitAction::Select {
+                path: "contracts/sample.json".to_string(),
+                staged: false,
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        // The toggle is a panel mode now, not a per-file one. This is the
+        // deleted reset in `apply` pinned, and it lives here rather than in
+        // the view because the flag's lifetime is an app concern.
+        assert!(app.git.show_raw_diff);
     }
 
     /// Drives a commit through the dispatch and confirms it against the

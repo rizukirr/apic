@@ -781,7 +781,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
             ui.label(RichText::new(&path).color(TEXT).strong());
             let side = if staged { "staged" } else { "unstaged" };
             ui.label(RichText::new(side).color(DIM));
-            ui.checkbox(&mut state.show_changed_fields, "Show changed fields");
+            ui.checkbox(&mut state.show_raw_diff, "Show raw diff");
         });
         ui.separator();
     }
@@ -795,32 +795,27 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
         return conflict_resolver(ui, state, &path, staged, &raw, new_blob.as_deref());
     }
 
-    // The whole file with the change highlighted is the default: it is what
-    // someone clicking a changed file wants to see. The field list is better
-    // for a schema change buried in a large contract, so it stays reachable
-    // through the checkbox rather than being the default.
-    let semantic = if state.show_changed_fields {
-        match (
-            data.old_blob.as_deref().and_then(diff::parse),
-            data.new_blob.as_deref().and_then(diff::parse),
-        ) {
-            (Some(old), Some(new)) => Some(diff::diff_models(&old, &new)),
-            _ => None,
-        }
-    } else {
-        None
-    };
+    // The field list is the default: a changed file raises the question of
+    // what changed in it, not what it contains. Anything the field list
+    // cannot answer, a non-contract file, an untracked file, or a change
+    // that is formatting only, falls through to the diff, so no selection
+    // ever renders an empty pane and there is nothing to instruct the user
+    // out of.
+    let semantic = (!state.show_raw_diff)
+        .then(|| {
+            match (
+                data.old_blob.as_deref().and_then(diff::parse),
+                data.new_blob.as_deref().and_then(diff::parse),
+            ) {
+                (Some(old), Some(new)) => Some(diff::diff_models(&old, &new)),
+                _ => None,
+            }
+        })
+        .flatten()
+        .filter(|changes| !changes.is_empty());
 
     match semantic {
-        Some(changes) if !changes.is_empty() => semantic_diff_view(ui, &changes),
-        Some(_) => {
-            ui.label(RichText::new("No semantic changes (formatting only).").color(DIM));
-            ui.add_space(SPACE_SMALL);
-            ui.label(
-                RichText::new("Uncheck \"Show changed fields\" above to see the full file.")
-                    .color(DIM),
-            );
-        }
+        Some(changes) => semantic_diff_view(ui, &changes),
         None => raw_diff_view(ui, &data.raw),
     }
     None
@@ -1238,40 +1233,43 @@ fn multiline_change_view(ui: &mut egui::Ui, change: &FieldChange) {
     }
 }
 
-/// Drops the `diff --git`, `index`, `---`, `+++` and `@@` header lines,
-/// leaving the file content the diff carries: everything after and
-/// including the first `@@` line is plumbing, not content. The
-/// untracked-file path synthesises `+` lines with no header at all, so a
-/// diff with no `@@` line is returned unchanged rather than assuming a
-/// header is always there.
+/// Drops the `diff --git`, `index`, `---` and `+++` preamble, keeping the
+/// hunks themselves: the first `@@` line is where the diff proper starts, so
+/// everything from there on is returned. The untracked-file path synthesises
+/// `+` lines with no header at all, so a body with no `@@` line is returned
+/// unchanged rather than assuming a header is always there.
 fn strip_diff_header(raw: &str) -> &str {
     let mut consumed = 0;
     for line in raw.lines() {
-        consumed += line.len() + 1;
         if line.starts_with("@@") {
             return raw.get(consumed..).unwrap_or("");
         }
+        consumed += line.len() + 1;
     }
     raw
 }
 
-/// Renders a diff body (header already stripped) as the file itself: each
-/// line's one-character marker, ` ` for context, `+` for added, `-` for
-/// removed, picks the colour and is then dropped, so what remains is the
-/// file's own text at its own indentation. Scrolls inside its own area, a
-/// full file is longer than a hunk ever was.
+/// Renders a diff body the way git prints it: markers kept, `+` green, `-`
+/// red, and each `@@` hunk header in cyan, which is the colour git itself
+/// uses for them. Keeping the marker is what makes a multi-hunk diff
+/// readable, and it is why the header lines have to survive the stripper
+/// rather than being eaten a character at a time. Scrolls inside its own
+/// area.
 fn raw_diff_view(ui: &mut egui::Ui, raw: &str) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             for line in strip_diff_header(raw).lines() {
-                let mut chars = line.chars();
-                let color = match chars.next() {
-                    Some('+') => GREEN,
-                    Some('-') => RED,
-                    _ => TEXT,
+                let color = if line.starts_with("@@") {
+                    CYAN
+                } else if line.starts_with('+') {
+                    GREEN
+                } else if line.starts_with('-') {
+                    RED
+                } else {
+                    TEXT
                 };
-                ui.label(RichText::new(chars.as_str()).color(color).monospace());
+                ui.label(RichText::new(line).color(color).monospace());
             }
         });
 }
@@ -1487,16 +1485,13 @@ mod tests {
                 new_blob: Some(CONTRACT_POST.into()),
             },
         );
-        // The field list is behind the toggle now, not the default, so it
-        // has to be switched on to exercise this path.
-        state.show_changed_fields = true;
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });
     }
 
     #[test]
-    fn central_renders_the_full_file_by_default_for_a_changed_contract() {
+    fn central_renders_the_field_list_by_default_for_a_changed_contract() {
         let mut state = state_with_diff(
             "contracts/login.json",
             true,
@@ -1506,7 +1501,7 @@ mod tests {
                 new_blob: Some(CONTRACT_POST.into()),
             },
         );
-        assert!(!state.show_changed_fields);
+        assert!(!state.show_raw_diff);
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });
@@ -1529,7 +1524,7 @@ mod tests {
     }
 
     #[test]
-    fn central_reports_a_reformatting_only_change_and_offers_the_full_file_view() {
+    fn central_falls_back_to_the_diff_for_a_reformatting_only_change() {
         let old = diff::parse(CONTRACT_GET).expect("valid contract");
         let new = diff::parse(CONTRACT_GET_REFORMATTED).expect("valid contract");
         assert!(diff::diff_models(&old, &new).is_empty());
@@ -1543,25 +1538,28 @@ mod tests {
                 new_blob: Some(CONTRACT_GET_REFORMATTED.into()),
             },
         );
-        state.show_changed_fields = true;
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });
     }
 
     #[test]
-    fn strip_diff_header_drops_everything_through_the_first_hunk_marker() {
+    fn strip_diff_header_drops_the_preamble_and_keeps_the_first_hunk_marker() {
         let raw = "diff --git a/contracts/login.json b/contracts/login.json\nindex 2a4e428..5d3ef15 100644\n--- a/contracts/login.json\n+++ b/contracts/login.json\n@@ -1,3 +1,3 @@\n {\n-    \"name\": \"user-login\",\n+    \"name\": \"login-v2\",\n }\n";
         let body = strip_diff_header(raw);
         assert!(!body.contains("diff --git"));
         assert!(!body.contains("index "));
-        assert!(!body.contains("---"));
-        assert!(!body.contains("+++"));
-        assert!(!body.contains("@@"));
-        assert_eq!(
-            body,
-            " {\n-    \"name\": \"user-login\",\n+    \"name\": \"login-v2\",\n }\n"
-        );
+        assert!(body.starts_with("@@ -1,3 +1,3 @@\n"));
+    }
+
+    #[test]
+    fn strip_diff_header_keeps_every_hunk_marker() {
+        // Hunk-sized output has more than one `@@` line. A stripper that
+        // returned everything after the *first* one would leave the rest in
+        // the body for the renderer to print with its first character eaten.
+        let raw = "diff --git a/f b/f\nindex 1111111..2222222 100644\n--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n@@ -30,3 +30,3 @@\n c\n-d\n+D\n";
+        let body = strip_diff_header(raw);
+        assert_eq!(body.matches("@@ -").count(), 2);
     }
 
     #[test]
