@@ -1,5 +1,5 @@
 Name:           apic-cli
-Version:        0.5.0
+Version:        0.5.1
 Release:        1%{?dist}
 Summary:        Git-friendly API contracts, CLI/TUI (prebuilt)
 License:        MIT
@@ -67,6 +67,12 @@ cp -p %{SOURCE4} %{_builddir}/LICENSE
 %{_datadir}/icons/hicolor/256x256/apps/apic-gui.png
 
 %changelog
+* Thu Aug 27 2026 Rizki Rakasiwi <rizkirr.xyz@gmail.com> - 0.5.1-1
+- Packaging release. The desktop GUI moves back to eframe/egui 0.35 and the
+  minimum supported Rust version drops to 1.92, so the GUI builds on the current
+  Ubuntu LTS. The git panel now opens a changed contract on its field list, with
+  git's raw diff behind a toggle. The CLI and the contract format are unchanged.
+
 * Wed Aug 26 2026 Rizki Rakasiwi <rizkirr.xyz@gmail.com> - 0.5.0-1
 - Feature release. The desktop GUI gains a git panel with status, staging,
   commit, branch switching and creation and deletion, and merge conflict

@@ -5,10 +5,10 @@
 # vendored into the tarball and .cargo/config.toml is extended to point cargo
 # at it.
 #
-# Run from anywhere in the repo: packaging/debian/mk-orig.sh 0.5.0 [git-ref]
+# Run from anywhere in the repo: packaging/debian/mk-orig.sh 0.5.1 [git-ref]
 set -euo pipefail
 
-ver="${1:?usage: mk-orig.sh <version> [git-ref], e.g. mk-orig.sh 0.5.0 v0.5.0}"
+ver="${1:?usage: mk-orig.sh <version> [git-ref], e.g. mk-orig.sh 0.5.1 v0.5.1}"
 # The ref defaults to HEAD so the packaging can be verified before a release is
 # tagged. A real upload must name the release tag that it ships.
 ref="${2:-HEAD}"

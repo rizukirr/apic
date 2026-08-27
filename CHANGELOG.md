@@ -25,6 +25,10 @@ A packaging release on top of 0.5.0, plus one change to how the git panel presen
 
 - The git panel's diff renderer kept only the first hunk header and printed every later one a character short. It now keeps the markers git emits and colors each `@@` header, so a diff touching two places in a file reads correctly.
 
+### Packaging
+
+- The AUR `apic-bin` PKGBUILD and `.SRCINFO`, the Copr `apic.spec`, the winget manifests for `rizukirr.apic` and `rizukirr.apic-gui`, and the Flatpak manifest and metainfo were synced to the 0.5.1 artifacts and checksums. The winget GUI ProductCode was refreshed to the value baked into the 0.5.1 MSI, since `apic-gui/wix/main.wxs` declares `Product Id='*'` and so mints a new one on every build. The Launchpad source package gained a `0.5.1-1~resolute1` changelog entry.
+
 ## [0.5.0] - 2026-08-25
 
 A feature release on top of 0.4.1. The CLI, the TUI, and the contract format are unchanged, so existing projects need no migration. Everything new lives in the desktop GUI, which gained a git panel, and that panel is the headline: status, staging, commit, branch switching, branch creation and deletion, and merge conflict resolution, all built on top of a restructured `apic-gui` codebase.

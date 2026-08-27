@@ -52,10 +52,10 @@ Run from the repo root.
 `$GPG_KEY_ID`. After the upload, confirm on the Launchpad build dashboard that
 both the `amd64` and `arm64` builds reach a successful state.
 
-**Upload status:** the first upload to `ppa:rizukirr/apic` is blocked until an
-upstream `0.5.1` release exists. Tag `v0.5.0` declares `eframe 0.36` and
-`rust-version 1.97`, which cannot build on Ubuntu 26.04. `0.5.1` must contain
-the `eframe 0.35` downgrade before a source package is produced.
+**Upload status:** unblocked. Tag `v0.5.0` declared `eframe 0.36` and
+`rust-version 1.97`, which cannot build on Ubuntu 26.04. Tag `v0.5.1` carries
+the `eframe 0.35` downgrade and `rust-version 1.92`, so it is the first tag a
+source package can be produced from.
 
 ## Local test commands (no publish)
 
@@ -64,8 +64,8 @@ Confirm the payload before every release.
 ```bash
 # 1. List the files each .deb installs.
 podman run --rm -v "$PWD/packaging/debian/build":/work -w /work ubuntu:26.04 bash -lc '
-  dpkg -c apic_0.5.0-1~resolute1_amd64.deb
-  dpkg -c apic-gui_0.5.0-1~resolute1_amd64.deb'
+  dpkg -c apic_0.5.1-1~resolute1_amd64.deb
+  dpkg -c apic-gui_0.5.1-1~resolute1_amd64.deb'
 
 # 2. Run lintian and record every tag it reports.
 podman run --rm -v "$PWD/packaging/debian/build":/work -w /work ubuntu:26.04 bash -lc '
@@ -77,7 +77,7 @@ podman run --rm -v "$PWD/packaging/debian/build":/work -w /work ubuntu:26.04 bas
 podman run --rm -v "$PWD/packaging/debian/build":/work -w /work ubuntu:26.04 bash -lc '
   set -e
   apt-get update >/dev/null
-  DEBIAN_FRONTEND=noninteractive apt-get install -y ./apic_0.5.0-1~resolute1_amd64.deb ./apic-gui_0.5.0-1~resolute1_amd64.deb desktop-file-utils >/dev/null
+  DEBIAN_FRONTEND=noninteractive apt-get install -y ./apic_0.5.1-1~resolute1_amd64.deb ./apic-gui_0.5.1-1~resolute1_amd64.deb desktop-file-utils >/dev/null
   apic --version
   desktop-file-validate /usr/share/applications/apic-gui.desktop
   ldd /usr/bin/apic-gui | grep "not found" && exit 1 || true'
