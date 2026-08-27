@@ -1,0 +1,5 @@
+apic (0.5.0-1~resolute1) resolute; urgency=medium
+
+  * Initial PPA release for Ubuntu 26.04.
+
+ -- Rizki Rakasiwi <rizkirr.xyz@gmail.com>  Wed, 26 Aug 2026 18:36:43 +0700

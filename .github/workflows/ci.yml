@@ -69,3 +69,33 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --verbose
+
+  msrv:
+    name: MSRV (rust 1.92)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The Launchpad PPA builds on Ubuntu 26.04, whose newest archive rustc is
+      # 1.93, and eframe 0.35 declares a 1.92 floor. This job pins the declared MSRV so a routine `cargo update` cannot
+      # silently push the workspace past what the PPA can compile.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.92"
+
+      - name: Install GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb1-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxrandr-dev libxi-dev libgl1-mesa-dev libegl1-mesa-dev
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --workspace --locked
+
+      - name: Test
+        run: cargo test --workspace --locked

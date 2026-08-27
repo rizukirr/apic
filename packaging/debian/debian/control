@@ -1,0 +1,44 @@
+Source: apic
+Section: devel
+Priority: optional
+Maintainer: Rizki Rakasiwi <rizkirr.xyz@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               cargo (>= 1.92),
+               rustc (>= 1.92),
+               pkg-config,
+               git,
+               libxkbcommon-dev,
+               libwayland-dev,
+               libxcb1-dev,
+               libxcb-render0-dev,
+               libxcb-shape0-dev,
+               libxcb-xfixes0-dev,
+               libxrandr-dev,
+               libxi-dev,
+               libgl1-mesa-dev,
+               libegl1-mesa-dev
+Standards-Version: 4.7.0
+Homepage: https://github.com/rizukirr/apic
+Rules-Requires-Root: no
+
+Package: apic
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Git-friendly API contracts, command line and terminal UI
+ apic stores API contracts as plain JSON in your repository, diffable and
+ reviewable like code rather than locked inside a hosted tool.
+ .
+ This package provides the apic command line tool and its terminal UI.
+
+Package: apic-gui
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, git, hicolor-icon-theme
+Recommends: xdg-desktop-portal
+Description: Git-friendly API contracts, desktop GUI
+ apic stores API contracts as plain JSON in your repository, diffable and
+ reviewable like code rather than locked inside a hosted tool.
+ .
+ This package provides the desktop GUI, which shares the same contract engine
+ as the command line tool. Open a project folder to browse, edit or repair
+ contracts, and use the built in git panel to stage, commit, switch branches
+ and resolve merge conflicts.
