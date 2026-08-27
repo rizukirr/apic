@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.1] - 2026-08-27
 
-A packaging release on top of 0.5.0. The CLI, the TUI, the desktop GUI, and the contract format are all unchanged, so existing projects need no migration. The work here makes apic installable from `apt` on Ubuntu, which required moving the GUI back one egui release.
+A packaging release on top of 0.5.0, plus one change to how the git panel presents a diff. The CLI, the TUI, and the contract format are unchanged, so existing projects need no migration. The packaging work makes apic installable from `apt` on Ubuntu, which required moving the GUI back one egui release.
 
 ### Added
 
@@ -19,6 +19,11 @@ A packaging release on top of 0.5.0. The CLI, the TUI, the desktop GUI, and the 
 ### Changed
 
 - `eframe` and `egui_extras` moved back to 0.35, and the declared MSRV dropped from 1.97 to 1.92. `epaint 0.36.1` requires Rust 1.95, while Ubuntu 26.04 ships 1.93 as its newest archive toolchain, which put the desktop GUI out of reach of the current LTS. The downgrade needed no source change and the full test suite passes on 1.92.
+- **The git panel opens a changed contract on its field list**, rather than on the whole file with the changed lines tinted. The checkbox that used to read `Show changed fields` now reads `Show raw diff` and gives git's own output, with hunk headers and `+`/`-` markers, instead of the entire file. It stays where you put it when you click a different file, rather than resetting each time. Anything the field list cannot describe, a non-contract file, an untracked file, or a change that is only formatting, falls through to the diff, so a selection never lands on an empty pane.
+
+### Fixed
+
+- The git panel's diff renderer kept only the first hunk header and printed every later one a character short. It now keeps the markers git emits and colors each `@@` header, so a diff touching two places in a file reads correctly.
 
 ## [0.5.0] - 2026-08-25
 
