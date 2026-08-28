@@ -13,7 +13,7 @@ A packaging release on top of 0.5.0, plus one change to how the git panel presen
 
 ### Added
 
-- **Debian source package for Launchpad.** `packaging/debian/` builds `apic` and `apic-gui` as native `.deb` packages for Ubuntu 26.04 on amd64 and arm64, published through the PPA `ppa:rizukirr/apic`. Unlike the AUR and Copr packages, which ship prebuilt binaries, Launchpad compiles from source on builders with no network access, so `mk-orig.sh` vendors all 566 crate dependencies into the orig tarball and verifies the vendor tree is internally consistent before writing it. `apic-gui` now declares the `git` runtime dependency it has always needed.
+- **Debian source package for Launchpad.** `packaging/debian/` builds `apic` and `apic-gui` as native `.deb` packages for Ubuntu 26.04 on amd64 and arm64, published through the PPA `ppa:rizukirr/apic`. Unlike the AUR and Copr packages, which ship prebuilt binaries, Launchpad compiles from source on builders with no network access, so `release.sh` vendors all 566 crate dependencies into the orig tarball and verifies the vendor tree is internally consistent before writing it. `apic-gui` now declares the `git` runtime dependency it has always needed.
 - **MSRV guard in CI.** A new `msrv` job builds and tests the workspace on the minimum supported Rust version, so a routine dependency update cannot silently push the project past what the Ubuntu archive can compile.
 
 ### Changed

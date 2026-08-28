@@ -23,34 +23,48 @@ sudo pacman -S --needed podman
 
 ## Release steps
 
-Run from the repo root.
+Everything is one script. It reads the version from
+`packaging/debian/debian/changelog`, so nothing is passed in and the tarball,
+the build directory and the `.changes` file cannot drift apart. Run from
+anywhere in the repo:
 
-1. Roll the orig tarball for the release tag:
+```bash
+packaging/debian/release.sh          # builds the tag matching the changelog
+packaging/debian/release.sh HEAD     # dry run against the working tree
+```
 
-   ```bash
-   packaging/debian/mk-orig.sh 0.5.1 v0.5.1
-   ```
+It rolls the vendored orig tarball, copies `debian/` into the build tree,
+builds and signs the source package inside a throwaway `ubuntu:26.04` podman
+container with `~/.gnupg` bind-mounted, then prompts before running `dput`.
+Answering anything but `y` leaves the signed `.changes` in
+`packaging/debian/build/` to upload by hand later:
 
-2. Build and sign the source package in the container, with `~/.gnupg`
-   bind-mounted so `debuild` can reach the maintainer's key:
+```bash
+dput ppa:rizukirr/apic packaging/debian/build/apic_0.5.1-1~resolute1_source.changes
+```
 
-   ```bash
-   podman run --rm -v "$PWD/packaging/debian":/work -v "$HOME/.gnupg":/root/.gnupg -w /work/build/apic-0.5.1 ubuntu:26.04 bash -lc '
-     set -e
-     apt-get update >/dev/null
-     DEBIAN_FRONTEND=noninteractive apt-get install -y devscripts dput >/dev/null
-     debuild -S -sa -k"$GPG_KEY_ID"'
-   ```
+The `ppa:` shortcut needs dput-ng. Classic `dput` 1.x cannot expand it and
+needs a matching stanza in `~/.dput.cf` instead.
 
-3. Upload the signed source changes file:
+Signing uses the fingerprint registered on
+`launchpad.net/~rizukirr/+editpgpkeys`, hardcoded in the script and overridable
+with `GPG_KEY_ID=...`. `gpg --list-secret-keys --keyid-format=long` prints it.
+After the upload, confirm on the Launchpad build dashboard that both the
+`amd64` and `arm64` builds reach a successful state.
 
-   ```bash
-   dput ppa:rizukirr/apic packaging/debian/build/apic_0.5.1-1~resolute1_source.changes
-   ```
+### The orig tarball is immutable
 
-`gpg --list-secret-keys --keyid-format=long` gives the value to substitute for
-`$GPG_KEY_ID`. After the upload, confirm on the Launchpad build dashboard that
-both the `amd64` and `arm64` builds reach a successful state.
+Once Launchpad accepts an upstream version, every later Debian revision must
+reference the exact same tarball bytes. A re-vendored tree is not byte
+reproducible, so regenerating it is rejected with `orig.tar.gz already exists
+... but uploaded version has different contents`.
+
+`release.sh` handles this from the changelog revision. Revision `-1` builds the
+tarball from the tag and passes `-sa`. Revision `-2` and later reuse
+`packaging/debian/apic_<version>.orig.tar.gz` as the source tree and pass
+`-sd`, and the script stops with an error if that file is absent. Do not delete
+an accepted tarball, and if it is gone, download the exact accepted one from
+Launchpad rather than rebuilding it.
 
 **Upload status:** unblocked. Tag `v0.5.0` declared `eframe 0.36` and
 `rust-version 1.97`, which cannot build on Ubuntu 26.04. Tag `v0.5.1` carries
@@ -97,9 +111,12 @@ podman run --rm -v "$PWD/packaging/debian/build":/work -w /work ubuntu:26.04 bas
 
 ## Bump for a new release
 
-The version must be kept in step in two places: the new entry at the top of
-`packaging/debian/debian/changelog`, and the version argument passed to
-`mk-orig.sh`. They must match exactly. `mk-orig.sh` takes its version as a
-plain argument, it never reads the changelog, so `dpkg-buildpackage` will
-reject the source package if the tarball name and top-level directory
-disagree with the changelog version.
+Add the new entry at the top of `packaging/debian/debian/changelog` and run
+`release.sh`. That is the whole procedure: the version lives in the changelog
+only, and the script derives the tarball name, the build directory, the git
+tag it archives (`v<upstream version>`, override by passing a ref) and the
+`.changes` filename from it.
+
+Bumping only the Debian revision, a packaging fix with no upstream change,
+requires the accepted orig tarball to still be present, see **The orig tarball
+is immutable** above.
