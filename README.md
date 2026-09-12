@@ -12,7 +12,7 @@ CLI, TUI, and desktop GUI, all over one shared core (`apic-core`), so every inte
 > - Distribution
 >   - ~Aur~
 >   - ~Copr~
->   - Launchpad
+>   - ~Launchpad~
 >   - ~Flatpak~
 >   - ~Winget~
 >   - Homebrew
