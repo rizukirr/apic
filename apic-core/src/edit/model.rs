@@ -195,7 +195,9 @@ fn parts_out(parts: &[EditPart]) -> Value {
             .map(|p| {
                 let mut m = serde_json::Map::new();
                 m.insert("name".into(), Value::String(p.name.clone()));
-                m.insert("value".into(), Value::String(p.value.clone()));
+                if let Some(v) = str_opt(&p.value) {
+                    m.insert("value".into(), Value::String(v.to_string()));
+                }
                 m.insert("required".into(), Value::Bool(p.required));
                 if let Some(f) = str_opt(&p.filename) {
                     m.insert("filename".into(), Value::String(f.to_string()));
@@ -513,5 +515,27 @@ mod tests {
             crate::json::validate(&out)
                 .unwrap_or_else(|e| panic!("{} no longer validates: {e}", path.display()));
         }
+    }
+
+    #[test]
+    fn a_file_part_is_written_without_an_empty_value() {
+        // A file part has no text value, and writing `"value": ""` puts a
+        // field in the file that means nothing and reads as if the part had
+        // an empty text value.
+        let contract = r#"{
+            "name": "x", "method": "POST", "url": "https://h", "headers": [],
+            "multipart": [{ "name": "avatar", "filename": "a.png", "required": true }],
+            "responses": []
+        }"#;
+        let model =
+            EditModel::from_contract(crate::json::json_get(contract, None).expect("parses"));
+        let out = model.to_json().expect("serializes");
+        assert!(!out.contains("\"value\""), "empty value was written: {out}");
+
+        // The part itself still has to survive the omission.
+        let back = crate::json::json_get(&out, None).expect("reparses");
+        let parts = back.multipart.expect("parts survived");
+        assert_eq!(parts[0].filename.as_deref(), Some("a.png"));
+        assert!(parts[0].required);
     }
 }
