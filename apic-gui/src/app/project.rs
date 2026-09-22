@@ -140,7 +140,7 @@ impl App {
         let path = entry.path.clone();
         let loaded = apic_core::file::read_file(&path)
             .map_err(|e| e.to_string())
-            .and_then(|t| apic_core::json::json_get(&t, None).map_err(|e| e.to_string()))
+            .and_then(|t| apic_core::json::load_for_edit(&t))
             .map(EditModel::from_contract);
         match loaded {
             Ok(model) => {

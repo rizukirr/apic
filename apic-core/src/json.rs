@@ -288,6 +288,21 @@ pub fn json_get(json: &str, status: Option<u16>) -> Result<JsonContent, serde_js
     Ok(json_content)
 }
 
+/// Reads a contract for editing: validates first, then parses.
+///
+/// `json_get` alone parses without the semantic checks `validate` adds, so a
+/// document that parses but declares two bodies would reach an editor and
+/// fail only at save. Every front end that loads a contract into `EditModel`
+/// goes through this.
+///
+/// # Errors
+///
+/// Returns the validation message, or the parse error as text.
+pub fn load_for_edit(json: &str) -> Result<JsonContent, String> {
+    validate(json)?;
+    json_get(json, None).map_err(|err| err.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -568,5 +583,19 @@ mod tests {
         let parsed = json_get(CONTRACT, None).expect("parses");
         let out = serde_json::to_string(&parsed).expect("serializes");
         assert!(!out.contains("multipart"), "unexpected key in: {out}");
+    }
+
+    #[test]
+    fn load_for_edit_refuses_a_contract_that_parses_but_declares_two_bodies() {
+        let two_bodies = r#"{
+            "name": "x", "method": "POST", "url": "https://h", "headers": [],
+            "request": { "a": 1 },
+            "multipart": [ { "name": "f", "filename": "f.txt" } ],
+            "responses": []
+        }"#;
+        // It parses, which is exactly why `json_get` alone is not enough here.
+        assert!(json_get(two_bodies, None).is_ok());
+        assert!(load_for_edit(two_bodies).is_err());
+        assert!(load_for_edit(CONTRACT).is_ok());
     }
 }
