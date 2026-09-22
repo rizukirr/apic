@@ -124,11 +124,15 @@ impl Printer {
                     kind.to_string(),
                     value.to_string(),
                     p.content_type.as_deref().unwrap_or("").to_string(),
+                    p.description.as_deref().unwrap_or("").to_string(),
                     p.required.to_string(),
                 ]
             })
             .collect();
-        self.table(Some(&["PART", "KIND", "VALUE", "TYPE", "REQUIRED"]), &rows);
+        self.table(
+            Some(&["name", "kind", "value", "type", "description", "required"]),
+            &rows,
+        );
     }
 
     /// Prints a dim `(none)` placeholder for an empty section, mirroring the
