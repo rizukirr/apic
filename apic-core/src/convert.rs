@@ -140,6 +140,9 @@ fn build_contract(raw: RawRequest) -> JsonContent {
             description: status,
             headers: Vec::new(),
             schema: body_example(body.as_deref()),
+            // Postman `formdata` import is a later stage. Until then every
+            // converted response carries a JSON body or none.
+            multipart: None,
         })
         .collect();
 
@@ -152,6 +155,7 @@ fn build_contract(raw: RawRequest) -> JsonContent {
         query,
         headers,
         request,
+        multipart: None,
         responses,
     }
 }
