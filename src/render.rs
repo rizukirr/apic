@@ -109,8 +109,8 @@ impl Printer {
     /// derived from `filename` rather than read from a stored field, which is
     /// why a part cannot claim to be text while naming a file.
     ///
-    /// Every cell goes through `sanitize`: unlike `example`, which is escaped
-    /// by `serde_json`, these strings reach the terminal as themselves.
+    /// Cells go in raw: `table` strips control characters from every cell it
+    /// prints, so an escape sequence in a part name cannot reach the terminal.
     fn parts(&self, parts: &[Part]) {
         let rows: Vec<Vec<String>> = parts
             .iter()
@@ -120,10 +120,10 @@ impl Printer {
                     None => ("text", p.value.as_str()),
                 };
                 vec![
-                    sanitize(&p.name),
+                    p.name.clone(),
                     kind.to_string(),
-                    sanitize(value),
-                    sanitize(p.content_type.as_deref().unwrap_or("")),
+                    value.to_string(),
+                    p.content_type.as_deref().unwrap_or("").to_string(),
                     p.required.to_string(),
                 ]
             })
@@ -288,12 +288,5 @@ mod tests {
         let parts = parsed.multipart.expect("parts");
         assert_eq!(parts[0].filename.as_deref(), Some("photo.png"));
         assert!(parts[1].filename.is_none());
-    }
-
-    #[test]
-    fn part_strings_are_stripped_of_control_characters() {
-        // Regression: a part name or value is untrusted contract text printed
-        // as itself, with no serde_json escaping in the way.
-        assert!(!sanitize("av\x1b[31matar").contains('\x1b'));
     }
 }
