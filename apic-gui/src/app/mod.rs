@@ -824,6 +824,53 @@ mod tests {
         );
     }
 
+    /// A contract that parses but fails validation, such as one declaring
+    /// both a JSON body and a multipart body, must be refused by `load`
+    /// rather than silently accepted.
+    #[test]
+    fn loading_a_contract_that_declares_two_bodies_is_refused() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        // Parses, but fails validation: `json_get` accepts this document and
+        // `load_for_edit` does not, which is the whole reason that helper
+        // exists. Written into the fixture's working dir so `reload_project`
+        // lists it alongside `sample.json`.
+        std::fs::write(
+            root.join("contracts").join("twobodies.json"),
+            r#"{
+                "name": "x", "method": "POST", "url": "https://h", "headers": [],
+                "request": { "a": 1 },
+                "multipart": [ { "name": "f", "filename": "f.txt" } ],
+                "responses": []
+            }"#,
+        )
+        .expect("fixture file writes");
+
+        let mut app = app_at(root.clone());
+        app.reload_project();
+        let i = app
+            .contracts
+            .entries
+            .iter()
+            .position(|e| e.rel == "twobodies.json")
+            .expect("twobodies.json is listed");
+        app.load(i);
+
+        // The status assertion is what proves the Err arm ran. `model` starts
+        // as `None`, so on its own it would also pass if `load` did nothing.
+        assert!(
+            app.shell.status.contains("load error"),
+            "the refusal must be reported, got: {}",
+            app.shell.status
+        );
+        assert!(
+            app.contracts.model.is_none(),
+            "an invalid contract must not reach the editor"
+        );
+    }
+
     /// A switch to a branch that still has the open contract reopens it, so
     /// the body shows the new branch's version rather than a stale one.
     #[test]
