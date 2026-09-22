@@ -251,15 +251,24 @@ pub fn scan_json_file(root: &Path, is_absolute: bool) -> Option<Vec<PathBuf>> {
 /// Returns the parse error (with line/column) when the document does not
 /// conform to the contract schema, or a message naming the offending request or
 /// response when a JSON body and a multipart body are both set.
+/// Whether a `multipart` field declares an actual body. An empty array
+/// declares nothing, exactly as an absent key does, which is also how
+/// `EditModel::to_json` writes it back: it omits the key when there are no
+/// parts. `validate` has to agree, or a contract is rejected for a body it
+/// does not have.
+fn declares_parts(multipart: &Option<Vec<Part>>) -> bool {
+    multipart.as_ref().is_some_and(|parts| !parts.is_empty())
+}
+
 pub fn validate(json: &str) -> Result<(), String> {
     let contract: JsonContent = serde_json::from_str(json).map_err(|err| err.to_string())?;
-    if contract.request.is_some() && contract.multipart.is_some() {
+    if contract.request.is_some() && declares_parts(&contract.multipart) {
         return Err(
             "request sets both `request` and `multipart`: a request carries one body".to_string(),
         );
     }
     for response in &contract.responses {
-        if response.schema.is_some() && response.multipart.is_some() {
+        if response.schema.is_some() && declares_parts(&response.multipart) {
             return Err(format!(
                 "response {} sets both `schema` and `multipart`: a response carries one body",
                 response.code
@@ -283,6 +292,20 @@ pub fn json_get(json: &str, status: Option<u16>) -> Result<JsonContent, serde_js
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn an_empty_multipart_array_does_not_count_as_a_second_body() {
+        // An empty array declares nothing, and `to_json` omits the key when a
+        // model has no parts, so `validate` has to agree or a file is rejected
+        // for a body it does not have.
+        let contract = r#"{
+            "name": "x", "method": "POST", "url": "https://h", "headers": [],
+            "request": { "a": 1 },
+            "multipart": [],
+            "responses": [ { "code": 200, "description": "ok", "schema": { "b": 2 }, "multipart": [] } ]
+        }"#;
+        assert!(validate(contract).is_ok());
+    }
 
     #[test]
     fn pretty_json_indents_with_four_spaces() {
