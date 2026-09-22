@@ -202,6 +202,7 @@ fn diff_responses(out: &mut Vec<FieldChange>, old: &[EditResponse], new: &[EditR
         description: String::new(),
         headers: Vec::new(),
         example: String::new(),
+        multipart: Vec::new(),
     };
     for code in union_keys(&old, &new) {
         let o = old.get(code).copied().unwrap_or(&empty);

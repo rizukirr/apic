@@ -16,6 +16,7 @@ pub struct EditModel {
     pub query: Vec<EditQuery>,
     pub headers: Vec<EditHeader>,
     pub request: Option<EditBody>,
+    pub multipart: Vec<EditPart>, // empty => no multipart body
     pub responses: Vec<EditResponse>,
 }
 
@@ -35,6 +36,16 @@ pub struct EditQuery {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct EditPart {
+    pub name: String,
+    pub value: String,
+    pub filename: String, // empty => None, and a file part is one with a filename
+    pub content_type: String, // empty => None
+    pub description: String, // empty => None
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct EditBody {
     pub example: String, // raw JSON text; empty => None
 }
@@ -44,7 +55,8 @@ pub struct EditResponse {
     pub code: String, // numeric text; parsed to u16 on save
     pub description: String,
     pub headers: Vec<EditHeader>,
-    pub example: String, // raw JSON text; empty => None
+    pub example: String,          // raw JSON text; empty => None
+    pub multipart: Vec<EditPart>, // empty => no multipart body
 }
 
 impl EditBody {
@@ -64,11 +76,12 @@ impl EditResponse {
             description: String::new(),
             headers: Vec::new(),
             example: String::new(),
+            multipart: Vec::new(),
         }
     }
 }
 
-use crate::json::{Header, JsonContent, Query, Response};
+use crate::json::{Header, JsonContent, Part, Query, Response};
 use serde_json::Value;
 
 /// Pretty-prints a JSON example value to raw text (4-space indent), or empty
@@ -82,6 +95,23 @@ fn example_to_text(value: Option<&Value>) -> String {
 
 fn opt_to_string(opt: Option<String>) -> String {
     opt.unwrap_or_default()
+}
+
+/// Lifts contract parts into their editable form, mapping absent optional
+/// strings to empty buffers the way `opt_to_string` does for every other
+/// optional field on the model.
+fn parts_in(parts: Vec<Part>) -> Vec<EditPart> {
+    parts
+        .into_iter()
+        .map(|p| EditPart {
+            name: p.name,
+            value: p.value,
+            filename: opt_to_string(p.filename),
+            content_type: opt_to_string(p.content_type),
+            description: opt_to_string(p.description),
+            required: p.required,
+        })
+        .collect()
 }
 
 impl EditModel {
@@ -114,6 +144,7 @@ impl EditModel {
             request: c.request.map(|body: Value| EditBody {
                 example: example_to_text(Some(&body)),
             }),
+            multipart: c.multipart.map(parts_in).unwrap_or_default(),
             responses: c
                 .responses
                 .into_iter()
@@ -130,6 +161,7 @@ impl EditModel {
                         })
                         .collect(),
                     example: example_to_text(r.schema.as_ref()),
+                    multipart: r.multipart.map(parts_in).unwrap_or_default(),
                 })
                 .collect(),
         }
@@ -151,6 +183,33 @@ fn parse_example(raw: &str, ctx: &str) -> Result<Option<Value>, String> {
     serde_json::from_str::<Value>(raw)
         .map(Some)
         .map_err(|err| format!("{ctx} example is not valid JSON: {err}"))
+}
+
+/// Serializes editable parts back to a `multipart` array, omitting each
+/// optional string whose buffer is blank so a part never gains an empty key.
+/// Mirrors the hand-built map style `to_json` already uses for `query`.
+fn parts_out(parts: &[EditPart]) -> Value {
+    Value::Array(
+        parts
+            .iter()
+            .map(|p| {
+                let mut m = serde_json::Map::new();
+                m.insert("name".into(), Value::String(p.name.clone()));
+                m.insert("value".into(), Value::String(p.value.clone()));
+                m.insert("required".into(), Value::Bool(p.required));
+                if let Some(f) = str_opt(&p.filename) {
+                    m.insert("filename".into(), Value::String(f.to_string()));
+                }
+                if let Some(c) = str_opt(&p.content_type) {
+                    m.insert("contentType".into(), Value::String(c.to_string()));
+                }
+                if let Some(d) = str_opt(&p.description) {
+                    m.insert("description".into(), Value::String(d.to_string()));
+                }
+                Value::Object(m)
+            })
+            .collect(),
+    )
 }
 
 impl EditModel {
@@ -218,6 +277,12 @@ impl EditModel {
             root.insert("request".into(), body);
         }
 
+        // multipart (optional): omitted when empty, the same way `query` is,
+        // so a contract that has no parts never gains the key.
+        if !self.multipart.is_empty() {
+            root.insert("multipart".into(), parts_out(&self.multipart));
+        }
+
         // responses (always present, possibly empty)
         let mut responses = Vec::new();
         for (i, r) in self.responses.iter().enumerate() {
@@ -250,6 +315,9 @@ impl EditModel {
             }
             if let Some(body) = parse_example(&r.example, &format!("response {code}"))? {
                 m.insert("schema".into(), body);
+            }
+            if !r.multipart.is_empty() {
+                m.insert("multipart".into(), parts_out(&r.multipart));
             }
             responses.push(Value::Object(m));
         }
@@ -292,7 +360,22 @@ mod tests {
 
     #[test]
     fn from_contract_lifts_all_fields() {
-        let contract = json_get(FULL, None).unwrap();
+        // A dedicated contract, not `FULL`: it adds a `multipart` array on the
+        // request and on a response so both arrive on the model, without
+        // disturbing `FULL`'s use by the other tests below.
+        const WITH_MULTIPART: &str = r#"{
+            "name": "login",
+            "description": "Log a user in",
+            "method": "POST",
+            "url": "https://api.example.com/auth/{id}",
+            "query": [{ "name": "page", "value": "1", "description": "Page", "required": true }],
+            "headers": [{ "name": "Content-Type", "value": "application/json", "required": true }],
+            "request": { "user": { "email": "a@b.c" } },
+            "multipart": [{ "name": "avatar", "value": "", "filename": "photo.png", "contentType": "image/png", "required": true }],
+            "responses": [{ "code": 200, "description": "ok", "schema": { "token": "x" },
+                "multipart": [{ "name": "thumb", "value": "", "filename": "t.png", "required": false }] }]
+        }"#;
+        let contract = json_get(WITH_MULTIPART, None).unwrap();
         let m = EditModel::from_contract(contract);
 
         assert_eq!(m.name, "login");
@@ -307,8 +390,12 @@ mod tests {
         // example is pretty-printed raw text containing the key
         assert!(req.example.contains("\"email\""));
 
+        assert_eq!(m.multipart[0].name, "avatar");
+        assert_eq!(m.multipart[0].filename, "photo.png");
+
         assert_eq!(m.responses[0].code, "200");
         assert!(m.responses[0].example.contains("\"token\""));
+        assert_eq!(m.responses[0].multipart[0].filename, "t.png");
     }
 
     #[test]
@@ -354,5 +441,77 @@ mod tests {
         model.responses[0].code = "2xx".to_string();
         let err = model.to_json().unwrap_err();
         assert!(err.to_lowercase().contains("code"));
+    }
+
+    #[test]
+    fn roundtrip_preserves_multipart_parts() {
+        // `to_json` builds its map by hand rather than serializing
+        // `JsonContent`, so a key it was never taught about is dropped in
+        // silence. This is the check that catches that.
+        let contract = r#"{
+            "name": "Upload avatar",
+            "method": "POST",
+            "url": "https://h/u",
+            "headers": [],
+            "multipart": [
+                { "name": "avatar", "value": "", "filename": "photo.png", "contentType": "image/png", "required": true },
+                { "name": "caption", "value": "my holiday", "required": false }
+            ],
+            "responses": [
+                { "code": 200, "description": "ok",
+                  "multipart": [ { "name": "thumb", "value": "", "filename": "t.png", "required": false } ] }
+            ]
+        }"#;
+        let model =
+            EditModel::from_contract(crate::json::json_get(contract, None).expect("parses"));
+        let out = model.to_json().expect("serializes");
+        let back = crate::json::json_get(&out, None).expect("reparses");
+
+        let parts = back.multipart.expect("request parts survived");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].name, "avatar");
+        assert_eq!(parts[0].filename.as_deref(), Some("photo.png"));
+        assert_eq!(parts[0].content_type.as_deref(), Some("image/png"));
+        assert!(parts[0].required);
+        assert_eq!(parts[1].value, "my holiday");
+        assert!(parts[1].filename.is_none());
+        assert!(parts[1].content_type.is_none());
+
+        let rparts = back.responses[0]
+            .multipart
+            .as_ref()
+            .expect("response parts survived");
+        assert_eq!(rparts[0].filename.as_deref(), Some("t.png"));
+    }
+
+    #[test]
+    fn example_contracts_roundtrip_without_gaining_a_multipart_key() {
+        // The real contracts people have on disk, not a synthetic fixture. A
+        // wrong `skip_serializing_if` or an unconditional insert would add a
+        // multipart key to every one of them on first save.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../example");
+        let paths = crate::json::scan_json_file(&dir, true).expect("example contracts found");
+        assert!(
+            !paths.is_empty(),
+            "no example contracts under {}",
+            dir.display()
+        );
+        for path in paths {
+            let text = std::fs::read_to_string(&path).expect("readable");
+            let model = EditModel::from_contract(
+                crate::json::json_get(&text, None)
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display())),
+            );
+            let out = model
+                .to_json()
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            assert!(
+                !out.contains("multipart"),
+                "{} gained a multipart key",
+                path.display()
+            );
+            crate::json::validate(&out)
+                .unwrap_or_else(|e| panic!("{} no longer validates: {e}", path.display()));
+        }
     }
 }
