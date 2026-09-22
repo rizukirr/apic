@@ -4,7 +4,7 @@
 //! query, headers, request, responses). Colors are applied only when stdout is
 //! a terminal, so piped or redirected output stays clean.
 
-use apic_core::json::{JsonContent, Method, method_str};
+use apic_core::json::{JsonContent, Method, Part, method_str};
 use crossterm::style::Stylize;
 use std::io::IsTerminal;
 
@@ -67,9 +67,10 @@ impl Printer {
         }
 
         self.section("REQUEST");
-        match &c.request {
-            Some(body) => self.example(Some(body)),
-            None => self.none(),
+        match (&c.request, &c.multipart) {
+            (_, Some(parts)) => self.parts(parts),
+            (Some(body), None) => self.example(Some(body)),
+            (None, None) => self.none(),
         }
 
         if c.responses.is_empty() {
@@ -78,7 +79,10 @@ impl Printer {
         } else {
             for response in &c.responses {
                 self.response_title(response.code, &response.description);
-                self.example(response.schema.as_ref());
+                match &response.multipart {
+                    Some(parts) => self.parts(parts),
+                    None => self.example(response.schema.as_ref()),
+                }
             }
         }
     }
@@ -99,6 +103,32 @@ impl Printer {
             }
             None => println!(" (no example provided)"),
         }
+    }
+
+    /// Prints a multipart body as a table, one row per part. The kind column is
+    /// derived from `filename` rather than read from a stored field, which is
+    /// why a part cannot claim to be text while naming a file.
+    ///
+    /// Every cell goes through `sanitize`: unlike `example`, which is escaped
+    /// by `serde_json`, these strings reach the terminal as themselves.
+    fn parts(&self, parts: &[Part]) {
+        let rows: Vec<Vec<String>> = parts
+            .iter()
+            .map(|p| {
+                let (kind, value) = match &p.filename {
+                    Some(name) => ("file", name.as_str()),
+                    None => ("text", p.value.as_str()),
+                };
+                vec![
+                    sanitize(&p.name),
+                    kind.to_string(),
+                    sanitize(value),
+                    sanitize(p.content_type.as_deref().unwrap_or("")),
+                    p.required.to_string(),
+                ]
+            })
+            .collect();
+        self.table(Some(&["PART", "KIND", "VALUE", "TYPE", "REQUIRED"]), &rows);
     }
 
     /// Prints a dim `(none)` placeholder for an empty section, mirroring the
@@ -242,5 +272,28 @@ mod tests {
     #[test]
     fn sanitize_keeps_normal_and_multibyte_text() {
         assert_eq!(sanitize("café /auth/login"), "café /auth/login");
+    }
+
+    #[test]
+    fn a_part_is_a_file_when_it_names_one_and_text_otherwise() {
+        let contract = r#"{
+            "name": "x", "method": "POST", "url": "https://h", "headers": [],
+            "multipart": [
+                { "name": "avatar", "filename": "photo.png", "contentType": "image/png", "required": true },
+                { "name": "caption", "value": "my holiday" }
+            ],
+            "responses": []
+        }"#;
+        let parsed = apic_core::json::json_get(contract, None).expect("parses");
+        let parts = parsed.multipart.expect("parts");
+        assert_eq!(parts[0].filename.as_deref(), Some("photo.png"));
+        assert!(parts[1].filename.is_none());
+    }
+
+    #[test]
+    fn part_strings_are_stripped_of_control_characters() {
+        // Regression: a part name or value is untrusted contract text printed
+        // as itself, with no serde_json escaping in the way.
+        assert!(!sanitize("av\x1b[31matar").contains('\x1b'));
     }
 }
