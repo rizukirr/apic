@@ -370,6 +370,16 @@ fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
 
 fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
+    // A multipart body has no JSON example. Materializing an empty request
+    // body here would let a keystroke create a second body that `to_json`
+    // refuses to save, with nothing on screen explaining why.
+    if !model.multipart.is_empty() {
+        ui.label(
+            RichText::new("multipart body, preserved on save, not editable here yet").color(DIM),
+        );
+        ui.add_space(SPACE_MEDIUM);
+        return;
+    }
     if editing {
         // The request body is always editable — materialize an empty one so the
         // JSON editor is shown by default. An untouched (blank) body is dropped
@@ -596,6 +606,27 @@ mod tests {
             response_code_selector(ui, &mut m, &mut resp, true);
             response_body(ui, &mut m, 0, true);
             response_headers(ui, &mut m, 0, true);
+        });
+    }
+
+    #[test]
+    fn the_request_editor_does_not_materialize_a_body_on_a_multipart_contract() {
+        // `__run_test_ui` takes `impl Fn`, so the model is built inside the
+        // closure and asserted there too.
+        eframe::egui::__run_test_ui(|ui| {
+            let c = apic_core::json::json_get(
+                r#"{ "name":"u","method":"POST","url":"https://h","headers":[],
+                     "multipart":[{"name":"avatar","filename":"a.png","required":true}],
+                     "responses":[] }"#,
+                None,
+            )
+            .unwrap();
+            let mut m = EditModel::from_contract(c);
+            assert!(!m.multipart.is_empty());
+            request_body(ui, &mut m, true);
+            // Materializing one here is what makes the file unsavable the
+            // moment anything is typed into it.
+            assert!(m.request.is_none());
         });
     }
 }

@@ -209,28 +209,43 @@ pub(crate) fn flatten(m: &EditModel, resp: usize) -> Vec<Section> {
         add: Some(Field::HeaderAdd),
     });
 
-    // REQUEST. `a` opens the JSON editor (creating the body first if absent);
-    // the body itself is just the inline example JSON.
-    match &m.request {
-        Some(req) => {
-            let lead = vec![title_row("REQUEST".to_string())];
-            out.push(Section {
-                title: String::new(),
-                kind: SectionKind::Body,
-                headers: None,
-                rows: body_rows(lead, BodyLoc::Request, &req.example),
-                add: Some(Field::RequestToggle),
-            });
-        }
-        // No body yet: a plain title section that renders ` (none)`, like an
-        // empty RESPONSE. `a` creates the body and opens the JSON editor.
-        None => out.push(Section {
+    // REQUEST. A multipart body has no JSON example, and offering the toggle
+    // beside one would let `a` create a second body that `to_json` then
+    // refuses to save. Parts are not editable here yet, so this says so.
+    if !m.multipart.is_empty() {
+        out.push(Section {
             title: "REQUEST".to_string(),
             kind: SectionKind::Table,
             headers: None,
-            rows: vec![title_row("REQUEST".to_string())],
-            add: Some(Field::RequestToggle),
-        }),
+            rows: vec![field_row(vec![Cell {
+                field: Field::SectionHeader,
+                kind: CellKind::Label,
+                value: "multipart body, preserved on save, not editable here yet".to_string(),
+            }])],
+            add: None,
+        });
+    } else {
+        match &m.request {
+            Some(req) => {
+                let lead = vec![title_row("REQUEST".to_string())];
+                out.push(Section {
+                    title: String::new(),
+                    kind: SectionKind::Body,
+                    headers: None,
+                    rows: body_rows(lead, BodyLoc::Request, &req.example),
+                    add: Some(Field::RequestToggle),
+                });
+            }
+            // No body yet: a plain title section that renders ` (none)`, like an
+            // empty RESPONSE. `a` creates the body and opens the JSON editor.
+            None => out.push(Section {
+                title: "REQUEST".to_string(),
+                kind: SectionKind::Table,
+                headers: None,
+                rows: vec![title_row("REQUEST".to_string())],
+                add: Some(Field::RequestToggle),
+            }),
+        }
     }
 
     // RESPONSE: a single section with a `code - title` tab strip over the active
@@ -403,5 +418,25 @@ mod tests {
                 "{t} should start with a Title row"
             );
         }
+    }
+
+    #[test]
+    fn a_multipart_request_offers_no_json_body_toggle() {
+        let c = json_get(
+            r#"{ "name":"u","method":"POST","url":"https://h","headers":[],
+                 "multipart":[{"name":"avatar","filename":"a.png","required":true}],
+                 "responses":[] }"#,
+            None,
+        )
+        .unwrap();
+        let m = EditModel::from_contract(c);
+        let sections = flatten(&m, 0);
+        let request = sections
+            .iter()
+            .find(|s| s.title == "REQUEST")
+            .expect("a REQUEST section exists");
+        // `a` on this section would create a JSON body beside the parts, and
+        // `to_json` would then refuse to save the file.
+        assert!(request.add.is_none());
     }
 }
