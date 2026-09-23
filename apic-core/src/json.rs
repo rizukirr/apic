@@ -33,6 +33,11 @@ pub struct JsonContent {
     /// when the endpoint has no request body.
     #[serde(default)]
     pub request: Option<serde_json::Value>,
+    /// A multipart request body, as a list of parts. Mutually exclusive with
+    /// `request`: an HTTP request carries one body, and `validate` rejects a
+    /// contract that sets both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multipart: Option<Vec<Part>>,
     pub responses: Vec<Response>,
 }
 
@@ -44,6 +49,29 @@ pub struct Query {
     #[serde(default)]
     pub value: String,
     #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+}
+
+/// One part of a multipart body. A part carrying a `filename` is a file part
+/// and one without is a text part, so there is no separate kind field that
+/// could contradict the filename. `contentType` is the part's own media type,
+/// e.g. `image/png`, distinct from the request's `Content-Type` header.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Part {
+    pub name: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    #[serde(
+        rename = "contentType",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub content_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(default)]
     pub required: bool,
@@ -68,6 +96,11 @@ pub struct Response {
     /// The response body: the raw JSON payload for this response.
     #[serde(default)]
     pub schema: Option<serde_json::Value>,
+
+    /// A multipart response body, as a list of parts. Mutually exclusive with
+    /// `schema`, on the same rule as the request side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multipart: Option<Vec<Part>>,
 }
 
 pub fn method_str(method: &Method) -> String {
@@ -210,14 +243,39 @@ pub fn scan_json_file(root: &Path, is_absolute: bool) -> Option<Vec<PathBuf>> {
     Some(files)
 }
 
-/// Validates that `json` parses as a well-formed contract.
+/// Validates that `json` parses as a well-formed contract, then that no request
+/// or response declares two bodies at once.
 ///
 /// # Errors
 ///
 /// Returns the parse error (with line/column) when the document does not
-/// conform to the contract schema.
-pub fn validate(json: &str) -> Result<(), serde_json::Error> {
-    serde_json::from_str::<JsonContent>(json).map(|_| ())
+/// conform to the contract schema, or a message naming the offending request or
+/// response when a JSON body and a multipart body are both set.
+/// Whether a `multipart` field declares an actual body. An empty array
+/// declares nothing, exactly as an absent key does, which is also how
+/// `EditModel::to_json` writes it back: it omits the key when there are no
+/// parts. `validate` has to agree, or a contract is rejected for a body it
+/// does not have.
+fn declares_parts(multipart: &Option<Vec<Part>>) -> bool {
+    multipart.as_ref().is_some_and(|parts| !parts.is_empty())
+}
+
+pub fn validate(json: &str) -> Result<(), String> {
+    let contract: JsonContent = serde_json::from_str(json).map_err(|err| err.to_string())?;
+    if contract.request.is_some() && declares_parts(&contract.multipart) {
+        return Err(
+            "request sets both `request` and `multipart`: a request carries one body".to_string(),
+        );
+    }
+    for response in &contract.responses {
+        if response.schema.is_some() && declares_parts(&response.multipart) {
+            return Err(format!(
+                "response {} sets both `schema` and `multipart`: a response carries one body",
+                response.code
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Parses a JSON contract, keeping only the responses whose code matches
@@ -230,10 +288,39 @@ pub fn json_get(json: &str, status: Option<u16>) -> Result<JsonContent, serde_js
     Ok(json_content)
 }
 
+/// Reads a contract for editing: validates first, then parses.
+///
+/// `json_get` alone parses without the semantic checks `validate` adds, so a
+/// document that parses but declares two bodies would reach an editor and
+/// fail only at save. Every front end that loads a contract into `EditModel`
+/// goes through this.
+///
+/// # Errors
+///
+/// Returns the validation message, or the parse error as text.
+pub fn load_for_edit(json: &str) -> Result<JsonContent, String> {
+    validate(json)?;
+    json_get(json, None).map_err(|err| err.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn an_empty_multipart_array_does_not_count_as_a_second_body() {
+        // An empty array declares nothing, and `to_json` omits the key when a
+        // model has no parts, so `validate` has to agree or a file is rejected
+        // for a body it does not have.
+        let contract = r#"{
+            "name": "x", "method": "POST", "url": "https://h", "headers": [],
+            "request": { "a": 1 },
+            "multipart": [],
+            "responses": [ { "code": 200, "description": "ok", "schema": { "b": 2 }, "multipart": [] } ]
+        }"#;
+        assert!(validate(contract).is_ok());
+    }
 
     #[test]
     fn pretty_json_indents_with_four_spaces() {
@@ -423,5 +510,92 @@ mod tests {
         let root = temp_dir("scan_empty");
         assert!(scan_json_file(&root, true).is_none());
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn multipart_parses_on_the_request_and_on_a_response() {
+        let contract = r#"{
+            "name": "Upload avatar",
+            "method": "POST",
+            "url": "https://h/u",
+            "headers": [],
+            "multipart": [
+                { "name": "avatar", "filename": "photo.png", "contentType": "image/png", "required": true },
+                { "name": "caption", "value": "my holiday" }
+            ],
+            "responses": [
+                { "code": 200, "description": "ok", "multipart": [ { "name": "thumb", "filename": "t.png" } ] }
+            ]
+        }"#;
+        assert!(validate(contract).is_ok());
+        let parsed = json_get(contract, None).expect("parses");
+        let parts = parsed.multipart.expect("request parts");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].filename.as_deref(), Some("photo.png"));
+        assert_eq!(parts[0].content_type.as_deref(), Some("image/png"));
+        assert!(parts[0].required);
+        assert_eq!(parts[1].value, "my holiday");
+        assert!(parts[1].filename.is_none());
+        assert_eq!(
+            parsed.responses[0]
+                .multipart
+                .as_ref()
+                .expect("response parts")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_request_setting_two_bodies_is_rejected() {
+        let contract = r#"{
+            "name": "x", "method": "POST", "url": "https://h", "headers": [],
+            "request": { "a": 1 },
+            "multipart": [ { "name": "f", "filename": "f.txt" } ],
+            "responses": []
+        }"#;
+        let err = validate(contract).expect_err("two request bodies must be rejected");
+        assert!(
+            err.contains("request"),
+            "message must name the request: {err}"
+        );
+    }
+
+    #[test]
+    fn a_response_setting_two_bodies_is_rejected_naming_its_code() {
+        let contract = r#"{
+            "name": "x", "method": "GET", "url": "https://h", "headers": [],
+            "responses": [
+                { "code": 200, "description": "ok" },
+                { "code": 404, "description": "nope", "schema": { "a": 1 },
+                  "multipart": [ { "name": "f", "filename": "f.txt" } ] }
+            ]
+        }"#;
+        let err = validate(contract).expect_err("two response bodies must be rejected");
+        // A contract with several responses has to say which one is wrong.
+        assert!(err.contains("404"), "message must name the code: {err}");
+    }
+
+    #[test]
+    fn a_contract_without_multipart_serializes_without_the_key() {
+        // `skip_serializing_if` is what stops every existing file gaining a
+        // `"multipart": null` line the first time it is opened and saved.
+        let parsed = json_get(CONTRACT, None).expect("parses");
+        let out = serde_json::to_string(&parsed).expect("serializes");
+        assert!(!out.contains("multipart"), "unexpected key in: {out}");
+    }
+
+    #[test]
+    fn load_for_edit_refuses_a_contract_that_parses_but_declares_two_bodies() {
+        let two_bodies = r#"{
+            "name": "x", "method": "POST", "url": "https://h", "headers": [],
+            "request": { "a": 1 },
+            "multipart": [ { "name": "f", "filename": "f.txt" } ],
+            "responses": []
+        }"#;
+        // It parses, which is exactly why `json_get` alone is not enough here.
+        assert!(json_get(two_bodies, None).is_ok());
+        assert!(load_for_edit(two_bodies).is_err());
+        assert!(load_for_edit(CONTRACT).is_ok());
     }
 }

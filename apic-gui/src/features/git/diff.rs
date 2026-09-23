@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use apic_core::edit::{EditHeader, EditModel, EditQuery, EditResponse};
+use apic_core::edit::{EditHeader, EditModel, EditPart, EditQuery, EditResponse};
 use apic_core::json::{method_str, pretty_json};
 
 /// One named difference between two revisions of a contract, at leaf-field
@@ -86,6 +86,7 @@ pub(crate) fn diff_models(old: &EditModel, new: &EditModel) -> Vec<FieldChange> 
         &pretty_body(old.request.as_ref().map(|b| b.example.as_str())),
         &pretty_body(new.request.as_ref().map(|b| b.example.as_str())),
     );
+    diff_parts(&mut changes, "part", &old.multipart, &new.multipart);
     diff_responses(&mut changes, &old.responses, &new.responses);
     changes
 }
@@ -156,6 +157,53 @@ fn diff_query_params(out: &mut Vec<FieldChange>, old: &[EditQuery], new: &[EditQ
     }
 }
 
+/// One leaf change per part field: value, filename, content type,
+/// description, required. Mirrors [`diff_query_params`], including the empty
+/// sentinel, so a part present on only one side reports the same way a
+/// modification does. `what` carries the position, `"part"` for the request
+/// and `"response {code} part"` for a response, so one function serves both.
+fn diff_parts(out: &mut Vec<FieldChange>, what: &str, old: &[EditPart], new: &[EditPart]) {
+    let old: BTreeMap<String, &EditPart> = old.iter().map(|p| (p.name.clone(), p)).collect();
+    let new: BTreeMap<String, &EditPart> = new.iter().map(|p| (p.name.clone(), p)).collect();
+    let empty = EditPart {
+        name: String::new(),
+        value: String::new(),
+        filename: String::new(),
+        content_type: String::new(),
+        description: String::new(),
+        required: false,
+    };
+    for name in union_keys(&old, &new) {
+        let o = old.get(name).copied().unwrap_or(&empty);
+        let n = new.get(name).copied().unwrap_or(&empty);
+        scalar(out, &format!("{what} {name} value"), &o.value, &n.value);
+        scalar(
+            out,
+            &format!("{what} {name} filename"),
+            &o.filename,
+            &n.filename,
+        );
+        scalar(
+            out,
+            &format!("{what} {name} content type"),
+            &o.content_type,
+            &n.content_type,
+        );
+        scalar(
+            out,
+            &format!("{what} {name} description"),
+            &o.description,
+            &n.description,
+        );
+        scalar(
+            out,
+            &format!("{what} {name} required"),
+            &bool_str(o.required),
+            &bool_str(n.required),
+        );
+    }
+}
+
 /// One leaf change per header field: value, required. Shared by the
 /// top-level header list (`what` is `"header"`) and, indirectly, by a
 /// response's own headers, which are diffed as one block in
@@ -202,6 +250,7 @@ fn diff_responses(out: &mut Vec<FieldChange>, old: &[EditResponse], new: &[EditR
         description: String::new(),
         headers: Vec::new(),
         example: String::new(),
+        multipart: Vec::new(),
     };
     for code in union_keys(&old, &new) {
         let o = old.get(code).copied().unwrap_or(&empty);
@@ -223,6 +272,12 @@ fn diff_responses(out: &mut Vec<FieldChange>, old: &[EditResponse], new: &[EditR
             &format!("response {code} body"),
             &pretty_body(Some(&o.example)),
             &pretty_body(Some(&n.example)),
+        );
+        diff_parts(
+            out,
+            &format!("response {code} part"),
+            &o.multipart,
+            &n.multipart,
         );
     }
 }
@@ -495,5 +550,44 @@ mod tests {
         assert!(changes.iter().any(|c| c.what == "request body"));
         assert!(changes.iter().any(|c| c.what == "response 200 description"));
         assert!(changes.iter().any(|c| c.what == "response 200 body"));
+    }
+
+    #[test]
+    fn changing_a_part_reports_one_change_per_leaf_field() {
+        const BEFORE: &str = r#"{
+            "name": "x", "method": "POST", "url": "https://h", "headers": [],
+            "multipart": [{ "name": "avatar", "value": "", "filename": "a.png", "contentType": "image/png", "required": false }],
+            "responses": []
+        }"#;
+        const AFTER: &str = r#"{
+            "name": "x", "method": "POST", "url": "https://h", "headers": [],
+            "multipart": [{ "name": "avatar", "value": "", "filename": "b.png", "contentType": "image/png", "required": true }],
+            "responses": []
+        }"#;
+        let changes = diff_models(&model(BEFORE), &model(AFTER));
+        assert!(changes.iter().any(|c| c.what == "part avatar filename"));
+        assert!(changes.iter().any(|c| c.what == "part avatar required"));
+        // The point of this view is leaf fields, not one glued blob.
+        assert!(!changes.iter().any(|c| c.what == "part avatar"));
+    }
+
+    #[test]
+    fn changing_a_response_part_names_the_response_code() {
+        const BEFORE: &str = r#"{
+            "name": "x", "method": "GET", "url": "https://h", "headers": [],
+            "responses": [{ "code": 200, "description": "ok",
+                "multipart": [{ "name": "thumb", "value": "", "filename": "a.png", "required": false }] }]
+        }"#;
+        const AFTER: &str = r#"{
+            "name": "x", "method": "GET", "url": "https://h", "headers": [],
+            "responses": [{ "code": 200, "description": "ok",
+                "multipart": [{ "name": "thumb", "value": "", "filename": "b.png", "required": false }] }]
+        }"#;
+        let changes = diff_models(&model(BEFORE), &model(AFTER));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.what == "response 200 part thumb filename")
+        );
     }
 }

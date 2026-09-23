@@ -6,7 +6,7 @@ use crate::tree;
 use apic_core::config::{Config, InitOutcome, find_apic_dir, read_config_file};
 use apic_core::file::{confine_to_dir, home_relative, read_file, to_slash};
 use apic_core::fuzzy::{fuzzy_find, fuzzy_match_path};
-use apic_core::json::{json_get, scan_json_file};
+use apic_core::json::{json_get, load_for_edit, scan_json_file};
 use apic_core::template::list_templates;
 use clap::{Parser, Subcommand};
 use std::fs;
@@ -1046,7 +1046,7 @@ fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Res
 fn open_path_in_tui(path: &Path) -> Result<(), String> {
     let text =
         read_file(path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
-    let contract = json_get(&text, None)
+    let contract = load_for_edit(&text)
         .map_err(|err| format!("{} is not a valid contract: {err}", path.display()))?;
     let model = crate::tui::EditModel::from_contract(contract);
     crate::tui::run(model, path)
