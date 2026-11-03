@@ -22,6 +22,7 @@ pub(super) fn conflict_resolver(
     raw: &str,
     new_blob: Option<&str>,
 ) -> Option<GitAction> {
+    let p = palette(ui.ctx());
     let matches_path = state.resolve.as_ref().is_some_and(|r| r.path == path);
     if !matches_path {
         state.resolve = new_blob.and_then(|text| ResolveState::parse(path, text));
@@ -29,9 +30,9 @@ pub(super) fn conflict_resolver(
 
     let Some(resolve) = state.resolve.as_mut() else {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(path).color(TEXT).strong());
+            ui.label(RichText::new(path).color(p.on_surface).strong());
             let side = if staged { "staged" } else { "unstaged" };
-            ui.label(RichText::new(side).color(DIM));
+            ui.label(RichText::new(side).color(p.on_surface_variant));
         });
         ui.separator();
         raw_diff_view(ui, raw);
@@ -40,7 +41,7 @@ pub(super) fn conflict_resolver(
             RichText::new(
                 "This file's conflict markers could not be read. Resolve it in your editor.",
             )
-            .color(AMBER),
+            .color(p.warning),
         );
         return None;
     };
@@ -79,6 +80,7 @@ fn resolve_view(
     staged: bool,
     resolve: &mut ResolveState,
 ) -> Option<GitAction> {
+    let p = palette(ui.ctx());
     let mut action = None;
 
     // Rendered fresh every frame from the current choices, by the exact
@@ -95,17 +97,17 @@ fn resolve_view(
         // take-all, which only fills in a choice, rather than on Resolve.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(all_chosen, |ui| {
-                if text_button(ui, &resolve_label(&resolve.choices), GREEN) {
+                if text_button(ui, &resolve_label(&resolve.choices), p.primary) {
                     action = Some(GitAction::ResolveConflict {
                         path: path.to_string(),
                         text: rendered.clone(),
                     });
                 }
             });
-            if text_button(ui, "Take all theirs", GREEN) {
+            if text_button(ui, "Take all theirs", p.primary) {
                 resolve.choices.fill(Some(Choice::Theirs));
             }
-            if text_button(ui, "Take all ours", GREEN) {
+            if text_button(ui, "Take all ours", p.primary) {
                 resolve.choices.fill(Some(Choice::Ours));
             }
 
@@ -127,10 +129,11 @@ fn resolve_view(
                     ui.scope(|ui| {
                         ui.set_max_width(path_max_width);
                         ui.add(
-                            egui::Label::new(RichText::new(path).color(TEXT).strong()).truncate(),
+                            egui::Label::new(RichText::new(path).color(p.on_surface).strong())
+                                .truncate(),
                         );
                     });
-                    ui.label(RichText::new(side).color(DIM));
+                    ui.label(RichText::new(side).color(p.on_surface_variant));
                 },
             );
         });
@@ -157,7 +160,7 @@ fn resolve_view(
                             match segment {
                                 Segment::Text(text) => {
                                     if !text.trim().is_empty() {
-                                        ui.label(RichText::new(text).color(DIM).monospace());
+                                        ui.label(RichText::new(text).color(p.on_surface_variant).monospace());
                                     }
                                 }
                                 Segment::Conflict {
@@ -189,7 +192,7 @@ fn resolve_view(
             egui::vec2(col_w, col_h),
             egui::Layout::top_down(egui::Align::Min),
             |right| {
-                right.label(RichText::new("PREVIEW").color(DIM).size(11.0));
+                right.label(RichText::new("PREVIEW").color(p.on_surface_variant).size(11.0));
                 egui::ScrollArea::vertical()
                     .id_salt("resolve_preview_scroll")
                     .auto_shrink([false, false])
@@ -201,7 +204,9 @@ fn resolve_view(
                             // panicking, so this stays safe for every state.
                             let font_id = egui::TextStyle::Monospace.resolve(ui.style());
                             let job = crate::ui::syntax_highlighting::highlight_json(
-                                &rendered, font_id,
+                                &rendered,
+                                font_id,
+                                crate::ui::theme::palette(ui.ctx()),
                             );
                             ui.label(job);
                         } else {
@@ -214,7 +219,7 @@ fn resolve_view(
                         RichText::new(
                             "This resolution is not valid JSON. You can still resolve it and fix it in the repair editor.",
                         )
-                        .color(AMBER),
+                        .color(p.warning),
                     );
                 }
             },
@@ -250,34 +255,40 @@ fn conflict_block_view(
     theirs: &str,
     choice: &mut Option<Choice>,
 ) {
+    let p = palette(ui.ctx());
     ui.group(|ui| {
         ui.horizontal(|ui| {
-            if text_button(ui, "Accept ours", GREEN) {
+            if text_button(ui, "Accept ours", p.primary) {
                 *choice = Some(Choice::Ours);
             }
-            if text_button(ui, "Accept theirs", CYAN) {
+            if text_button(ui, "Accept theirs", p.info) {
                 *choice = Some(Choice::Theirs);
             }
-            if text_button(ui, "Accept both", DIM) {
+            if text_button(ui, "Accept both", p.on_surface_variant) {
                 *choice = Some(Choice::Both);
             }
         });
         ui.label(
-            RichText::new(current_choice_summary(*choice, ours_label, theirs_label)).color(DIM),
+            RichText::new(current_choice_summary(*choice, ours_label, theirs_label))
+                .color(p.on_surface_variant),
         );
         ui.add_space(SPACE_EXTRA_SMALL);
 
         conflict_side_view(
             ui,
-            GREEN,
+            p.success,
             &format!("<<<<<<< {ours_label}"),
             ours,
             MarkerPosition::Before,
         );
-        ui.label(RichText::new("=======").color(DIM).monospace());
+        ui.label(
+            RichText::new("=======")
+                .color(p.on_surface_variant)
+                .monospace(),
+        );
         conflict_side_view(
             ui,
-            CYAN,
+            p.info,
             &format!(">>>>>>> {theirs_label}"),
             theirs,
             MarkerPosition::After,

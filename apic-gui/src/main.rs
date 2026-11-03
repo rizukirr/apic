@@ -17,7 +17,8 @@ mod settings;
 mod ui;
 
 use app::App;
-use ui::theme::apply_theme;
+use settings::Settings;
+use ui::theme::install_themes;
 
 fn main() -> eframe::Result {
     if std::env::args().skip(1).any(|a| a == "--desktop-entry") {
@@ -47,7 +48,7 @@ fn main() -> eframe::Result {
         "apic",
         options,
         Box::new(|cc| {
-            apply_theme(&cc.egui_ctx);
+            install_themes(&cc.egui_ctx, Settings::load().theme);
             Ok(Box::new(App::new()))
         }),
     )

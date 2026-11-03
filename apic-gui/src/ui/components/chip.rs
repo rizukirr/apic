@@ -3,16 +3,17 @@
 use eframe::egui;
 use egui::RichText;
 
-use crate::ui::theme::{CHIP_BG, CHIP_REQUIRED_BG, DIM, SIZE_SECONDARY, TEXT};
+use crate::ui::theme::SIZE_SECONDARY;
 
 /// The `Required` / `Optional` pill for the REQUIREMENT column. In edit mode it
 /// is a button that returns `Some(new_value)` when clicked; in view mode it is a
 /// static label returning `None`.
 pub(crate) fn required_chip(ui: &mut egui::Ui, required: bool, editing: bool) -> Option<bool> {
+    let p = crate::ui::theme::palette(ui.ctx());
     let (label, fg, bg) = if required {
-        ("Required", TEXT, CHIP_REQUIRED_BG)
+        ("Required", p.on_error_container, p.error_container)
     } else {
-        ("Optional", DIM, CHIP_BG)
+        ("Optional", p.on_surface_variant, p.secondary_container)
     };
     let text = RichText::new(format!(" {label} "))
         .color(fg)

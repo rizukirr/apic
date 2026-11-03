@@ -84,6 +84,7 @@ impl App {
     /// Top header: title, the Import menu, and the search box. Returns an action
     /// when Import is chosen.
     fn top_bar(&mut self, ui: &mut egui::Ui) -> Option<SidebarAction> {
+        let p = palette(ui.ctx());
         let mut action = None;
         egui::Panel::top("nav").show(ui, |ui| {
             ui.add_space(SPACE_EXTRA_SMALL);
@@ -97,14 +98,14 @@ impl App {
                         "◧"
                     };
                     if ui
-                        .button(RichText::new(toggle_glyph).color(GREEN))
+                        .button(RichText::new(toggle_glyph).color(p.primary))
                         .on_hover_text("Toggle sidebar")
                         .clicked()
                     {
                         action = Some(SidebarAction::ToggleSidebar);
                     }
                     ui.add_space(SPACE_MEDIUM); // left padding so the title isn't flush to the edge
-                    ui.label(RichText::new("APIC").color(GREEN).strong().size(18.0));
+                    ui.label(RichText::new("APIC").color(p.primary).strong().size(18.0));
                     ui.add_space(SPACE_MEDIUM);
                     egui::MenuBar::new()
                         .style(|style: &mut egui::Style| {
@@ -112,16 +113,30 @@ impl App {
                             style.spacing.button_padding = egui::vec2(8.0, 4.0);
                         })
                         .ui(ui, |ui| {
-                            if ui.button(RichText::new("New").color(GREEN)).clicked() {
+                            if ui.button(RichText::new("New").color(p.primary)).clicked() {
                                 action = Some(SidebarAction::NewProject);
                             }
-                            if ui.button(RichText::new("Open").color(GREEN)).clicked() {
+                            if ui.button(RichText::new("Open").color(p.primary)).clicked() {
                                 action = Some(SidebarAction::OpenProject);
                             }
-                            ui.menu_button(RichText::new("Import").color(GREEN), |ui| {
+                            ui.menu_button(RichText::new("Import").color(p.primary), |ui| {
                                 if ui.button("Postman collection").clicked() {
                                     action = Some(SidebarAction::ImportPostman);
                                     ui.close();
+                                }
+                            });
+                            ui.menu_button(RichText::new("Theme").color(p.primary), |ui| {
+                                let current = ui.ctx().options(|o| o.theme_preference);
+                                for (preference, label) in [
+                                    (egui::ThemePreference::System, "System"),
+                                    (egui::ThemePreference::Dark, "Dark"),
+                                    (egui::ThemePreference::Light, "Light"),
+                                ] {
+                                    if ui.selectable_label(current == preference, label).clicked() {
+                                        ui.ctx().set_theme(preference);
+                                        Settings::update(|s| s.theme = preference);
+                                        ui.close();
+                                    }
                                 }
                             });
                         });
@@ -134,13 +149,14 @@ impl App {
 
     /// Bottom bar: the loaded contract's location (home-relative), nothing else.
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
+        let p = palette(ui.ctx());
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(&self.shell.status).color(DIM));
+                ui.label(RichText::new(&self.shell.status).color(p.on_surface_variant));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         RichText::new(concat!("apic v", env!("CARGO_PKG_VERSION")))
-                            .color(DIM)
+                            .color(p.on_surface_variant)
                             .size(11.0),
                     );
                 });
@@ -152,6 +168,7 @@ impl App {
     /// one feature, so a tab row picks the active feature and only its body
     /// fills the frame.
     fn sidebar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
+        let p = palette(ui.ctx());
         // When collapsed, skip building/showing the panel entirely so the
         // CentralPanel reclaims the full width.
         if !self.shell.sidebar_open {
@@ -170,7 +187,7 @@ impl App {
                         ui.set_min_height(TOOLBAR_ROW_H);
                         if self.shell.sidebar_tab == SidebarTab::Git
                             && ui
-                                .small_button(RichText::new("⟳").color(GREEN))
+                                .small_button(RichText::new("⟳").color(p.primary))
                                 .on_hover_text("Refresh status")
                                 .clicked()
                         {
@@ -183,9 +200,9 @@ impl App {
                                 .selectable_label(
                                     selected,
                                     RichText::new("Explorer").color(if selected {
-                                        GREEN
+                                        p.primary
                                     } else {
-                                        DIM
+                                        p.on_surface_variant
                                     }),
                                 )
                                 .clicked()
@@ -196,7 +213,8 @@ impl App {
                                 )));
                             }
                             let git_selected = self.shell.sidebar_tab == SidebarTab::Git;
-                            let (git_label, git_color) = view::tab_label("Git", &self.git.status);
+                            let (git_label, git_color) =
+                                view::tab_label("Git", &self.git.status, palette(ui.ctx()));
                             if ui
                                 .selectable_label(
                                     git_selected,

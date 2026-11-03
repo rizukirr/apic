@@ -3,8 +3,6 @@
 use eframe::egui;
 use egui::Stroke;
 
-use crate::ui::theme::BORDER;
-
 /// A `TableBuilder` preconfigured for the metadata/schema tables: left-aligned
 /// cells and no scroll area of its own (the pane already scrolls). Columns are
 /// added by the caller; because the table lays them out, the header and every
@@ -36,7 +34,10 @@ pub(crate) fn fill_column(ui: &egui::Ui, fixed: &[f32]) -> egui_extras::Column {
 /// The bordered container that wraps a metadata table's header + rows.
 pub(crate) fn table_frame<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::group(ui.style())
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(
+            1.0,
+            crate::ui::theme::palette(ui.ctx()).outline_variant,
+        ))
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             // Pin the content to exactly the available width so the frame can
@@ -57,27 +58,29 @@ mod tests {
 
     #[test]
     fn table_primitives_render_without_panicking() {
-        egui::__run_test_ui(|ui| {
-            let mut buf = "x".to_string();
-            table_frame(ui, |ui| {
-                metadata_table(ui)
-                    .column(egui_extras::Column::exact(120.0))
-                    .column(egui_extras::Column::remainder())
-                    .header(TABLE_HEADER_H, |mut h| {
-                        h.col(|ui| header_label(ui, "header"));
-                        h.col(|ui| header_label(ui, "value"));
-                    })
-                    .body(|mut body| {
-                        body.row(TABLE_ROW_H, |mut row| {
-                            row.col(|ui| {
-                                tcell_edit(ui, &mut buf, "value");
-                            });
-                            row.col(|ui| {
-                                required_chip(ui, true, true);
+        for preference in crate::ui::theme::BOTH_THEMES {
+            crate::ui::theme::run_in_theme(preference, |ui| {
+                let mut buf = "x".to_string();
+                table_frame(ui, |ui| {
+                    metadata_table(ui)
+                        .column(egui_extras::Column::exact(120.0))
+                        .column(egui_extras::Column::remainder())
+                        .header(TABLE_HEADER_H, |mut h| {
+                            h.col(|ui| header_label(ui, "header"));
+                            h.col(|ui| header_label(ui, "value"));
+                        })
+                        .body(|mut body| {
+                            body.row(TABLE_ROW_H, |mut row| {
+                                row.col(|ui| {
+                                    tcell_edit(ui, &mut buf, "value");
+                                });
+                                row.col(|ui| {
+                                    required_chip(ui, true, true);
+                                });
                             });
                         });
-                    });
+                });
             });
-        });
+        }
     }
 }
