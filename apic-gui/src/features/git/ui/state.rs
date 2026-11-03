@@ -163,7 +163,7 @@ pub(crate) struct GitState {
 
     /// A status refresh is owed, a project just loaded or a contract was just
     /// saved, and starts once no other job is in flight. This is what makes
-    /// the Git tab's dirty indicator correct without ever opening the tab.
+    /// the Git section's dirty indicator correct without ever opening the section.
     pub(crate) needs_refresh: bool,
 
     /// A branch listing is owed after a switch, create or delete, and starts

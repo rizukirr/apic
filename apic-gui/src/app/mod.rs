@@ -688,7 +688,7 @@ mod tests {
                 .inside
                 .iter()
                 .any(|f| f.path == "contracts/sample.json"),
-            "reload_project must populate status without the Git tab ever opening: {:?}",
+            "reload_project must populate status without the Git section ever opening: {:?}",
             app.git.status.inside
         );
     }

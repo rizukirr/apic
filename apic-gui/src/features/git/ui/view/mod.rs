@@ -23,7 +23,7 @@ use crate::features::git::ui::state::GitState;
 use crate::ui::components::text_button;
 use crate::ui::theme::*;
 
-/// What the Git tab should render, decided purely from a `Status`: the label
+/// What the Git section header should render, decided purely from a `Status`: the label
 /// text, `name` plus a ` [conflict]` suffix when any entry is conflicted, and
 /// the colour, `error` when anything has changed at all and `on_surface_variant` (the
 /// unchanged colour) otherwise. Selection is shown through the tab's filled
@@ -47,9 +47,9 @@ pub(crate) fn tab_label(name: &str, status: &Status, p: &Palette) -> (String, eg
     (label, color)
 }
 
-/// Left sidebar body for the Git tab: the error line when set, and the file
+/// Left sidebar body for the Git section: the error line when set, and the file
 /// list split into staged and unstaged sections. The refresh control and the
-/// tab's own dirty indicator live in the shell's tab row, not here.
+/// section's own dirty indicator live in the Git section header, not here.
 ///
 /// The panel frame is owned by the app shell, not by this feature, so that a
 /// second sidebar tab can render into the same frame; this only fills it.
@@ -211,7 +211,7 @@ pub(crate) fn sidebar_body(
     action
 }
 
-/// The central body for the Git tab: the diff view once selected, an empty
+/// The central body for the Git section: the diff view once selected, an empty
 /// state until then, or the conflict resolver for a conflicted file.
 ///
 /// The panel frame is owned by the app shell. This only sees the git slice.
