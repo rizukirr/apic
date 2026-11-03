@@ -49,6 +49,7 @@ pub(super) fn file_row(
     mode: RowMode,
     selected: Option<&(String, bool)>,
 ) -> Option<GitAction> {
+    let p = palette(ui.ctx());
     let mut action = None;
     let staged = mode.staged();
     let change = if staged { file.index } else { file.worktree };
@@ -62,7 +63,7 @@ pub(super) fn file_row(
             match mode {
                 RowMode::Staged => {
                     if ui
-                        .small_button(RichText::new("-").color(DIM))
+                        .small_button(RichText::new("-").color(p.on_surface_variant))
                         .on_hover_text(format!("Unstage {}", file.path))
                         .clicked()
                     {
@@ -74,7 +75,7 @@ pub(super) fn file_row(
                 RowMode::Unstaged => {
                     if file.tracked()
                         && ui
-                            .small_button(RichText::new("x").color(RED))
+                            .small_button(RichText::new("x").color(p.error))
                             .on_hover_text(format!("Discard {}", file.path))
                             .clicked()
                     {
@@ -83,7 +84,7 @@ pub(super) fn file_row(
                         });
                     }
                     if ui
-                        .small_button(RichText::new("+").color(GREEN))
+                        .small_button(RichText::new("+").color(p.success))
                         .on_hover_text(format!("Stage {}", file.path))
                         .clicked()
                     {
@@ -95,13 +96,14 @@ pub(super) fn file_row(
                 RowMode::Conflicted => {}
             }
             if file.conflicted {
-                ui.label(RichText::new("●").color(RED))
+                ui.label(RichText::new("●").color(p.error))
                     .on_hover_text("Conflicted");
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.label(RichText::new(change.letter()).color(DIM));
-                let button = egui::Button::selectable(is_selected, RichText::new(name).color(TEXT))
-                    .truncate();
+                ui.label(RichText::new(change.letter()).color(p.on_surface_variant));
+                let button =
+                    egui::Button::selectable(is_selected, RichText::new(name).color(p.on_surface))
+                        .truncate();
                 if ui.add(button).clicked() {
                     action = Some(GitAction::Select {
                         path: file.path.clone(),
@@ -206,13 +208,14 @@ pub(super) fn folder_row(
     mode: RowMode,
     node: &FileTree,
 ) -> Option<GitAction> {
+    let p = palette(ui.ctx());
     let mut action = None;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         match mode {
             RowMode::Staged => {
                 if node.any_staged()
                     && ui
-                        .small_button(RichText::new("-").color(DIM))
+                        .small_button(RichText::new("-").color(p.on_surface_variant))
                         .on_hover_text(format!("Unstage {folder_path}"))
                         .clicked()
                 {
@@ -225,7 +228,7 @@ pub(super) fn folder_row(
                 let tracked_count = node.tracked_count();
                 if tracked_count > 0
                     && ui
-                        .small_button(RichText::new("x").color(RED))
+                        .small_button(RichText::new("x").color(p.error))
                         .on_hover_text(format!(
                             "Discard {folder_path} ({tracked_count} tracked file{})",
                             if tracked_count == 1 { "" } else { "s" }
@@ -237,7 +240,7 @@ pub(super) fn folder_row(
                     });
                 }
                 if ui
-                    .small_button(RichText::new("+").color(GREEN))
+                    .small_button(RichText::new("+").color(p.success))
                     .on_hover_text(format!("Stage {folder_path}"))
                     .clicked()
                 {
@@ -249,7 +252,7 @@ pub(super) fn folder_row(
             RowMode::Conflicted => {}
         }
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.add(egui::Label::new(RichText::new(name).color(DIM)).truncate());
+            ui.add(egui::Label::new(RichText::new(name).color(p.on_surface_variant)).truncate());
         });
     });
     action

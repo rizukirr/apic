@@ -213,7 +213,8 @@ impl App {
                                 )));
                             }
                             let git_selected = self.shell.sidebar_tab == SidebarTab::Git;
-                            let (git_label, git_color) = view::tab_label("Git", &self.git.status);
+                            let (git_label, git_color) =
+                                view::tab_label("Git", &self.git.status, palette(ui.ctx()));
                             if ui
                                 .selectable_label(
                                     git_selected,

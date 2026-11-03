@@ -20,6 +20,7 @@ use crate::ui::theme::*;
 /// than an error. Every branch is then a legitimate way out, so switching and
 /// deleting both stay enabled instead of guessing a current branch.
 pub(super) fn branch_row(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
+    let p = palette(ui.ctx());
     let mut action = None;
     let current = state.branches.current.clone();
     let eligible: Vec<&String> = state
@@ -34,7 +35,7 @@ pub(super) fn branch_row(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitA
             let can_delete = !eligible.is_empty();
             ui.add_enabled_ui(can_delete, |ui| {
                 if ui
-                    .small_button(RichText::new("x").color(RED))
+                    .small_button(RichText::new("x").color(p.error))
                     .on_hover_text("Delete a branch")
                     .clicked()
                     && let Some(name) = eligible.first()
@@ -45,7 +46,7 @@ pub(super) fn branch_row(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitA
                 }
             });
             if ui
-                .small_button(RichText::new("+").color(GREEN))
+                .small_button(RichText::new("+").color(p.success))
                 .on_hover_text("Create a new branch")
                 .clicked()
             {
@@ -53,7 +54,7 @@ pub(super) fn branch_row(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitA
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 egui::ComboBox::from_id_salt("git_branch_combo")
-                    .selected_text(branch_label(current.as_deref()))
+                    .selected_text(branch_label(current.as_deref(), p))
                     .show_ui(ui, |ui| {
                         for name in &state.branches.all {
                             let is_current = Some(name.as_str()) == current.as_deref();
@@ -88,10 +89,10 @@ pub(super) fn branch_select_action(name: &str, current: Option<&str>) -> Option<
 /// The dropdown's selected text: the current branch name, or the detached
 /// marker when `Branches::current` is `None`, the real git state for
 /// detached HEAD rather than an error.
-pub(super) fn branch_label(current: Option<&str>) -> RichText {
+pub(super) fn branch_label(current: Option<&str>, p: &Palette) -> RichText {
     match current {
         Some(name) => RichText::new(name),
-        None => RichText::new("(detached)").color(AMBER),
+        None => RichText::new("(detached)").color(p.warning),
     }
 }
 
@@ -99,6 +100,7 @@ pub(super) fn branch_label(current: Option<&str>) -> RichText {
 /// `features::contracts::view` so the codebase does not grow a second
 /// input-dialog style.
 pub(super) fn create_branch_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
+    let p = palette(ctx);
     state.new_branch.as_ref()?;
     let mut create = false;
     let mut cancel = false;
@@ -107,10 +109,15 @@ pub(super) fn create_branch_dialog(ctx: &egui::Context, state: &mut GitState) ->
         .show(ctx, |ui| {
             ui.set_min_width(320.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("NEW BRANCH").color(GREEN).strong().size(16.0));
+                ui.label(
+                    RichText::new("NEW BRANCH")
+                        .color(p.primary)
+                        .strong()
+                        .size(16.0),
+                );
             });
             ui.add_space(SPACE_SMALL);
-            ui.label(RichText::new("branch name").color(DIM));
+            ui.label(RichText::new("branch name").color(p.on_surface_variant));
             ui.add_space(SPACE_MEDIUM);
             let buf = state.new_branch.as_mut().expect("dialog open");
             let resp = bordered_input(ui, buf, f32::INFINITY, "");
@@ -120,7 +127,7 @@ pub(super) fn create_branch_dialog(ctx: &egui::Context, state: &mut GitState) ->
             ui.add_space(SPACE_LARGE);
             ui.columns(2, |cols| {
                 cols[0].vertical_centered(|ui| {
-                    if text_button(ui, "Create", GREEN) {
+                    if text_button(ui, "Create", p.primary) {
                         create = true;
                     }
                 });
@@ -153,6 +160,7 @@ pub(super) fn create_branch_dialog(ctx: &egui::Context, state: &mut GitState) ->
 /// from, so this single dialog carries its own picker: every branch except
 /// the current one, defaulting to whichever branch it was opened for.
 pub(super) fn delete_branch_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
+    let p = palette(ctx);
     state.pending_branch_delete.as_ref()?;
     let current = state.branches.current.clone();
     let eligible: Vec<String> = state
@@ -182,13 +190,13 @@ pub(super) fn delete_branch_dialog(ctx: &egui::Context, state: &mut GitState) ->
             ui.vertical_centered(|ui| {
                 ui.label(
                     RichText::new("DELETE BRANCH")
-                        .color(RED)
+                        .color(p.error)
                         .strong()
                         .size(16.0),
                 );
             });
             ui.add_space(SPACE_MEDIUM);
-            ui.label(RichText::new("Delete branch").color(DIM));
+            ui.label(RichText::new("Delete branch").color(p.on_surface_variant));
             let picked = state.pending_branch_delete.as_mut().expect("dialog open");
             egui::ComboBox::from_id_salt("delete_branch_combo")
                 .selected_text(picked.clone())
@@ -200,7 +208,7 @@ pub(super) fn delete_branch_dialog(ctx: &egui::Context, state: &mut GitState) ->
             ui.add_space(SPACE_LARGE);
             ui.columns(2, |cols| {
                 cols[0].vertical_centered(|ui| {
-                    if text_button(ui, "Delete", RED) {
+                    if text_button(ui, "Delete", p.error) {
                         confirm = true;
                     }
                 });
@@ -225,6 +233,7 @@ pub(super) fn delete_branch_dialog(ctx: &egui::Context, state: &mut GitState) ->
 /// shape of `delete_dialog` in `features::contracts::view`, so the codebase
 /// does not grow a second confirmation style.
 pub(super) fn discard_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
+    let p = palette(ctx);
     let path = state.pending_discard.clone()?;
     let mut confirm = false;
     let mut cancel = false;
@@ -233,30 +242,30 @@ pub(super) fn discard_dialog(ctx: &egui::Context, state: &mut GitState) -> Optio
         .show(ctx, |ui| {
             ui.set_min_width(320.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("DISCARD").color(RED).strong().size(16.0));
+                ui.label(RichText::new("DISCARD").color(p.error).strong().size(16.0));
             });
             ui.add_space(SPACE_MEDIUM);
             match discard_target(&state.status, &path) {
                 DiscardTarget::File => {
-                    ui.label(RichText::new("Discard changes to").color(DIM));
-                    ui.label(RichText::new(&path).color(TEXT).strong());
+                    ui.label(RichText::new("Discard changes to").color(p.on_surface_variant));
+                    ui.label(RichText::new(&path).color(p.on_surface).strong());
                 }
                 DiscardTarget::Folder(count) => {
-                    ui.label(RichText::new("Discard changes in").color(DIM));
-                    ui.label(RichText::new(&path).color(TEXT).strong());
+                    ui.label(RichText::new("Discard changes in").color(p.on_surface_variant));
+                    ui.label(RichText::new(&path).color(p.on_surface).strong());
                     ui.label(
                         RichText::new(format!(
                             "{count} tracked file{} will be reverted",
                             if count == 1 { "" } else { "s" }
                         ))
-                        .color(DIM),
+                        .color(p.on_surface_variant),
                     );
                 }
             }
             ui.add_space(SPACE_LARGE);
             ui.columns(2, |cols| {
                 cols[0].vertical_centered(|ui| {
-                    if text_button(ui, "Discard", RED) {
+                    if text_button(ui, "Discard", p.error) {
                         confirm = true;
                     }
                 });

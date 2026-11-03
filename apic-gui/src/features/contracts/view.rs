@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn every_section_renders_without_panicking() {
-        // `__run_test_ui` takes `impl Fn`, so build the model and tab index
+        // `run_in_theme` takes a closure, so build the model and tab index
         // fresh inside the closure rather than capturing them mutably.
         for preference in crate::ui::theme::BOTH_THEMES {
             crate::ui::theme::run_in_theme(preference, |ui| {
@@ -637,7 +637,7 @@ mod tests {
 
     #[test]
     fn the_request_editor_does_not_materialize_a_body_on_a_multipart_contract() {
-        // `__run_test_ui` takes `impl Fn`, so the model is built inside the
+        // `run_in_theme` takes a closure, so the model is built inside the
         // closure and asserted there too.
         for preference in crate::ui::theme::BOTH_THEMES {
             crate::ui::theme::run_in_theme(preference, |ui| {
