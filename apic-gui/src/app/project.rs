@@ -37,7 +37,7 @@ impl App {
             return;
         };
 
-        match crate::features::git::service::discover(&root) {
+        match crate::features::git::data::cli::discover(&root) {
             Ok(repo_root) => {
                 self.shell.repo_root = repo_root;
                 // The tab strip's dirty indicator must be correct before the

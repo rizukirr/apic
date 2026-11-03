@@ -1182,8 +1182,8 @@ fn raw_diff_view(ui: &mut egui::Ui, raw: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::git::data::jobs::DiffData;
     use crate::features::git::domain::status::{Branches, Change};
-    use crate::features::git::state::DiffData;
 
     const CONTRACT_GET: &str =
         r#"{"name":"x","method":"GET","url":"http://a","headers":[],"responses":[]}"#;

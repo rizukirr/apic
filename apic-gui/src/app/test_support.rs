@@ -30,7 +30,7 @@ pub(crate) fn tempdir() -> PathBuf {
 
 /// True when `git` is usable on this machine. Every test that needs a real
 /// repository returns early when this is false, matching
-/// `features::git::service::tests`.
+/// `features::git::data::cli::tests`.
 pub(crate) fn git_available() -> bool {
     Command::new("git").arg("--version").output().is_ok()
 }

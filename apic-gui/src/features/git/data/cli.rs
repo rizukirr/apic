@@ -1,8 +1,6 @@
-//! Every `git` invocation, and nothing else. No state, no egui, no threads:
-//! the threading lives in the app shell, which is what keeps this testable
-//! against a real temp-dir repository.
+//! Every `git` invocation, and nothing else. No state, no egui, no threads: the threading lives in `jobs`, which is what keeps this testable against a real temp-dir repository.
 //!
-//! Consumed by `state` and `view`.
+//! Consumed by `jobs` and the app shell's project discovery.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

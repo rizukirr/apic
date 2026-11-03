@@ -1,63 +1,11 @@
 //! State owned by the git feature: the current status, the selected diff, and
 //! the in-flight background job (if any).
 
+use crate::features::git::data::jobs::{DiffData, JobResult};
 use crate::features::git::domain::conflict::{self, Choice, ConflictFile, Segment};
 use crate::features::git::domain::status::{Branches, Status};
 
 /// One completed diff fetch: the raw line diff plus each side's file content,
-/// fetched only for a `.json` path since that is the only shape `diff::parse`
-/// can turn into a semantic comparison.
-pub(crate) struct DiffData {
-    /// `git diff` output for the selected path and side, `--cached` for
-    /// staged.
-    pub(crate) raw: String,
-
-    /// The old side's content: `HEAD` for staged, the index for unstaged.
-    /// `None` when the path did not exist at that revision, the normal case
-    /// for a newly added file.
-    pub(crate) old_blob: Option<String>,
-
-    /// The new side's content: the index for staged, the working file for
-    /// unstaged. `None` when the path does not exist there, the normal case
-    /// for a deleted file.
-    pub(crate) new_blob: Option<String>,
-}
-
-/// Which mutating git command a `JobResult::Mutate` reports on. Carried
-/// alongside the result so the caller knows, for a successful commit, to
-/// clear `GitState::commit_message`.
-pub(crate) enum MutateKind {
-    Stage,
-    Unstage,
-    Discard,
-    Commit,
-    SwitchBranch,
-    CreateBranch,
-    DeleteBranch,
-    Resolve,
-}
-
-/// The result of a completed background git job, sent back over `pending`.
-pub(crate) enum JobResult {
-    Status(Result<Status, String>),
-
-    /// A diff fetch for one `(path, staged)` selection. The key travels with
-    /// the result so a stale reply, one for a file the user has since
-    /// unselected, does not get filed under the wrong key.
-    Diff((String, bool), Result<DiffData, String>),
-
-    /// A stage, unstage, discard, commit, or branch switch, create or
-    /// delete, run then followed by a status refresh in the same background
-    /// job. The refreshed status travels with the result so a successful
-    /// mutation lands on screen in one poll. The message names what the
-    /// mutation did, built at spawn time where the path or branch name is
-    /// already in hand, and is written to `shell.status` on success.
-    Mutate(MutateKind, String, Result<Status, String>),
-
-    /// A branch listing.
-    Branches(Result<Branches, String>),
-}
-
 /// A conflicted file parsed into its blocks, plus the choice made for each
 /// one so far. Rebuilt from scratch whenever the selected path changes, so it
 /// never carries choices belonging to a different file.
