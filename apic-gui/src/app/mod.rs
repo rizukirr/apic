@@ -25,7 +25,17 @@ use crate::features::contracts::view::{
 use crate::features::git::ui::state::{GitAction, GitEvent, GitState};
 use crate::features::git::ui::view;
 use crate::settings::Settings;
+use crate::ui::components::icon_button;
 use crate::ui::theme::*;
+
+/// egui's default fonts plus the Phosphor icon font as a fallback for
+/// proportional text, so any label can carry an `egui_phosphor::regular`
+/// icon.
+pub(crate) fn fonts_with_icons() -> egui::FontDefinitions {
+    let mut fonts = egui::FontDefinitions::default();
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    fonts
+}
 
 /// Fixed row height shared by the top bar and the sidebar tab row, so a
 /// `selectable_label` and a `small_button` line up on one vertical centre
@@ -81,50 +91,47 @@ impl App {
         app
     }
 
-    /// Top header: title, the Import menu, and the search box. Returns an action
-    /// when Import is chosen.
+    /// Top header: sidebar toggle, the project dropdown (new, open, import) and
+    /// the theme menu. Returns an action when one of those is chosen.
     fn top_bar(&mut self, ui: &mut egui::Ui) -> Option<SidebarAction> {
         let p = palette(ui.ctx());
         let mut action = None;
+        let project = self
+            .shell
+            .project_root
+            .as_deref()
+            .and_then(|root| root.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "No project".to_string());
         egui::Panel::top("nav").show(ui, |ui| {
             ui.add_space(SPACE_EXTRA_SMALL);
             ui.horizontal(|ui| {
                 ui.set_min_height(TOOLBAR_ROW_H);
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.set_min_height(TOOLBAR_ROW_H);
-                    let toggle_glyph = if self.shell.sidebar_open {
-                        "☰"
-                    } else {
-                        "◧"
-                    };
-                    if ui
-                        .button(RichText::new(toggle_glyph).color(p.primary))
-                        .on_hover_text("Toggle sidebar")
-                        .clicked()
-                    {
-                        action = Some(SidebarAction::ToggleSidebar);
-                    }
-                    ui.add_space(SPACE_MEDIUM); // left padding so the title isn't flush to the edge
-                    ui.label(RichText::new("APIC").color(p.primary).strong().size(18.0));
-                    ui.add_space(SPACE_MEDIUM);
-                    egui::MenuBar::new()
-                        .style(|style: &mut egui::Style| {
-                            egui::containers::menu::menu_style(style);
-                            style.spacing.button_padding = egui::vec2(8.0, 4.0);
-                        })
-                        .ui(ui, |ui| {
-                            if ui.button(RichText::new("New").color(p.primary)).clicked() {
+                if icon_button(ui, egui_phosphor::regular::SIDEBAR, "Toggle sidebar").clicked() {
+                    action = Some(SidebarAction::ToggleSidebar);
+                }
+                egui::MenuBar::new()
+                    .style(|style: &mut egui::Style| {
+                        egui::containers::menu::menu_style(style);
+                        style.spacing.button_padding = egui::vec2(8.0, 4.0);
+                    })
+                    .ui(ui, |ui| {
+                        let title = format!("{project} {}", egui_phosphor::regular::CARET_DOWN);
+                        ui.menu_button(RichText::new(title).color(p.on_surface).strong(), |ui| {
+                            if ui.button("New project").clicked() {
                                 action = Some(SidebarAction::NewProject);
+                                ui.close();
                             }
-                            if ui.button(RichText::new("Open").color(p.primary)).clicked() {
+                            if ui.button("Open project").clicked() {
                                 action = Some(SidebarAction::OpenProject);
+                                ui.close();
                             }
-                            ui.menu_button(RichText::new("Import").color(p.primary), |ui| {
-                                if ui.button("Postman collection").clicked() {
-                                    action = Some(SidebarAction::ImportPostman);
-                                    ui.close();
-                                }
-                            });
+                            if ui.button("Import Postman collection").clicked() {
+                                action = Some(SidebarAction::ImportPostman);
+                                ui.close();
+                            }
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.menu_button(RichText::new("Theme").color(p.primary), |ui| {
                                 let current = ui.ctx().options(|o| o.theme_preference);
                                 for (preference, label) in [
@@ -140,7 +147,7 @@ impl App {
                                 }
                             });
                         });
-                });
+                    });
             });
             ui.add_space(SPACE_EXTRA_SMALL);
         });
@@ -428,6 +435,27 @@ mod tests {
     /// can't silently drop us back to the OpenGL backend that fails in
     /// driverless environments.
     #[cfg(windows)]
+    #[test]
+    fn fonts_with_icons_registers_phosphor() {
+        let fonts = fonts_with_icons();
+        assert!(fonts.font_data.contains_key("phosphor"));
+        let proportional = fonts
+            .families
+            .get(&egui::FontFamily::Proportional)
+            .expect("proportional family exists");
+        assert!(proportional.iter().any(|name| name == "phosphor"));
+    }
+
+    #[test]
+    fn top_bar_renders_in_both_themes() {
+        for preference in crate::ui::theme::BOTH_THEMES {
+            let mut app = app_at(tempdir());
+            crate::ui::theme::run_in_theme(preference, |ui| {
+                let _ = app.top_bar(ui);
+            });
+        }
+    }
+
     #[test]
     fn windows_defaults_to_wgpu_renderer() {
         assert!(matches!(
