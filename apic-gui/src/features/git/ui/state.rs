@@ -335,8 +335,8 @@ impl GitState {
             }
             JobResult::Amend(Ok(info)) => {
                 if self.amend {
-                    self.message_before_amend =
-                        Some(std::mem::replace(&mut self.commit_message, info.message));
+                    let typed = std::mem::replace(&mut self.commit_message, info.message);
+                    self.message_before_amend.get_or_insert(typed);
                     self.amend_pushed_to = info.pushed_to;
                 }
                 self.error.clear();
@@ -931,5 +931,23 @@ mod tests {
         );
         assert!(!git.amend);
         assert!(git.commit_message.is_empty());
+    }
+
+    #[test]
+    fn retick_while_the_first_read_is_in_flight_keeps_the_draft() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let (mut git, paths) = git_at(&root);
+        let ctx = egui::Context::default();
+        git.commit_message = "draft".to_string();
+        git.handle(GitAction::ToggleAmend, Some(&paths), &ctx);
+        let _ = git.poll(Some(&paths), &ctx);
+        git.handle(GitAction::ToggleAmend, Some(&paths), &ctx);
+        git.handle(GitAction::ToggleAmend, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        git.handle(GitAction::ToggleAmend, Some(&paths), &ctx);
+        assert_eq!(git.commit_message, "draft");
     }
 }
