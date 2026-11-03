@@ -17,11 +17,11 @@ use apic_core::json::method_str;
 use crate::app::App;
 use crate::app::actions::SidebarAction;
 use crate::app::state::ShellState;
-use crate::features::contracts::state::{ContractsState, DeleteTarget, MainTab, RespTab};
+use crate::features::contracts::state::{ContractsState, DeleteTarget, Entry, MainTab, RespTab};
 use crate::ui::components::{
-    add_button, bordered_input, delete_button, fill_column, header_label, json_editor,
-    metadata_table, required_chip, section_label, table_frame, tcell_edit, tcell_edit_code,
-    text_button,
+    add_button, bordered_input, delete_button, fill_column, header_label, icon_button, json_editor,
+    metadata_table, required_chip, row_menu_button, section_label, table_frame, tcell_edit,
+    tcell_edit_code, text_button,
 };
 use crate::ui::focus::{request_new_row_focus, take_pending_focus};
 use crate::ui::theme::*;
@@ -604,6 +604,59 @@ fn response_body(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editing: 
 mod tests {
     use super::*;
 
+    fn entry(rel: &str) -> Entry {
+        Entry {
+            path: std::path::PathBuf::from(rel),
+            rel: rel.to_string(),
+            method: "GET".to_string(),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn toggle_search_clears_the_filter_when_hidden() {
+        let mut state = ContractsState::default();
+        state.toggle_search();
+        assert!(state.search_open);
+        state.search = "login".to_string();
+        state.toggle_search();
+        assert!(!state.search_open);
+        assert!(state.search.is_empty());
+    }
+
+    #[test]
+    fn build_tree_keeps_only_matching_contracts() {
+        let entries = [entry("auth/login.json"), entry("profile/get.json")];
+        let tree = build_tree(&entries, "LOGIN");
+        assert!(tree.dirs.contains_key("auth"));
+        assert!(!tree.dirs.contains_key("profile"));
+        let all = build_tree(&entries, "");
+        assert!(all.dirs.contains_key("auth") && all.dirs.contains_key("profile"));
+    }
+
+    #[test]
+    fn folder_menu_offers_new_request_and_delete() {
+        let items = folder_menu_items("auth");
+        assert!(
+            items
+                .iter()
+                .any(|(_, a)| matches!(a, SidebarAction::NewRequest(p) if p == "auth/"))
+        );
+        assert!(items.iter().any(|(_, a)| matches!(
+            a,
+            SidebarAction::RequestDelete(DeleteTarget::Contract { rel, is_dir: true }) if rel == "auth"
+        )));
+    }
+
+    #[test]
+    fn contract_menu_offers_delete() {
+        let items = contract_menu_items("auth/login.json");
+        assert!(items.iter().any(|(_, a)| matches!(
+            a,
+            SidebarAction::RequestDelete(DeleteTarget::Contract { rel, is_dir: false }) if rel == "auth/login.json"
+        )));
+    }
+
     #[test]
     fn every_section_renders_without_panicking() {
         // `run_in_theme` takes a closure, so build the model and tab index
@@ -755,7 +808,7 @@ impl App {
             .show(ctx, |ui| {
                 ui.set_min_width(320.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("NEW REQUEST").color(p.primary).strong().size(16.0));
+                    ui.label(RichText::new("New request").color(p.primary).strong().size(16.0));
                 });
                 ui.add_space(SPACE_SMALL);
                 ui.label(RichText::new("path under the contracts directory").color(p.on_surface_variant));
@@ -953,30 +1006,11 @@ pub(crate) struct CentralOutcome {
 /// second sidebar tab can render into the same frame; this only fills it.
 pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Option<SidebarAction> {
     let p = palette(ui.ctx());
-    let q = state.search.to_lowercase();
-    let mut tree = TreeNode::default();
-    for (i, e) in state.entries.iter().enumerate() {
-        if q.is_empty() || e.rel.to_lowercase().contains(&q) {
-            tree.insert(&e.rel, i, &e.method, e.error.is_some());
-        }
-    }
+    let tree = build_tree(&state.entries, &state.search);
     let selected = state.selected;
     let sel_template = state.selected_template;
     let templates: Vec<(String, PathBuf)> = state.templates.clone();
     let mut action = None;
-    let mut to_contract = None;
-    egui::Panel::bottom("new_request_bar")
-        .show_separator_line(false)
-        .show(ui, |ui| {
-            ui.add_space(SPACE_EXTRA_SMALL);
-            let button = egui::Button::new(RichText::new("[ NEW REQUEST ]").color(p.on_primary))
-                .fill(p.primary);
-            if ui.add_sized([ui.available_width(), 26.0], button).clicked() {
-                action = Some(SidebarAction::NewRequest(String::new()));
-            }
-            ui.add_space(SPACE_EXTRA_SMALL);
-        });
-
     ui.add_space(SPACE_MEDIUM);
     ui.horizontal(|ui| {
         ui.label(
@@ -1027,34 +1061,42 @@ pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Opt
     }
 
     ui.add_space(10.0);
-    ui.label(
-        RichText::new("CONTRACTS")
-            .color(p.on_surface_variant)
-            .size(11.0),
-    );
-    ui.separator();
-    bordered_input(ui, &mut state.search, f32::INFINITY, "SEARCH...");
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if icon_button(ui, egui_phosphor::regular::PLUS, "New request").clicked() {
+                action = Some(SidebarAction::NewRequest(String::new()));
+            }
+            if icon_button(
+                ui,
+                egui_phosphor::regular::MAGNIFYING_GLASS,
+                "Filter contracts",
+            )
+            .clicked()
+            {
+                state.toggle_search();
+            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "{} Contracts",
+                        egui_phosphor::regular::FOLDER_SIMPLE
+                    ))
+                    .color(p.on_surface)
+                    .strong(),
+                );
+            });
+        });
+    });
+    if state.search_open {
+        bordered_input(ui, &mut state.search, f32::INFINITY, "Filter contracts");
+    }
     ui.add_space(SPACE_EXTRA_SMALL);
 
-    let mut new_in = None;
-    let mut delete = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            tree.show(ui, "", selected, &mut to_contract, &mut new_in, &mut delete);
+            tree.show(ui, "", selected, &mut action);
         });
-    if let Some(prefix) = new_in {
-        action = Some(SidebarAction::NewRequest(prefix));
-    }
-    if let Some((rel, is_dir)) = delete {
-        action = Some(SidebarAction::RequestDelete(DeleteTarget::Contract {
-            rel,
-            is_dir,
-        }));
-    }
-    if let Some(i) = to_contract {
-        action = Some(SidebarAction::LoadContract(i));
-    }
     action
 }
 
@@ -1315,6 +1357,61 @@ pub(crate) fn central_body(
         });
 }
 
+/// The menu entries for a folder row: a new request inside it, or deleting it.
+fn folder_menu_items(folder_path: &str) -> Vec<(&'static str, SidebarAction)> {
+    vec![
+        (
+            "New request here",
+            SidebarAction::NewRequest(format!("{folder_path}/")),
+        ),
+        (
+            "Delete folder",
+            SidebarAction::RequestDelete(DeleteTarget::Contract {
+                rel: folder_path.to_string(),
+                is_dir: true,
+            }),
+        ),
+    ]
+}
+
+/// The menu entries for a contract row.
+fn contract_menu_items(rel: &str) -> Vec<(&'static str, SidebarAction)> {
+    vec![(
+        "Delete",
+        SidebarAction::RequestDelete(DeleteTarget::Contract {
+            rel: rel.to_string(),
+            is_dir: false,
+        }),
+    )]
+}
+
+/// Renders `items` as menu buttons, recording the clicked one in `out`.
+fn menu_items_ui(
+    ui: &mut egui::Ui,
+    items: Vec<(&'static str, SidebarAction)>,
+    out: &mut Option<SidebarAction>,
+) {
+    for (label, action) in items {
+        if ui.button(label).clicked() {
+            *out = Some(action);
+            ui.close();
+        }
+    }
+}
+
+/// The contract tree for `entries`, keeping only those whose relative path
+/// contains `query` (case-insensitive; an empty query keeps every entry).
+fn build_tree(entries: &[Entry], query: &str) -> TreeNode {
+    let q = query.to_lowercase();
+    let mut tree = TreeNode::default();
+    for (i, e) in entries.iter().enumerate() {
+        if q.is_empty() || e.rel.to_lowercase().contains(&q) {
+            tree.insert(&e.rel, i, &e.method, e.error.is_some());
+        }
+    }
+    tree
+}
+
 /// A folder tree of contracts built from their `/`-separated relative paths.
 /// Leaves carry the index into `App::entries` and the method for the badge.
 #[derive(Default)]
@@ -1337,19 +1434,14 @@ impl TreeNode {
         }
     }
 
-    /// Renders the tree. `prefix` is the path accumulated so far (for folder ids
-    /// and the `+` target); `to_load` records a clicked contract; `new_in`
-    /// records a folder's path (with trailing `/`) when its `+` is clicked.
-    #[allow(clippy::too_many_arguments)]
+    /// Renders the tree. `prefix` is the path accumulated so far (for folder
+    /// ids); a click or menu choice is recorded in `action`.
     fn show(
         &self,
         ui: &mut egui::Ui,
         prefix: &str,
         selected: Option<usize>,
-        to_load: &mut Option<usize>,
-        new_in: &mut Option<String>,
-        // (relative path, is_folder) of an item whose `x` was clicked.
-        delete: &mut Option<(String, bool)>,
+        action: &mut Option<SidebarAction>,
     ) {
         let p = palette(ui.ctx());
         for (name, child) in &self.dirs {
@@ -1361,33 +1453,27 @@ impl TreeNode {
             let id = ui.make_persistent_id(("tree", &folder_path));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    // Trailing buttons are reserved first (right-to-left) so the
+                    let hovered = ui.rect_contains_pointer(ui.max_rect());
+                    // The menu button is reserved first (right-to-left) so the
                     // folder name truncates to the remaining width rather than
                     // forcing the side panel wider than its dragged width.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .small_button(RichText::new("-").color(p.on_surface_variant))
-                            .on_hover_text("Delete this folder")
-                            .clicked()
-                        {
-                            *delete = Some((folder_path.clone(), true));
-                        }
-                        if ui
-                            .small_button(RichText::new("+").color(p.primary))
-                            .on_hover_text("New request in this folder")
-                            .clicked()
-                        {
-                            *new_in = Some(format!("{folder_path}/"));
-                        }
+                        row_menu_button(ui, hovered, |ui| {
+                            menu_items_ui(ui, folder_menu_items(&folder_path), action)
+                        });
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                             ui.add(
                                 egui::Label::new(RichText::new(name).color(p.on_surface_variant))
-                                    .truncate(),
-                            );
+                                    .truncate()
+                                    .sense(egui::Sense::click()),
+                            )
+                            .context_menu(|ui| {
+                                menu_items_ui(ui, folder_menu_items(&folder_path), action)
+                            });
                         });
                     });
                 })
-                .body(|ui| child.show(ui, &folder_path, selected, to_load, new_in, delete));
+                .body(|ui| child.show(ui, &folder_path, selected, action));
         }
         for (label, idx, method, invalid) in &self.files {
             let rel = if prefix.is_empty() {
@@ -1396,36 +1482,37 @@ impl TreeNode {
                 format!("{prefix}/{label}")
             };
             ui.horizontal(|ui| {
-                if *invalid {
-                    ui.label(RichText::new("●").color(p.error))
-                        .on_hover_text("Invalid contract, click to repair");
-                }
-                ui.label(
-                    RichText::new(method)
-                        .color(method_color(method, p))
-                        .size(11.0),
-                );
-                // Reserve the delete button on the right, then let the file name
+                let hovered = ui.rect_contains_pointer(ui.max_rect());
+                // Reserve the menu button on the right, then let the file name
                 // truncate into whatever width is left. Without truncation a long
                 // name measures wider than the panel, and egui stores that as the
-                // panel width every frame — blocking resize below the longest name.
+                // panel width every frame, blocking resize below the longest name.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .small_button(RichText::new("-").color(p.on_surface_variant))
-                        .on_hover_text("Delete this contract")
-                        .clicked()
-                    {
-                        *delete = Some((rel.clone(), false));
-                    }
+                    row_menu_button(ui, hovered, |ui| {
+                        menu_items_ui(ui, contract_menu_items(&rel), action)
+                    });
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        if *invalid {
+                            ui.label(RichText::new("●").color(p.error))
+                                .on_hover_text("Invalid contract, click to repair");
+                        }
+                        ui.label(
+                            RichText::new(method)
+                                .color(method_color(method, p))
+                                .size(11.0),
+                        );
                         let file = egui::Button::selectable(
                             selected == Some(*idx),
                             RichText::new(label).color(p.on_surface),
                         )
                         .truncate();
-                        if ui.add(file).clicked() {
-                            *to_load = Some(*idx);
+                        let response = ui.add(file);
+                        if response.clicked() {
+                            *action = Some(SidebarAction::LoadContract(*idx));
                         }
+                        response.context_menu(|ui| {
+                            menu_items_ui(ui, contract_menu_items(&rel), action)
+                        });
                     });
                 });
             });

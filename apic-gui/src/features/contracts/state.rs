@@ -70,6 +70,9 @@ pub(crate) struct ContractsState {
     pub(crate) path: Option<PathBuf>,
     pub(crate) editing: bool,
     pub(crate) search: String,
+
+    /// Whether the contract filter field is shown. Hiding it clears `search`, so no rows stay filtered without a visible field.
+    pub(crate) search_open: bool,
     pub(crate) resp_tab: usize,
 
     /// The active top-level editor tab; reset to [`MainTab::Overview`] on load.
@@ -108,4 +111,14 @@ pub(crate) struct ContractsState {
     /// Snapshot of `model` taken when edit mode is entered, so [ CANCEL ] can
     /// restore the pre-edit state. `None` whenever not editing.
     pub(crate) original_model: Option<EditModel>,
+}
+
+impl ContractsState {
+    /// Shows or hides the filter field, clearing the filter when hiding it.
+    pub(crate) fn toggle_search(&mut self) {
+        self.search_open = !self.search_open;
+        if !self.search_open {
+            self.search.clear();
+        }
+    }
 }

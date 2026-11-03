@@ -7,11 +7,13 @@
 pub(crate) mod button;
 pub(crate) mod chip;
 pub(crate) mod input;
+pub(crate) mod sidebar;
 pub(crate) mod table;
 pub(crate) mod text;
 
 pub(crate) use button::*;
 pub(crate) use chip::*;
 pub(crate) use input::*;
+pub(crate) use sidebar::*;
 pub(crate) use table::*;
 pub(crate) use text::*;
