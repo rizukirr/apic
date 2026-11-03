@@ -58,9 +58,9 @@ pub(crate) fn fonts_with_icons() -> egui::FontDefinitions {
     fonts
 }
 
-/// Fixed row height shared by the top bar and the sidebar tab row, so a
-/// `selectable_label` and a `small_button` line up on one vertical centre
-/// instead of whatever baseline their differing natural heights would give.
+/// Fixed row height of the top bar, so a `selectable_label` and a
+/// `small_button` line up on one vertical centre instead of whatever baseline
+/// their differing natural heights would give.
 const TOOLBAR_ROW_H: f32 = 26.0;
 
 /// Whole-app state.
@@ -660,9 +660,9 @@ mod tests {
     }
 
     /// Pins the launch-indicator defect: a project load must populate
-    /// `git.status` on its own, before the Git tab is ever opened. The tab
-    /// switch is what used to fetch status, so the indicator on the tab
-    /// itself stayed empty at launch.
+    /// `git.status` on its own, before the Git section is ever opened. Opening
+    /// the section is what used to fetch status, so the indicator on the
+    /// section itself stayed empty at launch.
     #[test]
     fn reload_project_alone_populates_status() {
         if !git_available() {

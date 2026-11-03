@@ -59,7 +59,7 @@ impl App {
             Ok(repo_root) => {
                 self.shell.repo_root = repo_root;
                 // The tab strip's dirty indicator must be correct before the
-                // Git tab is ever opened, so a project load fetches status
+                // Git section is ever opened, so a project load fetches status
                 // itself instead of waiting for tab activation.
                 if self.shell.repo_root.is_some() {
                     self.git.request_refresh();
