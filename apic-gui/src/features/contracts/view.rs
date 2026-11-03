@@ -604,6 +604,16 @@ fn response_body(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editing: 
 mod tests {
     use super::*;
 
+    #[test]
+    fn template_menu_offers_delete() {
+        let path = std::path::Path::new("/p/.apic/template/base.json");
+        let items = template_menu_items("base", path);
+        assert!(items.iter().any(|(_, a)| matches!(
+            a,
+            SidebarAction::RequestDelete(DeleteTarget::Template { name, .. }) if name == "base"
+        )));
+    }
+
     fn entry(rel: &str) -> Entry {
         Entry {
             path: std::path::PathBuf::from(rel),
@@ -999,6 +1009,58 @@ pub(crate) struct CentralOutcome {
     pub(crate) saved: bool,
 }
 
+/// The template list shown inside the Templates section: one selectable row
+/// per template, with the same hover and right-click menu as contract rows.
+pub(crate) fn templates_body(
+    ui: &mut egui::Ui,
+    state: &mut ContractsState,
+) -> Option<SidebarAction> {
+    let p = palette(ui.ctx());
+    let mut action = None;
+    if state.templates.is_empty() {
+        ui.label(RichText::new("(none)").color(p.on_surface_variant));
+    }
+    let selected = state.selected_template;
+    for (i, (name, path)) in state.templates.iter().enumerate() {
+        ui.horizontal(|ui| {
+            let hovered = ui.rect_contains_pointer(ui.max_rect());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                row_menu_button(ui, hovered, |ui| {
+                    menu_items_ui(ui, template_menu_items(name, path), &mut action)
+                });
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let row = ui.add(
+                        egui::Button::selectable(
+                            selected == Some(i),
+                            RichText::new(format!("{} {name}", egui_phosphor::regular::DIAMOND))
+                                .color(p.warning),
+                        )
+                        .truncate(),
+                    );
+                    if row.clicked() {
+                        action = Some(SidebarAction::LoadTemplate(i));
+                    }
+                    row.context_menu(|ui| {
+                        menu_items_ui(ui, template_menu_items(name, path), &mut action)
+                    });
+                });
+            });
+        });
+    }
+    action
+}
+
+/// The menu entries for a template row.
+fn template_menu_items(name: &str, path: &std::path::Path) -> Vec<(&'static str, SidebarAction)> {
+    vec![(
+        "Delete",
+        SidebarAction::RequestDelete(DeleteTarget::Template {
+            name: name.to_string(),
+            path: path.to_path_buf(),
+        }),
+    )]
+}
+
 /// Left sidebar body: a TEMPLATES section on top, then the contract picker
 /// (folder tree, method-badged, filtered by search).
 ///
@@ -1008,58 +1070,7 @@ pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Opt
     let p = palette(ui.ctx());
     let tree = build_tree(&state.entries, &state.search);
     let selected = state.selected;
-    let sel_template = state.selected_template;
-    let templates: Vec<(String, PathBuf)> = state.templates.clone();
     let mut action = None;
-    ui.add_space(SPACE_MEDIUM);
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new("TEMPLATES")
-                .color(p.on_surface_variant)
-                .size(11.0),
-        );
-        if ui
-            .small_button(RichText::new("+").color(p.primary))
-            .on_hover_text("New template")
-            .clicked()
-        {
-            action = Some(SidebarAction::NewTemplate);
-        }
-    });
-    ui.separator();
-    if templates.is_empty() {
-        ui.label(RichText::new("(none)").color(p.on_surface_variant));
-    }
-    for (i, (name, path)) in templates.iter().enumerate() {
-        ui.horizontal(|ui| {
-            // Reserve the trailing delete button first so the name
-            // label truncates to the space that's left instead of
-            // forcing the panel wider than its dragged width.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .small_button(RichText::new("-").color(p.on_surface_variant))
-                    .on_hover_text("Delete this template")
-                    .clicked()
-                {
-                    action = Some(SidebarAction::RequestDelete(DeleteTarget::Template {
-                        name: name.clone(),
-                        path: path.clone(),
-                    }));
-                }
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    let label = egui::Button::selectable(
-                        sel_template == Some(i),
-                        RichText::new(format!("◆ {name}")).color(p.warning),
-                    )
-                    .truncate();
-                    if ui.add(label).clicked() {
-                        action = Some(SidebarAction::LoadTemplate(i));
-                    }
-                });
-            });
-        });
-    }
-
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

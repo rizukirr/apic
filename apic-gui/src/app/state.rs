@@ -29,10 +29,14 @@ pub(crate) struct ShellState {
     /// not persisted, so it always starts `true` on launch.
     pub(crate) sidebar_open: bool,
 
-    /// Which panel fills the shell-owned sidebar frame. Switching tabs only
-    /// changes which body renders, each slice keeps its own selection so
-    /// switching away and back restores the previous view.
-    pub(crate) sidebar_tab: SidebarTab,
+    /// What fills the central panel, set by the last click in the sidebar.
+    pub(crate) central: CentralView,
+
+    /// Whether the Git section at the bottom of the sidebar is expanded.
+    pub(crate) git_open: bool,
+
+    /// Whether the Templates section at the bottom of the sidebar is expanded.
+    pub(crate) templates_open: bool,
 
     /// Root of the git repository containing `project_root`, or `None` when
     /// the project is not inside one.
@@ -60,16 +64,20 @@ impl Default for ShellState {
             apic_dir: None,
             status: String::new(),
             sidebar_open: true,
-            sidebar_tab: SidebarTab::Explorer,
+            central: CentralView::Contracts,
+            git_open: false,
+            templates_open: false,
             repo_root: None,
         }
     }
 }
 
-/// Which panel fills the shell-owned sidebar frame.
+/// What fills the central panel: the last thing clicked in the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SidebarTab {
-    Explorer,
+pub(crate) enum CentralView {
+    /// The open contract or template.
+    Contracts,
+    /// The selected git file's diff or conflict resolver.
     Git,
 }
 

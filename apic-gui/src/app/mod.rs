@@ -17,16 +17,37 @@ use eframe::egui;
 use egui::RichText;
 
 use crate::app::actions::{Action, SidebarAction};
-use crate::app::state::{DialogKind, ShellState, SidebarTab};
+use crate::app::state::{CentralView, DialogKind, ShellState};
 use crate::features::contracts::state::ContractsState;
 use crate::features::contracts::view::{
     CentralOutcome, FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, sidebar_body,
+    templates_body,
 };
 use crate::features::git::ui::state::{GitAction, GitEvent, GitState};
 use crate::features::git::ui::view;
 use crate::settings::Settings;
-use crate::ui::components::icon_button;
+use crate::ui::components::{icon_button, section_header};
 use crate::ui::theme::*;
+
+/// The Git section header: a toggle on the title and a refresh icon.
+fn git_section_header(ui: &mut egui::Ui, open: bool, title: RichText) -> Option<Action> {
+    let mut action = None;
+    let toggled = section_header(ui, open, title, |ui| {
+        if icon_button(
+            ui,
+            egui_phosphor::regular::ARROWS_CLOCKWISE,
+            "Refresh status",
+        )
+        .clicked()
+        {
+            action = Some(Action::Git(GitAction::Refresh));
+        }
+    });
+    if toggled {
+        action = Some(Action::Sidebar(SidebarAction::ToggleGitSection));
+    }
+    action
+}
 
 /// egui's default fonts plus the Phosphor icon font as a fallback for
 /// proportional text, so any label can carry an `egui_phosphor::regular`
@@ -171,87 +192,70 @@ impl App {
         });
     }
 
-    /// The left sidebar frame. The panel belongs to the shell rather than to any
-    /// one feature, so a tab row picks the active feature and only its body
-    /// fills the frame.
+    /// The left sidebar: the contract tree, with the Templates and Git
+    /// sections docked at the bottom.
     fn sidebar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
-        let p = palette(ui.ctx());
-        // When collapsed, skip building/showing the panel entirely so the
-        // CentralPanel reclaims the full width.
         if !self.shell.sidebar_open {
             return None;
         }
+        let p = palette(ui.ctx());
         let mut action = None;
         egui::Panel::left("sidebar")
             .resizable(true)
             .default_size(240.0)
             .min_size(100.0)
             .show(ui, |ui| {
-                ui.add_space(SPACE_SMALL);
-                ui.horizontal(|ui| {
-                    ui.set_min_height(TOOLBAR_ROW_H);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.set_min_height(TOOLBAR_ROW_H);
-                        if self.shell.sidebar_tab == SidebarTab::Git
-                            && ui
-                                .small_button(RichText::new("⟳").color(p.primary))
-                                .on_hover_text("Refresh status")
-                                .clicked()
-                        {
-                            action = Some(Action::Git(GitAction::Refresh));
+                egui::Panel::bottom("templates_section").show(ui, |ui| {
+                    let label =
+                        RichText::new(format!("{} Templates", egui_phosphor::regular::DIAMOND))
+                            .color(p.on_surface);
+                    let toggled = section_header(ui, self.shell.templates_open, label, |ui| {
+                        if icon_button(ui, egui_phosphor::regular::PLUS, "New template").clicked() {
+                            action = Some(Action::Sidebar(SidebarAction::NewTemplate));
                         }
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.set_min_height(TOOLBAR_ROW_H);
-                            let selected = self.shell.sidebar_tab == SidebarTab::Explorer;
-                            if ui
-                                .selectable_label(
-                                    selected,
-                                    RichText::new("Explorer").color(if selected {
-                                        p.primary
-                                    } else {
-                                        p.on_surface_variant
-                                    }),
-                                )
-                                .clicked()
-                                && !selected
-                            {
-                                action = Some(Action::Sidebar(SidebarAction::SwitchTab(
-                                    SidebarTab::Explorer,
-                                )));
+                    });
+                    if toggled {
+                        action = Some(Action::Sidebar(SidebarAction::ToggleTemplatesSection));
+                    }
+                    if self.shell.templates_open
+                        && let Some(a) = templates_body(ui, &mut self.contracts)
+                    {
+                        action = Some(Action::Sidebar(a));
+                    }
+                });
+                let (git_label, git_color) = view::tab_label("Git", &self.git.status, p);
+                let branch = self.git.branches.current.clone().unwrap_or_default();
+                let title = RichText::new(format!(
+                    "{} {git_label}  {branch}",
+                    egui_phosphor::regular::GIT_BRANCH
+                ))
+                .color(git_color);
+                if self.shell.git_open {
+                    egui::Panel::bottom("git_section_open")
+                        .resizable(true)
+                        .default_size(260.0)
+                        .min_size(120.0)
+                        .show(ui, |ui| {
+                            if let Some(a) = git_section_header(ui, true, title.clone()) {
+                                action = Some(a);
                             }
-                            let git_selected = self.shell.sidebar_tab == SidebarTab::Git;
-                            let (git_label, git_color) =
-                                view::tab_label("Git", &self.git.status, palette(ui.ctx()));
-                            if ui
-                                .selectable_label(
-                                    git_selected,
-                                    RichText::new(git_label).color(git_color),
-                                )
-                                .clicked()
-                                && !git_selected
-                            {
-                                action = Some(Action::Sidebar(SidebarAction::SwitchTab(
-                                    SidebarTab::Git,
-                                )));
+                            if let Some(a) = view::sidebar_body(
+                                ui,
+                                &mut self.git,
+                                self.shell.repo_root.as_deref(),
+                            ) {
+                                action = Some(Action::Git(a));
                             }
                         });
+                } else {
+                    egui::Panel::bottom("git_section_closed").show(ui, |ui| {
+                        if let Some(a) = git_section_header(ui, false, title.clone()) {
+                            action = Some(a);
+                        }
                     });
-                });
-                ui.add_space(SPACE_EXTRA_SMALL);
-                ui.separator();
-                match self.shell.sidebar_tab {
-                    SidebarTab::Explorer => {
-                        if let Some(a) = sidebar_body(ui, &mut self.contracts) {
-                            action = Some(Action::Sidebar(a));
-                        }
-                    }
-                    SidebarTab::Git => {
-                        if let Some(a) =
-                            view::sidebar_body(ui, &mut self.git, self.shell.repo_root.as_deref())
-                        {
-                            action = Some(Action::Git(a));
-                        }
-                    }
+                }
+                if let Some(a) = sidebar_body(ui, &mut self.contracts) {
+                    action = Some(Action::Sidebar(a));
                 }
             });
         action
@@ -262,11 +266,11 @@ impl App {
     fn central(&mut self, ui: &mut egui::Ui) {
         let mut out = CentralOutcome::default();
         let mut git_action = None;
-        egui::CentralPanel::default().show(ui, |ui| match self.shell.sidebar_tab {
-            SidebarTab::Explorer => {
+        egui::CentralPanel::default().show(ui, |ui| match self.shell.central {
+            CentralView::Contracts => {
                 central_body(ui, &mut self.shell, &mut self.contracts, &mut out);
             }
-            SidebarTab::Git => git_action = view::central_body(ui, &mut self.git),
+            CentralView::Git => git_action = view::central_body(ui, &mut self.git),
         });
         // Applied after the panel closure ends: `apply` needs `&mut self`,
         // and the closure above is still holding a borrow of `self.git`.
@@ -320,6 +324,7 @@ impl App {
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         match action {
             Action::Sidebar(SidebarAction::LoadContract(i)) => {
+                self.shell.central = CentralView::Contracts;
                 let invalid = self
                     .contracts
                     .entries
@@ -333,7 +338,10 @@ impl App {
                     self.load(i);
                 }
             }
-            Action::Sidebar(SidebarAction::LoadTemplate(i)) => self.load_template(i),
+            Action::Sidebar(SidebarAction::LoadTemplate(i)) => {
+                self.shell.central = CentralView::Contracts;
+                self.load_template(i);
+            }
             Action::Sidebar(SidebarAction::OpenProject) => self.open_project(ctx),
             Action::Sidebar(SidebarAction::NewProject) => self.new_project(ctx),
             Action::Sidebar(SidebarAction::ImportPostman) => self.import_postman(ctx),
@@ -356,13 +364,14 @@ impl App {
             Action::Sidebar(SidebarAction::ToggleSidebar) => {
                 self.shell.sidebar_open = !self.shell.sidebar_open;
             }
-            Action::Sidebar(SidebarAction::SwitchTab(tab)) => {
-                let entered_git =
-                    tab == SidebarTab::Git && self.shell.sidebar_tab != SidebarTab::Git;
-                self.shell.sidebar_tab = tab;
-                if entered_git {
+            Action::Sidebar(SidebarAction::ToggleGitSection) => {
+                self.shell.git_open = !self.shell.git_open;
+                if self.shell.git_open {
                     self.handle_git(GitAction::Refresh, ctx);
                 }
+            }
+            Action::Sidebar(SidebarAction::ToggleTemplatesSection) => {
+                self.shell.templates_open = !self.shell.templates_open;
             }
             Action::Git(GitAction::SwitchBranch { .. })
                 if self.contracts.editing
@@ -378,7 +387,12 @@ impl App {
                 self.git.error = msg.clone();
                 self.shell.status = msg;
             }
-            Action::Git(action) => self.handle_git(action, ctx),
+            Action::Git(action) => {
+                if matches!(action, GitAction::Select { .. }) {
+                    self.shell.central = CentralView::Git;
+                }
+                self.handle_git(action, ctx);
+            }
         }
     }
 }
@@ -411,7 +425,6 @@ mod tests {
     use super::*;
     use apic_core::edit::EditModel;
 
-    use crate::app::state::SidebarTab;
     use crate::app::test_support::{
         app_at, current_branch, dirty, git_available, project_fixture, settle, tempdir,
     };
@@ -572,6 +585,80 @@ mod tests {
         assert!(!tail_zero, "focus feature pins repaint: {delays:?}");
     }
 
+    #[test]
+    fn sidebar_renders_each_section_state_in_both_themes() {
+        for preference in crate::ui::theme::BOTH_THEMES {
+            for (git_open, templates_open) in
+                [(false, false), (true, false), (false, true), (true, true)]
+            {
+                let mut app = app_at(tempdir());
+                app.shell.git_open = git_open;
+                app.shell.templates_open = templates_open;
+                crate::ui::theme::run_in_theme(preference, |ui| {
+                    let _ = app.sidebar(ui);
+                });
+            }
+            if git_available() {
+                let root = project_fixture();
+                let dir = root.join(".apic").join("template");
+                std::fs::create_dir_all(&dir).expect("template dir creates");
+                std::fs::write(dir.join("base.json"), apic_core::template::DEFAULT)
+                    .expect("template writes");
+                let mut app = app_at(root);
+                app.reload_project();
+                app.shell.git_open = true;
+                app.shell.templates_open = true;
+                crate::ui::theme::run_in_theme(preference, |ui| {
+                    let _ = app.sidebar(ui);
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn opening_the_git_section_starts_a_status_refresh() {
+        if !git_available() {
+            return;
+        }
+        let mut app = app_at(project_fixture());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        settle(&mut app, &ctx);
+        assert!(app.git.pending.is_none());
+
+        app.apply(Action::Sidebar(SidebarAction::ToggleGitSection), &ctx);
+
+        assert!(app.shell.git_open);
+        assert!(
+            app.git.pending.is_some(),
+            "opening Git must start a status refresh"
+        );
+        settle(&mut app, &ctx);
+    }
+
+    #[test]
+    fn selecting_a_git_file_shows_git_in_the_central_panel() {
+        let mut app = app_at(tempdir());
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::Git(GitAction::Select {
+                path: "contracts/sample.json".to_string(),
+                staged: false,
+            }),
+            &ctx,
+        );
+        assert_eq!(app.shell.central, CentralView::Git);
+    }
+
+    #[test]
+    fn loading_a_contract_shows_contracts_in_the_central_panel() {
+        let mut app = app_at(tempdir());
+        let ctx = egui::Context::default();
+        app.shell.central = CentralView::Git;
+        app.apply(Action::Sidebar(SidebarAction::LoadContract(0)), &ctx);
+        assert_eq!(app.shell.central, CentralView::Contracts);
+    }
+
     /// Pins the launch-indicator defect: a project load must populate
     /// `git.status` on its own, before the Git tab is ever opened. The tab
     /// switch is what used to fetch status, so the indicator on the tab
@@ -588,10 +675,9 @@ mod tests {
         let ctx = egui::Context::default();
 
         app.reload_project();
-        assert_eq!(
-            app.shell.sidebar_tab,
-            SidebarTab::Explorer,
-            "the tab must never switch to Git for this to prove anything"
+        assert!(
+            !app.shell.git_open,
+            "the Git section must never open for this to prove anything"
         );
         app.poll_git(&ctx);
         settle(&mut app, &ctx);

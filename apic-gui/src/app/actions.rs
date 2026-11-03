@@ -4,7 +4,6 @@
 //! `App::ui` applies it. A new feature adds its own action enum here rather than
 //! reaching into another feature's state.
 
-use crate::app::state::SidebarTab;
 use crate::features::contracts::state::DeleteTarget;
 use crate::features::git::ui::state::GitAction;
 
@@ -28,8 +27,11 @@ pub(crate) enum SidebarAction {
     /// Toggle the left contracts sidebar between fully hidden and shown.
     ToggleSidebar,
 
-    /// Switch which panel fills the sidebar frame.
-    SwitchTab(SidebarTab),
+    /// Expand or collapse the Git section at the bottom of the sidebar.
+    ToggleGitSection,
+
+    /// Expand or collapse the Templates section at the bottom of the sidebar.
+    ToggleTemplatesSection,
 }
 
 /// Anything a view returned this frame, from either sidebar tab.

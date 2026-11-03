@@ -28,3 +28,33 @@ pub(crate) fn row_menu_button(
         );
     });
 }
+
+/// One collapsible section header row: a caret, then `label`, with
+/// `trailing` controls reserved at the right edge first so a long label
+/// truncates instead of pushing them off. Returns whether the label was
+/// clicked, which the caller treats as a toggle.
+pub(crate) fn section_header(
+    ui: &mut egui::Ui,
+    open: bool,
+    label: RichText,
+    trailing: impl FnOnce(&mut egui::Ui),
+) -> bool {
+    let caret = if open {
+        egui_phosphor::regular::CARET_DOWN
+    } else {
+        egui_phosphor::regular::CARET_RIGHT
+    };
+    let mut clicked = false;
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            trailing(ui);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.label(RichText::new(caret));
+                clicked = ui
+                    .add(egui::Button::new(label).frame(false).truncate())
+                    .clicked();
+            });
+        });
+    });
+    clicked
+}
