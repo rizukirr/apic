@@ -8,13 +8,13 @@ use std::path::Path;
 use eframe::egui;
 use egui::RichText;
 
-use crate::app::actions::GitAction;
 use crate::features::git::domain::conflict::{self, Choice, Segment};
 use crate::features::git::domain::diff::{self, FieldChange, strip_diff_header};
 use crate::features::git::domain::status::{
     DiscardTarget, FileStatus, Status, discard_target, sections,
 };
-use crate::features::git::state::{GitState, ResolveState};
+use crate::features::git::ui::state::GitAction;
+use crate::features::git::ui::state::{GitState, ResolveState};
 use crate::ui::components::{bordered_input, text_button};
 use crate::ui::theme::*;
 

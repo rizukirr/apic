@@ -7,5 +7,4 @@
 
 pub(crate) mod data;
 pub(crate) mod domain;
-pub(crate) mod state;
-pub(crate) mod view;
+pub(crate) mod ui;

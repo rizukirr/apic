@@ -3,6 +3,8 @@
 
 use std::path::PathBuf;
 
+use crate::features::git::data::jobs::RepoPaths;
+
 /// Application chrome and the active project location. Shared by every
 /// feature; no feature owns it.
 ///
@@ -35,6 +37,19 @@ pub(crate) struct ShellState {
     /// Root of the git repository containing `project_root`, or `None` when
     /// the project is not inside one.
     pub(crate) repo_root: Option<PathBuf>,
+}
+
+impl ShellState {
+    /// The repository locations a git job runs against, or `None` when the
+    /// project is not inside a repository.
+    pub(crate) fn repo_paths(&self) -> Option<RepoPaths> {
+        let repo_root = self.repo_root.clone()?;
+        Some(RepoPaths {
+            root: self.root.clone().unwrap_or_else(|| repo_root.clone()),
+            project_root: self.project_root.clone(),
+            repo_root,
+        })
+    }
 }
 
 impl Default for ShellState {

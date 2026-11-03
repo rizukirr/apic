@@ -5,7 +5,8 @@
 //! channel that the view model drains every frame.
 
 use std::borrow::Cow;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver};
 
 use crate::features::git::data::cli;
 use crate::features::git::domain::status::{Branches, Status};
@@ -150,6 +151,202 @@ pub(crate) fn scopes(root: &Path, project_root: Option<&Path>, repo_root: &Path)
         scopes.push(apic_core::file::to_slash(rel));
     }
     scopes
+}
+
+/// The repository locations a job runs against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RepoPaths {
+    /// Root of the git repository, as `git rev-parse --show-toplevel` reports it.
+    pub(crate) repo_root: PathBuf,
+
+    /// The contracts working dir, or `repo_root` when no project root is known.
+    pub(crate) root: PathBuf,
+
+    /// The directory containing `.apic/`, when a project is open.
+    pub(crate) project_root: Option<PathBuf>,
+}
+
+impl RepoPaths {
+    /// The status scopes for these paths, see [`scopes`].
+    fn scopes(&self) -> Vec<String> {
+        scopes(&self.root, self.project_root.as_deref(), &self.repo_root)
+    }
+}
+
+/// One diff fetch: the selected path and side, and whether the path is in a
+/// merge conflict, which decides whether each side's content is read.
+pub(crate) struct DiffRequest {
+    pub(crate) repo_root: PathBuf,
+    pub(crate) path: String,
+    pub(crate) staged: bool,
+    pub(crate) conflicted: bool,
+}
+
+/// One mutating git command. Each is followed by a status refresh in the same
+/// job, so a successful mutation lands on screen in one poll.
+pub(crate) enum Mutation {
+    Stage {
+        path: String,
+    },
+    Unstage {
+        path: String,
+    },
+
+    /// Called only after the discard confirmation.
+    Discard {
+        path: String,
+    },
+    Commit {
+        message: String,
+    },
+    SwitchBranch {
+        name: String,
+    },
+
+    /// Creates a branch without switching to it.
+    CreateBranch {
+        name: String,
+    },
+
+    /// Called only after the delete confirmation.
+    DeleteBranch {
+        name: String,
+    },
+
+    /// Writes the rendered resolution `text` for `path` and stages it.
+    ///
+    /// The write and the stage are two halves of one operation: editing the
+    /// file does not clear the conflict in git, only `git add` does. If the
+    /// write succeeds and the stage then fails, that failure must still
+    /// reach the user as an error rather than being swallowed, a file that
+    /// looks resolved while git still calls it conflicted is worse than a
+    /// resolve that failed outright.
+    Resolve {
+        path: String,
+        text: String,
+    },
+}
+
+impl Mutation {
+    /// Which kind of mutation this is, carried back with the result.
+    fn kind(&self) -> MutateKind {
+        match self {
+            Mutation::Stage { .. } => MutateKind::Stage,
+            Mutation::Unstage { .. } => MutateKind::Unstage,
+            Mutation::Discard { .. } => MutateKind::Discard,
+            Mutation::Commit { .. } => MutateKind::Commit,
+            Mutation::SwitchBranch { .. } => MutateKind::SwitchBranch,
+            Mutation::CreateBranch { .. } => MutateKind::CreateBranch,
+            Mutation::DeleteBranch { .. } => MutateKind::DeleteBranch,
+            Mutation::Resolve { .. } => MutateKind::Resolve,
+        }
+    }
+
+    /// The status line text shown when the mutation succeeds.
+    fn success_message(&self) -> String {
+        match self {
+            Mutation::Stage { path } => format!("staged {path}"),
+            Mutation::Unstage { path } => format!("unstaged {path}"),
+            Mutation::Discard { path } => format!("discarded {path}"),
+            Mutation::Commit { .. } => "committed the staged changes".to_string(),
+            Mutation::SwitchBranch { name } => format!("switched to branch {name}"),
+            Mutation::CreateBranch { name } => format!("created branch {name}"),
+            Mutation::DeleteBranch { name } => format!("deleted branch {name}"),
+            Mutation::Resolve { path, .. } => format!("resolved {path}"),
+        }
+    }
+
+    /// Runs the git command against the repository at `root`.
+    fn run(&self, root: &Path) -> Result<(), String> {
+        match self {
+            Mutation::Stage { path } => cli::stage(root, path),
+            Mutation::Unstage { path } => cli::unstage(root, path),
+            Mutation::Discard { path } => cli::discard(root, path),
+            Mutation::Commit { message } => cli::commit(root, message),
+            Mutation::SwitchBranch { name } => cli::switch_branch(root, name),
+            Mutation::CreateBranch { name } => cli::create_branch(root, name),
+            Mutation::DeleteBranch { name } => cli::delete_branch(root, name),
+            Mutation::Resolve { path, text } => {
+                std::fs::write(root.join(path), text).map_err(|e| e.to_string())?;
+                cli::stage(root, path)
+            }
+        }
+    }
+}
+
+/// Runs `job` on a new thread, sends its one result, then calls `notify` so
+/// the caller's event loop wakes to collect it.
+fn spawn(
+    job: impl FnOnce() -> JobResult + Send + 'static,
+    notify: impl Fn() + Send + 'static,
+) -> Receiver<JobResult> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(job());
+        notify();
+    });
+    rx
+}
+
+/// Starts `git status`, scoped to the contracts root.
+pub(crate) fn status(paths: RepoPaths, notify: impl Fn() + Send + 'static) -> Receiver<JobResult> {
+    spawn(
+        move || {
+            let scopes = paths.scopes();
+            let refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
+            JobResult::Status(cli::status(&paths.repo_root, &refs))
+        },
+        notify,
+    )
+}
+
+/// Starts the diff fetch for one `(path, staged)` selection.
+pub(crate) fn diff(
+    request: DiffRequest,
+    notify: impl Fn() + Send + 'static,
+) -> Receiver<JobResult> {
+    spawn(
+        move || {
+            let result = diff_job(
+                &request.repo_root,
+                &request.path,
+                request.staged,
+                request.conflicted,
+            );
+            JobResult::Diff((request.path, request.staged), result)
+        },
+        notify,
+    )
+}
+
+/// Starts one mutation followed by a status refresh in the same job.
+pub(crate) fn mutate(
+    paths: RepoPaths,
+    mutation: Mutation,
+    notify: impl Fn() + Send + 'static,
+) -> Receiver<JobResult> {
+    spawn(
+        move || {
+            let scopes = paths.scopes();
+            let refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
+            let result = mutation
+                .run(&paths.repo_root)
+                .and_then(|()| cli::status(&paths.repo_root, &refs));
+            JobResult::Mutate(mutation.kind(), mutation.success_message(), result)
+        },
+        notify,
+    )
+}
+
+/// Starts `git branch`.
+pub(crate) fn branches(
+    repo_root: PathBuf,
+    notify: impl Fn() + Send + 'static,
+) -> Receiver<JobResult> {
+    spawn(
+        move || JobResult::Branches(cli::branches(&repo_root)),
+        notify,
+    )
 }
 
 #[cfg(test)]
