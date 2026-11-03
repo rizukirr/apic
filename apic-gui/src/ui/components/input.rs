@@ -63,7 +63,6 @@ pub(crate) fn tcell_edit(ui: &mut egui::Ui, buf: &mut String, hint: &str) -> egu
 
 /// `tcell_edit` in the monospace font, for cells that hold code-like values
 /// such as header values.
-#[allow(dead_code, reason = "the header table value cells adopt it next")]
 pub(crate) fn tcell_edit_code(ui: &mut egui::Ui, buf: &mut String, hint: &str) -> egui::Response {
     let p = crate::ui::theme::palette(ui.ctx());
     ui.add(

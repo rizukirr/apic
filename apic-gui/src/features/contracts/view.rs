@@ -20,30 +20,32 @@ use crate::app::state::ShellState;
 use crate::features::contracts::state::{ContractsState, DeleteTarget, MainTab, RespTab};
 use crate::ui::components::{
     add_button, bordered_input, delete_button, fill_column, header_label, json_editor,
-    metadata_table, required_chip, section_label, table_frame, tcell_edit, text_button,
+    metadata_table, required_chip, section_label, table_frame, tcell_edit, tcell_edit_code,
+    text_button,
 };
 use crate::ui::focus::{request_new_row_focus, take_pending_focus};
 use crate::ui::theme::*;
 use egui_extras::Column;
 
 /// Color for an HTTP method badge.
-fn method_color(method: &str) -> Color32 {
+fn method_color(method: &str, p: &Palette) -> Color32 {
     match method {
-        "GET" | "HEAD" => GREEN,
-        "POST" => CYAN,
-        "PUT" | "PATCH" => AMBER,
-        "DELETE" => RED,
-        _ => DIM,
+        "GET" | "HEAD" => p.method_get,
+        "POST" => p.method_post,
+        "PUT" | "PATCH" => p.method_put,
+        "DELETE" => p.method_delete,
+        _ => p.on_surface_variant,
     }
 }
 
 /// A filled, method-colored badge (read mode); the edit view uses a plain
 /// button instead so it can cycle the method on click.
 fn method_badge(ui: &mut egui::Ui, method: &str) {
+    let p = palette(ui.ctx());
     ui.label(
         RichText::new(format!(" {method} "))
-            .color(BG)
-            .background_color(method_color(method))
+            .color(p.surface)
+            .background_color(method_color(method, p))
             .strong(),
     );
 }
@@ -56,39 +58,42 @@ const FOCUS_HEADER: &str = "apic.focus.header";
 /// The endpoint name, rendered inline on the toolbar row (left of EDIT/SAVE).
 /// Editable frameless heading in edit mode; a heading label otherwise.
 fn endpoint_name(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+    let p = palette(ui.ctx());
     if editing {
         ui.add(
             egui::TextEdit::singleline(&mut model.name)
                 .frame(egui::Frame::NONE)
                 .hint_text("endpoint name")
                 .font(egui::TextStyle::Heading)
-                .text_color(TEXT)
+                .text_color(p.on_surface)
                 .desired_width(f32::INFINITY),
         );
     } else {
-        ui.label(RichText::new(&model.name).color(TEXT).heading());
+        ui.label(RichText::new(&model.name).color(p.on_surface).heading());
     }
 }
 
 /// The endpoint description, shown under the name/url row. Frameless multiline in
 /// edit mode; dim text otherwise (hidden when empty in view mode).
 fn endpoint_description(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+    let p = palette(ui.ctx());
     if editing {
         ui.add(
             egui::TextEdit::multiline(&mut model.description)
                 .frame(egui::Frame::NONE)
                 .hint_text("description")
-                .text_color(DIM)
+                .text_color(p.on_surface_variant)
                 .desired_rows(2)
                 .desired_width(f32::INFINITY),
         );
     } else if !model.description.is_empty() {
-        ui.label(RichText::new(&model.description).color(DIM));
+        ui.label(RichText::new(&model.description).color(p.on_surface_variant));
     }
 }
 
 /// The `[ METHOD ] [ url................ ]` top row.
 fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+    let p = palette(ui.ctx());
     table_frame(ui, |ui| {
         ui.horizontal(|ui| {
             let method = method_str(&model.method);
@@ -96,7 +101,11 @@ fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
                 // Pick the HTTP method from a dropdown of all the choices.
                 egui::ComboBox::from_id_salt("method")
                     .width(90.0)
-                    .selected_text(RichText::new(&method).color(method_color(&method)).strong())
+                    .selected_text(
+                        RichText::new(&method)
+                            .color(method_color(&method, p))
+                            .strong(),
+                    )
                     .show_ui(ui, |ui| {
                         for m in apic_core::json::method_all() {
                             let name = method_str(&m);
@@ -104,7 +113,7 @@ fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
                             if ui
                                 .selectable_label(
                                     selected,
-                                    RichText::new(&name).color(method_color(&name)).strong(),
+                                    RichText::new(&name).color(method_color(&name, p)).strong(),
                                 )
                                 .clicked()
                             {
@@ -119,13 +128,14 @@ fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
             if editing {
                 ui.add(
                     egui::TextEdit::singleline(&mut model.url)
+                        .font(egui::TextStyle::Monospace)
                         .frame(egui::Frame::NONE)
                         .hint_text("https://host/path/{id}")
-                        .text_color(CYAN)
+                        .text_color(p.info)
                         .desired_width(f32::INFINITY),
                 );
             } else {
-                ui.label(RichText::new(&model.url).color(CYAN).strong());
+                ui.label(RichText::new(&model.url).color(p.info).strong().monospace());
             }
         });
     });
@@ -134,6 +144,7 @@ fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
 /// Body of the QUERY PARAMS section. Uses the flat `{name, value, description}`
 /// query model; path variables now live inline in the URL string.
 fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+    let p = palette(ui.ctx());
     let mut actions: Vec<EditAction> = Vec::new();
     table_frame(ui, |ui| {
         let fixed = if editing {
@@ -167,7 +178,7 @@ fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
                             let r = tcell_edit(ui, &mut model.query[i].name, "name");
                             take_pending_focus(ui, FOCUS_QUERY, i, &r);
                         } else {
-                            ui.label(RichText::new(&model.query[i].name).color(CYAN));
+                            ui.label(RichText::new(&model.query[i].name).color(p.info));
                         }
                     });
                     row.col(|ui| {
@@ -181,14 +192,16 @@ fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
                         if editing {
                             tcell_edit(ui, &mut model.query[i].value, "value");
                         } else {
-                            ui.label(RichText::new(&model.query[i].value).color(TEXT));
+                            ui.label(RichText::new(&model.query[i].value).color(p.on_surface));
                         }
                     });
                     row.col(|ui| {
                         if editing {
                             tcell_edit(ui, &mut model.query[i].description, "description");
                         } else {
-                            ui.label(RichText::new(&model.query[i].description).color(TEXT));
+                            ui.label(
+                                RichText::new(&model.query[i].description).color(p.on_surface),
+                            );
                         }
                     });
                     if editing {
@@ -217,6 +230,7 @@ fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
 
 /// Response header rows for the selected response `idx`.
 fn response_headers(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editing: bool) {
+    let p = palette(ui.ctx());
     let Some(_) = model.responses.get(idx) else {
         return;
     };
@@ -252,7 +266,7 @@ fn response_headers(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editin
                             tcell_edit(ui, &mut model.responses[idx].headers[i].name, "name");
                         } else {
                             ui.label(
-                                RichText::new(&model.responses[idx].headers[i].name).color(CYAN),
+                                RichText::new(&model.responses[idx].headers[i].name).color(p.info),
                             );
                         }
                     });
@@ -268,7 +282,8 @@ fn response_headers(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editin
                             tcell_edit(ui, &mut model.responses[idx].headers[i].value, "value");
                         } else {
                             ui.label(
-                                RichText::new(&model.responses[idx].headers[i].value).color(TEXT),
+                                RichText::new(&model.responses[idx].headers[i].value)
+                                    .color(p.on_surface),
                             );
                         }
                     });
@@ -296,6 +311,7 @@ fn response_headers(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editin
 }
 
 fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+    let p = palette(ui.ctx());
     let mut actions: Vec<EditAction> = Vec::new();
     table_frame(ui, |ui| {
         let fixed = if editing {
@@ -327,7 +343,7 @@ fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
                             let r = tcell_edit(ui, &mut model.headers[i].name, "name");
                             take_pending_focus(ui, FOCUS_HEADER, i, &r);
                         } else {
-                            ui.label(RichText::new(&model.headers[i].name).color(CYAN));
+                            ui.label(RichText::new(&model.headers[i].name).color(p.info));
                         }
                     });
                     row.col(|ui| {
@@ -339,9 +355,13 @@ fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
                     });
                     row.col(|ui| {
                         if editing {
-                            tcell_edit(ui, &mut model.headers[i].value, "value");
+                            tcell_edit_code(ui, &mut model.headers[i].value, "value");
                         } else {
-                            ui.label(RichText::new(&model.headers[i].value).color(TEXT));
+                            ui.label(
+                                RichText::new(&model.headers[i].value)
+                                    .color(p.on_surface)
+                                    .monospace(),
+                            );
                         }
                     });
                     if editing {
@@ -369,13 +389,15 @@ fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
 }
 
 fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+    let p = palette(ui.ctx());
     ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
     // A multipart body has no JSON example. Materializing an empty request
     // body here would let a keystroke create a second body that `to_json`
     // refuses to save, with nothing on screen explaining why.
     if !model.multipart.is_empty() {
         ui.label(
-            RichText::new("multipart body, preserved on save, not editable here yet").color(DIM),
+            RichText::new("multipart body, preserved on save, not editable here yet")
+                .color(p.on_surface_variant),
         );
         ui.add_space(SPACE_MEDIUM);
         return;
@@ -389,7 +411,7 @@ fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
             section_label(ui, "JSON");
             ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
             ui.add_space(SPACE_MEDIUM);
-            if text_button(ui, "Pretty", AMBER) {
+            if text_button(ui, "Pretty", p.warning) {
                 req.example = apic_core::json::pretty_json(&req.example);
             }
         });
@@ -415,6 +437,7 @@ fn response_code_selector(
     resp_tab: &mut usize,
     editing: bool,
 ) {
+    let p = palette(ui.ctx());
     let mut actions: Vec<EditAction> = Vec::new();
     // The active tab's code editor carries a stable id so we can move the caret
     // to it the instant a tab is selected or a new response is added.
@@ -433,11 +456,11 @@ fn response_code_selector(
                     let selected = i == *resp_tab;
                     let code_ok = model.responses[i].code.trim().parse::<u16>().is_ok();
                     let color = if !code_ok {
-                        RED
+                        p.error
                     } else if selected {
-                        GREEN
+                        p.success
                     } else {
-                        DIM
+                        p.on_surface_variant
                     };
                     if editing && selected {
                         // The active tab is edited in place, no bordered box:
@@ -476,7 +499,7 @@ fn response_code_selector(
                                 .take(3)
                                 .collect();
                         }
-                        ui.label(RichText::new("-").color(DIM));
+                        ui.label(RichText::new("-").color(p.on_surface_variant));
                         // Size the title field to its text (30-char cap) so the
                         // `x` sits right after the title instead of a fixed gap.
                         let title_w = {
@@ -497,7 +520,7 @@ fn response_code_selector(
                                 .frame(egui::Frame::NONE)
                                 .desired_width(title_w + 18.0)
                                 .hint_text("title")
-                                .text_color(DIM),
+                                .text_color(p.on_surface_variant),
                         );
                         if delete_button(ui) {
                             actions.push(EditAction::Delete {
@@ -558,6 +581,7 @@ fn status_tab_label(code: &str, title: &str) -> String {
 /// tab) has already drawn the code-tab strip, which now also owns the response's
 /// title, and guarantees `idx` is a valid response index.
 fn response_body(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editing: bool) {
+    let p = palette(ui.ctx());
     ui.spacing_mut().item_spacing.y = SPACE_SMALL;
     let r = &mut model.responses[idx];
     // The title/description now lives in the status tab, so the body is just
@@ -567,7 +591,7 @@ fn response_body(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editing: 
             ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
             section_label(ui, "JSON");
             ui.add_space(SPACE_MEDIUM);
-            if text_button(ui, "Pretty", AMBER) {
+            if text_button(ui, "Pretty", p.warning) {
                 r.example = apic_core::json::pretty_json(&r.example);
             }
         });
@@ -584,50 +608,54 @@ mod tests {
     fn every_section_renders_without_panicking() {
         // `__run_test_ui` takes `impl Fn`, so build the model and tab index
         // fresh inside the closure rather than capturing them mutably.
-        eframe::egui::__run_test_ui(|ui| {
-            let c = apic_core::json::json_get(
-                r#"{ "name":"t","description":"d","method":"GET","url":"https://h/v1/{id}",
+        for preference in crate::ui::theme::BOTH_THEMES {
+            crate::ui::theme::run_in_theme(preference, |ui| {
+                let c = apic_core::json::json_get(
+                    r#"{ "name":"t","description":"d","method":"GET","url":"https://h/v1/{id}",
                      "query":[{"name":"page","value":"2","description":"d","required":true}],
                      "headers":[{"name":"Content-Type","value":"application/json","required":true}],
                      "responses":[{"code":200,"description":"ok",
                         "headers":[{"name":"X","value":"1","required":false}]}] }"#,
-                None,
-            )
-            .unwrap();
-            let mut m = EditModel::from_contract(c);
-            let mut resp = 0usize;
-            endpoint_name(ui, &mut m, true);
-            endpoint_description(ui, &mut m, true);
-            method_url_row(ui, &mut m, true);
-            headers(ui, &mut m, true);
-            headers(ui, &mut m, false);
-            query_section(ui, &mut m, true);
-            request_body(ui, &mut m, true);
-            response_code_selector(ui, &mut m, &mut resp, true);
-            response_body(ui, &mut m, 0, true);
-            response_headers(ui, &mut m, 0, true);
-        });
+                    None,
+                )
+                .unwrap();
+                let mut m = EditModel::from_contract(c);
+                let mut resp = 0usize;
+                endpoint_name(ui, &mut m, true);
+                endpoint_description(ui, &mut m, true);
+                method_url_row(ui, &mut m, true);
+                headers(ui, &mut m, true);
+                headers(ui, &mut m, false);
+                query_section(ui, &mut m, true);
+                request_body(ui, &mut m, true);
+                response_code_selector(ui, &mut m, &mut resp, true);
+                response_body(ui, &mut m, 0, true);
+                response_headers(ui, &mut m, 0, true);
+            });
+        }
     }
 
     #[test]
     fn the_request_editor_does_not_materialize_a_body_on_a_multipart_contract() {
         // `__run_test_ui` takes `impl Fn`, so the model is built inside the
         // closure and asserted there too.
-        eframe::egui::__run_test_ui(|ui| {
-            let c = apic_core::json::json_get(
-                r#"{ "name":"u","method":"POST","url":"https://h","headers":[],
+        for preference in crate::ui::theme::BOTH_THEMES {
+            crate::ui::theme::run_in_theme(preference, |ui| {
+                let c = apic_core::json::json_get(
+                    r#"{ "name":"u","method":"POST","url":"https://h","headers":[],
                      "multipart":[{"name":"avatar","filename":"a.png","required":true}],
                      "responses":[] }"#,
-                None,
-            )
-            .unwrap();
-            let mut m = EditModel::from_contract(c);
-            assert!(!m.multipart.is_empty());
-            request_body(ui, &mut m, true);
-            // Materializing one here is what makes the file unsavable the
-            // moment anything is typed into it.
-            assert!(m.request.is_none());
-        });
+                    None,
+                )
+                .unwrap();
+                let mut m = EditModel::from_contract(c);
+                assert!(!m.multipart.is_empty());
+                request_body(ui, &mut m, true);
+                // Materializing one here is what makes the file unsavable the
+                // moment anything is typed into it.
+                assert!(m.request.is_none());
+            });
+        }
     }
 }
 
@@ -660,6 +688,7 @@ impl App {
 
     /// Renders the "new template" dialog when open, and applies the result.
     pub(crate) fn new_template_dialog(&mut self, ctx: &egui::Context) {
+        let p = palette(ctx);
         if self.contracts.new_template.is_none() {
             return;
         }
@@ -675,13 +704,13 @@ impl App {
                 ui.vertical_centered(|ui| {
                     ui.label(
                         RichText::new("NEW TEMPLATE")
-                            .color(GREEN)
+                            .color(p.primary)
                             .strong()
                             .size(16.0),
                     );
                 });
                 ui.add_space(SPACE_SMALL);
-                ui.label(RichText::new("template name").color(DIM));
+                ui.label(RichText::new("template name").color(p.on_surface_variant));
                 ui.add_space(SPACE_MEDIUM);
                 let buf = self.contracts.new_template.as_mut().expect("dialog open");
                 let resp = bordered_input(ui, buf, f32::INFINITY, "");
@@ -694,7 +723,7 @@ impl App {
                 ui.add_space(SPACE_LARGE);
                 ui.columns(2, |cols| {
                     cols[0].vertical_centered(|ui| {
-                        if text_button(ui, "Create", GREEN) {
+                        if text_button(ui, "Create", p.primary) {
                             create = true;
                         }
                     });
@@ -715,6 +744,7 @@ impl App {
 
     /// Renders the "new request" dialog when open, and applies the result.
     pub(crate) fn new_request_dialog(&mut self, ctx: &egui::Context) {
+        let p = palette(ctx);
         if self.contracts.new_request.is_none() {
             return;
         }
@@ -725,10 +755,10 @@ impl App {
             .show(ctx, |ui| {
                 ui.set_min_width(320.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("NEW REQUEST").color(GREEN).strong().size(16.0));
+                    ui.label(RichText::new("NEW REQUEST").color(p.primary).strong().size(16.0));
                 });
                 ui.add_space(SPACE_SMALL);
-                ui.label(RichText::new("path under the contracts directory").color(DIM));
+                ui.label(RichText::new("path under the contracts directory").color(p.on_surface_variant));
                 ui.add_space(SPACE_MEDIUM);
                 let buf = self.contracts.new_request.as_mut().expect("dialog open");
                 let resp = bordered_input(ui, buf, f32::INFINITY, "");
@@ -741,7 +771,7 @@ impl App {
                 ui.add_space(SPACE_EXTRA_SMALL);
                 ui.label(
                     RichText::new("end with .json for a contract (auth/logout.json), a bare name makes a folder")
-                        .color(DIM)
+                        .color(p.on_surface_variant)
                         .size(10.0),
                 );
 
@@ -757,9 +787,9 @@ impl App {
                         .unwrap_or_default();
                     ui.add_space(SPACE_MEDIUM);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("template").color(DIM));
+                        ui.label(RichText::new("template").color(p.on_surface_variant));
                         egui::ComboBox::from_id_salt("new_request_template")
-                            .selected_text(RichText::new(current).color(GREEN))
+                            .selected_text(RichText::new(current).color(p.primary))
                             .show_ui(ui, |ui| {
                                 for (i, name) in names.iter().enumerate() {
                                     ui.selectable_value(&mut self.contracts.new_request_seed, i, name);
@@ -771,7 +801,7 @@ impl App {
                 ui.add_space(SPACE_LARGE);
                 ui.columns(2, |cols| {
                     cols[0].vertical_centered(|ui| {
-                        if text_button(ui, "Create", GREEN) {
+                        if text_button(ui, "Create", p.primary) {
                             create = true;
                         }
                     });
@@ -804,6 +834,7 @@ impl App {
     /// Modal shown when a picked non-project folder has invalid contracts: the
     /// user must fix them before it can be opened/initialized.
     pub(crate) fn open_blocked_dialog(&mut self, ctx: &egui::Context) {
+        let p = palette(ctx);
         let Some(failures) = self.contracts.open_blocked.clone() else {
             return;
         };
@@ -815,16 +846,16 @@ impl App {
             .show(ctx, |ui| {
                 ui.label(
                     RichText::new("This folder is not an apic project and has invalid contracts. Fix them, then open it again.")
-                        .color(TEXT),
+                        .color(p.on_surface),
                 );
                 ui.add_space(SPACE_SMALL);
                 for (path, err) in &failures {
-                    ui.label(RichText::new(path.to_string_lossy()).color(RED).strong());
-                    ui.label(RichText::new(err).color(DIM).size(11.0));
+                    ui.label(RichText::new(path.to_string_lossy()).color(p.error).strong());
+                    ui.label(RichText::new(err).color(p.on_surface_variant).size(11.0));
                     ui.add_space(SPACE_EXTRA_SMALL);
                 }
                 ui.add_space(SPACE_EXTRA_SMALL);
-                if text_button(ui, "Close", GREEN) {
+                if text_button(ui, "Close", p.primary) {
                     close = true;
                 }
             });
@@ -836,6 +867,7 @@ impl App {
     /// Renders the delete-confirmation dialog when a delete is pending, and
     /// performs the deletion on confirm.
     pub(crate) fn delete_dialog(&mut self, ctx: &egui::Context) {
+        let p = palette(ctx);
         let Some(target) = self.contracts.pending_delete.clone() else {
             return;
         };
@@ -857,23 +889,23 @@ impl App {
             .show(ctx, |ui| {
                 ui.set_min_width(320.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("DELETE").color(RED).strong().size(16.0));
+                    ui.label(RichText::new("DELETE").color(p.error).strong().size(16.0));
                 });
                 ui.add_space(SPACE_MEDIUM);
-                ui.label(RichText::new(format!("Delete {what}")).color(DIM));
-                ui.label(RichText::new(&name).color(TEXT).strong());
+                ui.label(RichText::new(format!("Delete {what}")).color(p.on_surface_variant));
+                ui.label(RichText::new(&name).color(p.on_surface).strong());
                 if folder_warn {
                     ui.add_space(SPACE_EXTRA_SMALL);
                     ui.label(
                         RichText::new("this also deletes every contract inside it")
-                            .color(RED)
+                            .color(p.error)
                             .size(10.0),
                     );
                 }
                 ui.add_space(SPACE_LARGE);
                 ui.columns(2, |cols| {
                     cols[0].vertical_centered(|ui| {
-                        if text_button(ui, "Delete", RED) {
+                        if text_button(ui, "Delete", p.error) {
                             confirm = true;
                         }
                     });
@@ -920,6 +952,7 @@ pub(crate) struct CentralOutcome {
 /// The panel frame is owned by the app shell, not by this feature, so that a
 /// second sidebar tab can render into the same frame; this only fills it.
 pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Option<SidebarAction> {
+    let p = palette(ui.ctx());
     let q = state.search.to_lowercase();
     let mut tree = TreeNode::default();
     for (i, e) in state.entries.iter().enumerate() {
@@ -936,7 +969,8 @@ pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Opt
         .show_separator_line(false)
         .show(ui, |ui| {
             ui.add_space(SPACE_EXTRA_SMALL);
-            let button = egui::Button::new(RichText::new("[ NEW REQUEST ]").color(BG)).fill(GREEN);
+            let button = egui::Button::new(RichText::new("[ NEW REQUEST ]").color(p.on_primary))
+                .fill(p.primary);
             if ui.add_sized([ui.available_width(), 26.0], button).clicked() {
                 action = Some(SidebarAction::NewRequest(String::new()));
             }
@@ -945,9 +979,13 @@ pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Opt
 
     ui.add_space(SPACE_MEDIUM);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("TEMPLATES").color(DIM).size(11.0));
+        ui.label(
+            RichText::new("TEMPLATES")
+                .color(p.on_surface_variant)
+                .size(11.0),
+        );
         if ui
-            .small_button(RichText::new("+").color(GREEN))
+            .small_button(RichText::new("+").color(p.primary))
             .on_hover_text("New template")
             .clicked()
         {
@@ -956,7 +994,7 @@ pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Opt
     });
     ui.separator();
     if templates.is_empty() {
-        ui.label(RichText::new("(none)").color(DIM));
+        ui.label(RichText::new("(none)").color(p.on_surface_variant));
     }
     for (i, (name, path)) in templates.iter().enumerate() {
         ui.horizontal(|ui| {
@@ -965,7 +1003,7 @@ pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Opt
             // forcing the panel wider than its dragged width.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .small_button(RichText::new("-").color(DIM))
+                    .small_button(RichText::new("-").color(p.on_surface_variant))
                     .on_hover_text("Delete this template")
                     .clicked()
                 {
@@ -977,7 +1015,7 @@ pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Opt
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     let label = egui::Button::selectable(
                         sel_template == Some(i),
-                        RichText::new(format!("◆ {name}")).color(AMBER),
+                        RichText::new(format!("◆ {name}")).color(p.warning),
                     )
                     .truncate();
                     if ui.add(label).clicked() {
@@ -989,7 +1027,11 @@ pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Opt
     }
 
     ui.add_space(10.0);
-    ui.label(RichText::new("CONTRACTS").color(DIM).size(11.0));
+    ui.label(
+        RichText::new("CONTRACTS")
+            .color(p.on_surface_variant)
+            .size(11.0),
+    );
     ui.separator();
     bordered_input(ui, &mut state.search, f32::INFINITY, "SEARCH...");
     ui.add_space(SPACE_EXTRA_SMALL);
@@ -1028,6 +1070,7 @@ pub(crate) fn central_body(
     contracts: &mut ContractsState,
     out: &mut CentralOutcome,
 ) {
+    let p = palette(ui.ctx());
     let no_project = shell.project_root.is_none();
     let ContractsState {
         model,
@@ -1044,11 +1087,15 @@ pub(crate) fn central_body(
     if no_project {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("No project open").color(DIM).size(16.0));
+            ui.label(
+                RichText::new("No project open")
+                    .color(p.on_surface_variant)
+                    .size(16.0),
+            );
             ui.add_space(SPACE_SMALL);
             ui.label(
                 RichText::new("Use Open to open a project folder, or New to create one.")
-                    .color(DIM),
+                    .color(p.on_surface_variant),
             );
         });
         return;
@@ -1058,15 +1105,15 @@ pub(crate) fn central_body(
         if rep.error.is_empty() {
             ui.label(
                 RichText::new("Valid, opening editor…")
-                    .color(GREEN)
+                    .color(p.success)
                     .strong(),
             );
         } else {
-            ui.label(RichText::new("INVALID CONTRACT").color(RED).strong());
-            ui.label(RichText::new(&rep.error).color(AMBER).size(12.0));
+            ui.label(RichText::new("INVALID CONTRACT").color(p.error).strong());
+            ui.label(RichText::new(&rep.error).color(p.warning).size(12.0));
         }
         ui.add_space(SPACE_SMALL);
-        let pretty = text_button(ui, "pretty", AMBER);
+        let pretty = text_button(ui, "pretty", p.warning);
         if pretty {
             rep.buffer = apic_core::json::pretty_json(&rep.buffer);
         }
@@ -1100,8 +1147,8 @@ pub(crate) fn central_body(
     let Some(model) = model.as_mut() else {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("WELCOME TO APIC").color(GREEN).size(28.0));
-            ui.label(RichText::new("Select a contract on the left.").color(DIM));
+            ui.label(RichText::new("WELCOME TO APIC").color(p.primary).size(28.0));
+            ui.label(RichText::new("Select a contract on the left.").color(p.on_surface_variant));
         });
         return;
     };
@@ -1110,7 +1157,7 @@ pub(crate) fn central_body(
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(SPACE_SMALL); // end padding, right of Save
-            if text_button(ui, "Save", GREEN) {
+            if text_button(ui, "Save", p.primary) {
                 match path.as_deref() {
                     Some(p) => match model.save(p) {
                         Ok(()) => {
@@ -1129,7 +1176,7 @@ pub(crate) fn central_body(
                 }
             }
             let edit_label = if *editing { "Cancel" } else { "Edit" };
-            if text_button(ui, edit_label, GREEN) {
+            if text_button(ui, edit_label, p.primary) {
                 // Applied after the panel closure via begin_edit/cancel_edit
                 // so the snapshot is taken/restored on `self`.
                 out.toggle_edit = true;
@@ -1171,9 +1218,9 @@ pub(crate) fn central_body(
                                     .selectable_label(
                                         *main_tab == which,
                                         RichText::new(label).color(if *main_tab == which {
-                                            GREEN
+                                            p.primary
                                         } else {
-                                            DIM
+                                            p.on_surface_variant
                                         }),
                                     )
                                     .clicked()
@@ -1210,20 +1257,21 @@ pub(crate) fn central_body(
                     egui::Layout::top_down(egui::Align::Min),
                     |right| {
                         right.horizontal(|ui| {
-                            let mut t =
-                                |ui: &mut egui::Ui, label: &str, which: RespTab| {
-                                    if ui
-                                        .selectable_label(
-                                            *resp_tab_view == which,
-                                            RichText::new(label).color(
-                                                if *resp_tab_view == which { GREEN } else { DIM },
-                                            ),
-                                        )
-                                        .clicked()
-                                    {
-                                        *resp_tab_view = which;
-                                    }
-                                };
+                            let mut t = |ui: &mut egui::Ui, label: &str, which: RespTab| {
+                                if ui
+                                    .selectable_label(
+                                        *resp_tab_view == which,
+                                        RichText::new(label).color(if *resp_tab_view == which {
+                                            p.primary
+                                        } else {
+                                            p.on_surface_variant
+                                        }),
+                                    )
+                                    .clicked()
+                                {
+                                    *resp_tab_view = which;
+                                }
+                            };
                             t(ui, "Response", RespTab::Body);
                             t(ui, "Header", RespTab::Headers);
                         });
@@ -1246,7 +1294,9 @@ pub(crate) fn central_body(
                                 // body/headers the tab bar above shows.
                                 response_code_selector(ui, model, resp_tab, *editing);
                                 if model.responses.is_empty() {
-                                    ui.label(RichText::new("(no responses)").color(DIM));
+                                    ui.label(
+                                        RichText::new("(no responses)").color(p.on_surface_variant),
+                                    );
                                     return;
                                 }
                                 if *resp_tab >= model.responses.len() {
@@ -1301,6 +1351,7 @@ impl TreeNode {
         // (relative path, is_folder) of an item whose `x` was clicked.
         delete: &mut Option<(String, bool)>,
     ) {
+        let p = palette(ui.ctx());
         for (name, child) in &self.dirs {
             let folder_path = if prefix.is_empty() {
                 name.clone()
@@ -1315,21 +1366,24 @@ impl TreeNode {
                     // forcing the side panel wider than its dragged width.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
-                            .small_button(RichText::new("-").color(DIM))
+                            .small_button(RichText::new("-").color(p.on_surface_variant))
                             .on_hover_text("Delete this folder")
                             .clicked()
                         {
                             *delete = Some((folder_path.clone(), true));
                         }
                         if ui
-                            .small_button(RichText::new("+").color(GREEN))
+                            .small_button(RichText::new("+").color(p.primary))
                             .on_hover_text("New request in this folder")
                             .clicked()
                         {
                             *new_in = Some(format!("{folder_path}/"));
                         }
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.add(egui::Label::new(RichText::new(name).color(DIM)).truncate());
+                            ui.add(
+                                egui::Label::new(RichText::new(name).color(p.on_surface_variant))
+                                    .truncate(),
+                            );
                         });
                     });
                 })
@@ -1343,17 +1397,21 @@ impl TreeNode {
             };
             ui.horizontal(|ui| {
                 if *invalid {
-                    ui.label(RichText::new("●").color(RED))
+                    ui.label(RichText::new("●").color(p.error))
                         .on_hover_text("Invalid contract, click to repair");
                 }
-                ui.label(RichText::new(method).color(method_color(method)).size(11.0));
+                ui.label(
+                    RichText::new(method)
+                        .color(method_color(method, p))
+                        .size(11.0),
+                );
                 // Reserve the delete button on the right, then let the file name
                 // truncate into whatever width is left. Without truncation a long
                 // name measures wider than the panel, and egui stores that as the
                 // panel width every frame — blocking resize below the longest name.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .small_button(RichText::new("-").color(DIM))
+                        .small_button(RichText::new("-").color(p.on_surface_variant))
                         .on_hover_text("Delete this contract")
                         .clicked()
                     {
@@ -1362,7 +1420,7 @@ impl TreeNode {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         let file = egui::Button::selectable(
                             selected == Some(*idx),
-                            RichText::new(label).color(TEXT),
+                            RichText::new(label).color(p.on_surface),
                         )
                         .truncate();
                         if ui.add(file).clicked() {

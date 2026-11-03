@@ -3,6 +3,7 @@
 use eframe::egui::Color32;
 
 // Terminal-green identity, toned down for a calmer, cleaner surface.
+#[allow(dead_code, reason = "no widget draws from the palette yet")]
 pub(crate) const BG: Color32 = Color32::from_rgb(15, 20, 17);
 #[allow(dead_code, reason = "no widget draws from the palette yet")]
 pub(crate) const PANEL_BG: Color32 = Color32::from_rgb(20, 27, 23);
