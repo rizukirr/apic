@@ -239,11 +239,24 @@ impl App {
                             if let Some(a) = git_section_header(ui, true, title.clone()) {
                                 action = Some(a);
                             }
-                            if let Some(a) = view::sidebar_body(
+                            if let Some(a) = view::branch_menu(ui, &mut self.git) {
+                                action = Some(Action::Git(a));
+                            }
+                            egui::Panel::bottom("git_commit_temp")
+                                .default_size(120.0)
+                                .show(ui, |ui| {
+                                    if let Some(a) = view::commit_body(ui, &mut self.git) {
+                                        action = Some(Action::Git(a));
+                                    }
+                                });
+                            if let Some(a) = view::changes_body(
                                 ui,
                                 &mut self.git,
                                 self.shell.repo_root.as_deref(),
                             ) {
+                                action = Some(Action::Git(a));
+                            }
+                            if let Some(a) = view::dialogs(ui.ctx(), &mut self.git) {
                                 action = Some(Action::Git(a));
                             }
                         });

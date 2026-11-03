@@ -51,7 +51,6 @@ pub(crate) enum GitAction {
     Refresh,
 
     /// Tick or untick Amend on the commit box.
-    #[cfg_attr(not(test), expect(dead_code, reason = "no panel control sends it yet"))]
     ToggleAmend,
 
     /// Show the diff for this repo-relative path, staged or unstaged.

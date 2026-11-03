@@ -9,66 +9,72 @@ use crate::features::git::ui::state::{GitAction, GitState};
 use crate::ui::components::{bordered_input, text_button};
 use crate::ui::theme::*;
 
-/// The row above `STAGED`: a dropdown over every local branch, showing the
-/// current one as its selected text (or the detached marker when there is
-/// none), plus glyph buttons to create or delete a branch. Picking a branch
-/// in the dropdown switches to it immediately, there is no separate Switch
-/// control and no highlight distinct from the current branch: a row with two
-/// competing notions of "selected" is worse than either.
-///
-/// In detached HEAD `Branches::current` is `None`, a real git state rather
-/// than an error. Every branch is then a legitimate way out, so switching and
-/// deleting both stay enabled instead of guessing a current branch.
-pub(super) fn branch_row(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
+/// The menu entries for one branch: delete it, enabled unless it is the
+/// current branch, which git refuses to delete.
+fn branch_menu_items(name: &str, current: Option<&str>) -> Vec<(&'static str, bool, GitAction)> {
+    vec![(
+        "Delete branch",
+        Some(name) != current,
+        GitAction::RequestBranchDelete {
+            name: name.to_string(),
+        },
+    )]
+}
+
+/// The app-bar branch dropdown: every local branch (click to switch,
+/// right-click for its menu), then "+ New branch". Also requests the branch
+/// list once, since this is drawn whether or not any git panel is open.
+pub(crate) fn branch_menu(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
     let p = palette(ui.ctx());
     let mut action = None;
+    if !state.branches_loaded && state.pending.is_none() {
+        state.branches_loaded = true;
+        action = Some(GitAction::RefreshBranches);
+    }
     let current = state.branches.current.clone();
-    let eligible: Vec<&String> = state
-        .branches
-        .all
-        .iter()
-        .filter(|name| Some(name.as_str()) != current.as_deref())
-        .collect();
-
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let can_delete = !eligible.is_empty();
-            ui.add_enabled_ui(can_delete, |ui| {
-                if ui
-                    .small_button(RichText::new("x").color(p.error))
-                    .on_hover_text("Delete a branch")
-                    .clicked()
-                    && let Some(name) = eligible.first()
-                {
-                    action = Some(GitAction::RequestBranchDelete {
-                        name: (*name).clone(),
-                    });
+    let branches = state.branches.all.clone();
+    let mut open_new = false;
+    let title = format!(
+        "{} {} {}",
+        egui_phosphor::regular::GIT_BRANCH,
+        current.as_deref().unwrap_or("(detached)"),
+        egui_phosphor::regular::CARET_DOWN
+    );
+    let color = if current.is_some() {
+        p.on_surface
+    } else {
+        p.warning
+    };
+    ui.menu_button(RichText::new(title).color(color), |ui| {
+        for name in &branches {
+            let row = ui.selectable_label(Some(name.as_str()) == current.as_deref(), name);
+            if row.clicked() {
+                if let Some(a) = branch_select_action(name, current.as_deref()) {
+                    action = Some(a);
+                }
+                ui.close();
+            }
+            row.context_menu(|ui| {
+                for (label, enabled, a) in branch_menu_items(name, current.as_deref()) {
+                    if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                        action = Some(a);
+                        ui.close();
+                    }
                 }
             });
-            if ui
-                .small_button(RichText::new("+").color(p.success))
-                .on_hover_text("Create a new branch")
-                .clicked()
-            {
-                state.new_branch = Some(String::new());
-            }
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                egui::ComboBox::from_id_salt("git_branch_combo")
-                    .selected_text(branch_label(current.as_deref(), p))
-                    .show_ui(ui, |ui| {
-                        for name in &state.branches.all {
-                            let is_current = Some(name.as_str()) == current.as_deref();
-                            if ui.selectable_label(is_current, name).clicked()
-                                && let Some(a) = branch_select_action(name, current.as_deref())
-                            {
-                                action = Some(a);
-                            }
-                        }
-                    });
-            });
-        });
+        }
+        ui.separator();
+        if ui
+            .button(format!("{} New branch", egui_phosphor::regular::PLUS))
+            .clicked()
+        {
+            open_new = true;
+            ui.close();
+        }
     });
-
+    if open_new {
+        state.new_branch = Some(String::new());
+    }
     action
 }
 
@@ -83,16 +89,6 @@ pub(super) fn branch_select_action(name: &str, current: Option<&str>) -> Option<
         Some(GitAction::SwitchBranch {
             name: name.to_string(),
         })
-    }
-}
-
-/// The dropdown's selected text: the current branch name, or the detached
-/// marker when `Branches::current` is `None`, the real git state for
-/// detached HEAD rather than an error.
-pub(super) fn branch_label(current: Option<&str>, p: &Palette) -> RichText {
-    match current {
-        Some(name) => RichText::new(name),
-        None => RichText::new("(detached)").color(p.warning),
     }
 }
 
@@ -301,5 +297,14 @@ mod tests {
             Some(GitAction::SwitchBranch { name }) => assert_eq!(name, "feature"),
             _ => panic!("expected a switch action"),
         }
+    }
+
+    #[test]
+    fn branch_menu_offers_delete_for_other_branches_only() {
+        let other = branch_menu_items("feature", Some("main"));
+        assert!(other.iter().any(|(_, enabled, a)| *enabled
+            && matches!(a, GitAction::RequestBranchDelete { name } if name == "feature")));
+        let current = branch_menu_items("main", Some("main"));
+        assert!(current.iter().all(|(_, enabled, _)| !*enabled));
     }
 }

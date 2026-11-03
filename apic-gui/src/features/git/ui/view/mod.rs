@@ -12,7 +12,8 @@ use std::path::Path;
 use eframe::egui;
 use egui::RichText;
 
-use self::branches::{branch_row, create_branch_dialog, delete_branch_dialog, discard_dialog};
+pub(crate) use self::branches::branch_menu;
+use self::branches::{create_branch_dialog, delete_branch_dialog, discard_dialog};
 use self::diff::{raw_diff_view, semantic_diff_view};
 use self::files::{FileTree, RowMode, file_row};
 use self::resolver::conflict_resolver;
@@ -47,13 +48,10 @@ pub(crate) fn tab_label(name: &str, status: &Status, p: &Palette) -> (String, eg
     (label, color)
 }
 
-/// Left sidebar body for the Git section: the error line when set, and the file
-/// list split into staged and unstaged sections. The refresh control and the
-/// section's own dirty indicator live in the Git section header, not here.
-///
-/// The Git section frame is owned by the app shell, which draws its header at
-/// the bottom of the sidebar; this only fills the section body.
-pub(crate) fn sidebar_body(
+/// The file list for the Git section: the error line when set, then the
+/// CONFLICTS, STAGED and UNSTAGED groups and the changes outside the project.
+/// The refresh control and the dirty indicator live in the section header.
+pub(crate) fn changes_body(
     ui: &mut egui::Ui,
     state: &mut GitState,
     repo_root: Option<&Path>,
@@ -69,48 +67,6 @@ pub(crate) fn sidebar_body(
         ui.label(RichText::new("Not inside a git repository.").color(p.on_surface_variant));
         return action;
     }
-
-    // Populate the branch list once, and again after every branch mutation
-    // (handled in the app shell). `pending` guards against piling up a
-    // second git command while one is already in flight. `branches_loaded`
-    // guards against retrying forever: a repository with no commits has no
-    // branches, so an empty list after a completed fetch is not itself a
-    // reason to refetch. Set right here, the moment the request is made, so
-    // the condition cannot fire again regardless of how the fetch resolves.
-    if !state.branches_loaded && state.pending.is_none() {
-        state.branches_loaded = true;
-        action = Some(GitAction::RefreshBranches);
-    }
-    if let Some(a) = branch_row(ui, state) {
-        action = Some(a);
-    }
-    ui.separator();
-
-    egui::Panel::bottom("git_commit_bar")
-        .show_separator_line(false)
-        .show(ui, |ui| {
-            ui.add_space(SPACE_EXTRA_SMALL);
-            ui.add(
-                egui::TextEdit::multiline(&mut state.commit_message)
-                    .hint_text("commit message")
-                    .desired_rows(4)
-                    .desired_width(f32::INFINITY),
-            );
-            ui.add_space(SPACE_EXTRA_SMALL);
-            let has_staged = state
-                .status
-                .inside
-                .iter()
-                .chain(state.status.outside.iter())
-                .any(|f| f.has_staged_change());
-            let enabled = !state.commit_message.trim().is_empty() && has_staged;
-            ui.add_enabled_ui(enabled, |ui| {
-                if text_button(ui, "Commit", p.primary) {
-                    action = Some(GitAction::Commit);
-                }
-            });
-            ui.add_space(SPACE_EXTRA_SMALL);
-        });
 
     let selected = state.selected.clone();
     let (conflicted, staged, unstaged) = sections(&state.status.inside);
@@ -198,16 +154,69 @@ pub(crate) fn sidebar_body(
             }
         });
 
-    if let Some(a) = discard_dialog(ui.ctx(), state) {
-        action = Some(a);
-    }
-    if let Some(a) = create_branch_dialog(ui.ctx(), state) {
-        action = Some(a);
-    }
-    if let Some(a) = delete_branch_dialog(ui.ctx(), state) {
-        action = Some(a);
-    }
+    action
+}
 
+/// The commit box for the Git section: the Amend toggle, the Commit button
+/// and the message editor, which fills the space the controls leave.
+pub(crate) fn commit_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
+    let p = palette(ui.ctx());
+    let mut action = None;
+    egui::Panel::bottom("git_commit_controls")
+        .show_separator_line(false)
+        .show(ui, |ui| {
+            ui.add_space(SPACE_EXTRA_SMALL);
+            if let Some(upstream) = &state.amend_pushed_to {
+                ui.label(
+                    RichText::new(format!(
+                        "This commit is already on {upstream}. Amending it will need a force push."
+                    ))
+                    .color(p.warning),
+                );
+            }
+            ui.horizontal(|ui| {
+                let mut amend = state.amend;
+                if ui.checkbox(&mut amend, "Amend").changed() {
+                    action = Some(GitAction::ToggleAmend);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let has_staged = state
+                        .status
+                        .inside
+                        .iter()
+                        .chain(state.status.outside.iter())
+                        .any(|f| f.has_staged_change());
+                    let enabled =
+                        !state.commit_message.trim().is_empty() && (has_staged || state.amend);
+                    ui.add_enabled_ui(enabled, |ui| {
+                        if text_button(ui, "Commit", p.primary) {
+                            action = Some(GitAction::Commit);
+                        }
+                    });
+                });
+            });
+            ui.add_space(SPACE_EXTRA_SMALL);
+        });
+    ui.add_sized(
+        ui.available_size(),
+        egui::TextEdit::multiline(&mut state.commit_message).hint_text("commit message"),
+    );
+    action
+}
+
+/// The git modal dialogs (discard, create branch, delete branch). Returns the
+/// last action any of them produced.
+pub(crate) fn dialogs(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
+    let mut action = None;
+    if let Some(a) = discard_dialog(ctx, state) {
+        action = Some(a);
+    }
+    if let Some(a) = create_branch_dialog(ctx, state) {
+        action = Some(a);
+    }
+    if let Some(a) = delete_branch_dialog(ctx, state) {
+        action = Some(a);
+    }
     action
 }
 
@@ -358,7 +367,7 @@ mod tests {
         for preference in BOTH_THEMES {
             run_in_theme(preference, |ui| {
                 let mut state = GitState::default();
-                sidebar_body(ui, &mut state, None);
+                changes_body(ui, &mut state, None);
                 central_body(ui, &mut state);
             });
         }
@@ -407,7 +416,7 @@ mod tests {
                     show_outside: true,
                     ..GitState::default()
                 };
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                changes_body(ui, &mut state, Some(Path::new("/repo")));
                 central_body(ui, &mut state);
             });
         }
@@ -421,7 +430,7 @@ mod tests {
                 ..GitState::default()
             };
             run_in_theme(preference, |ui| {
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                dialogs(ui.ctx(), &mut state);
             });
             // The dialog stays open until the user confirms or cancels: a bare
             // render must not clear it.
@@ -437,7 +446,7 @@ mod tests {
                 ..GitState::default()
             };
             run_in_theme(preference, |ui| {
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                changes_body(ui, &mut state, Some(Path::new("/repo")));
             });
         }
     }
@@ -672,7 +681,7 @@ mod tests {
             let mut state = GitState::default();
             let mut first = None;
             run_in_theme(preference, |ui| {
-                first = sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                first = branch_menu(ui, &mut state);
             });
             assert!(matches!(first, Some(GitAction::RefreshBranches)));
 
@@ -681,7 +690,7 @@ mod tests {
             state.branches_loaded = true;
             let mut second = None;
             run_in_theme(preference, |ui| {
-                second = sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                second = branch_menu(ui, &mut state);
             });
             assert!(!matches!(second, Some(GitAction::RefreshBranches)));
         }
@@ -698,7 +707,7 @@ mod tests {
                 ..GitState::default()
             };
             run_in_theme(preference, |ui| {
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                branch_menu(ui, &mut state);
             });
         }
     }
@@ -714,7 +723,7 @@ mod tests {
                 ..GitState::default()
             };
             run_in_theme(preference, |ui| {
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                branch_menu(ui, &mut state);
             });
         }
     }
@@ -731,7 +740,8 @@ mod tests {
                 ..GitState::default()
             };
             run_in_theme(preference, |ui| {
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                branch_menu(ui, &mut state);
+                dialogs(ui.ctx(), &mut state);
             });
             // The dialog stays open until the user confirms or cancels: a bare
             // render must not clear it.
@@ -751,11 +761,28 @@ mod tests {
                 ..GitState::default()
             };
             run_in_theme(preference, |ui| {
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                branch_menu(ui, &mut state);
+                dialogs(ui.ctx(), &mut state);
             });
             // The dialog stays open until the user confirms or cancels: a bare
             // render must not clear it.
             assert!(state.pending_branch_delete.is_some());
+        }
+    }
+
+    #[test]
+    fn commit_body_renders_in_every_amend_state() {
+        for preference in BOTH_THEMES {
+            for (amend, pushed) in [(false, None), (true, None), (true, Some("origin/main"))] {
+                let mut state = GitState {
+                    amend,
+                    amend_pushed_to: pushed.map(String::from),
+                    ..GitState::default()
+                };
+                run_in_theme(preference, |ui| {
+                    commit_body(ui, &mut state);
+                });
+            }
         }
     }
 }
