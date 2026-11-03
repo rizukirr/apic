@@ -34,7 +34,8 @@ pub(crate) enum SidebarAction {
     ToggleTemplatesSection,
 }
 
-/// Anything a view returned this frame, from either sidebar tab.
+/// Anything a view returned this frame: from the app bar, the sidebar, or the
+/// Git view in the central panel.
 pub(crate) enum Action {
     Sidebar(SidebarAction),
     Git(GitAction),

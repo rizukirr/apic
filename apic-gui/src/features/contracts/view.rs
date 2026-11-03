@@ -1064,8 +1064,8 @@ fn template_menu_items(name: &str, path: &std::path::Path) -> Vec<(&'static str,
 /// Left sidebar body: a TEMPLATES section on top, then the contract picker
 /// (folder tree, method-badged, filtered by search).
 ///
-/// The panel frame is owned by the app shell, not by this feature, so that a
-/// second sidebar tab can render into the same frame; this only fills it.
+/// The sidebar region above the bottom sections is owned by the app shell, not
+/// by this feature; this only fills it.
 pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Option<SidebarAction> {
     let p = palette(ui.ctx());
     let tree = build_tree(&state.entries, &state.search);

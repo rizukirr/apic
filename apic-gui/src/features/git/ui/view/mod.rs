@@ -51,8 +51,8 @@ pub(crate) fn tab_label(name: &str, status: &Status, p: &Palette) -> (String, eg
 /// list split into staged and unstaged sections. The refresh control and the
 /// section's own dirty indicator live in the Git section header, not here.
 ///
-/// The panel frame is owned by the app shell, not by this feature, so that a
-/// second sidebar tab can render into the same frame; this only fills it.
+/// The Git section frame is owned by the app shell, which draws its header at
+/// the bottom of the sidebar; this only fills the section body.
 pub(crate) fn sidebar_body(
     ui: &mut egui::Ui,
     state: &mut GitState,
