@@ -21,7 +21,6 @@ pub(crate) fn palette_for(theme: egui::Theme) -> &'static Palette {
 
 /// The palette egui is drawing with this frame, resolved from the user's
 /// preference and, for System, the OS setting.
-#[allow(dead_code, reason = "no widget draws from the palette yet")]
 pub(crate) fn palette(ctx: &egui::Context) -> &'static Palette {
     palette_for(ctx.theme())
 }
@@ -60,14 +59,12 @@ fn apply_palette(style: &mut egui::Style, p: &Palette) {
 
 /// Both theme preferences a render test runs under.
 #[cfg(test)]
-#[allow(dead_code, reason = "no widget draws from the palette yet")]
 pub(crate) const BOTH_THEMES: [egui::ThemePreference; 2] =
     [egui::ThemePreference::Dark, egui::ThemePreference::Light];
 
 /// Runs `add_contents` in a headless egui frame with both themes installed
 /// and `preference` applied, for render tests.
 #[cfg(test)]
-#[allow(dead_code, reason = "no widget draws from the palette yet")]
 pub(crate) fn run_in_theme(
     preference: egui::ThemePreference,
     mut add_contents: impl FnMut(&mut egui::Ui),

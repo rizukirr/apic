@@ -201,7 +201,9 @@ fn resolve_view(
                             // panicking, so this stays safe for every state.
                             let font_id = egui::TextStyle::Monospace.resolve(ui.style());
                             let job = crate::ui::syntax_highlighting::highlight_json(
-                                &rendered, font_id,
+                                &rendered,
+                                font_id,
+                                crate::ui::theme::palette(ui.ctx()),
                             );
                             ui.label(job);
                         } else {

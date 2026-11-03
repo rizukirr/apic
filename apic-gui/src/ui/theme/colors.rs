@@ -6,6 +6,7 @@ use eframe::egui::Color32;
 pub(crate) const BG: Color32 = Color32::from_rgb(15, 20, 17);
 #[allow(dead_code, reason = "no widget draws from the palette yet")]
 pub(crate) const PANEL_BG: Color32 = Color32::from_rgb(20, 27, 23);
+#[allow(dead_code, reason = "no widget draws from the palette yet")]
 pub(crate) const BORDER: Color32 = Color32::from_rgb(45, 66, 54);
 pub(crate) const GREEN: Color32 = Color32::from_rgb(78, 201, 138);
 pub(crate) const CYAN: Color32 = Color32::from_rgb(120, 190, 230);
@@ -15,10 +16,13 @@ pub(crate) const RED: Color32 = Color32::from_rgb(230, 110, 110);
 pub(crate) const AMBER: Color32 = Color32::from_rgb(224, 176, 60);
 
 /// The darkest surface, used behind code and JSON editors.
+#[allow(dead_code, reason = "no widget draws from the palette yet")]
 pub(crate) const EXTREME_BG: Color32 = Color32::from_rgb(11, 15, 13);
 
 /// Chip backgrounds for the REQUIREMENT column.
+#[allow(dead_code, reason = "no widget draws from the palette yet")]
 pub(crate) const CHIP_BG: Color32 = Color32::from_rgb(40, 50, 45);
+#[allow(dead_code, reason = "no widget draws from the palette yet")]
 pub(crate) const CHIP_REQUIRED_BG: Color32 = Color32::from_rgb(120, 60, 30);
 
 /// The colour roles every widget draws from, named after Material Design 3

@@ -4,7 +4,7 @@
 use eframe::egui;
 use egui::RichText;
 
-use crate::ui::theme::{DIM, GREEN, RED, SIZE_DELETE_GLYPH};
+use crate::ui::theme::SIZE_DELETE_GLYPH;
 
 /// A frameless `x` row-removal button: muted by default, brightening to red
 /// over a subtle rounded backdrop on hover so it clearly reads as clickable.
@@ -14,6 +14,7 @@ pub(crate) fn delete_button(ui: &mut egui::Ui) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
     let resp = resp.on_hover_text("Remove");
     if ui.is_rect_visible(rect) {
+        let p = crate::ui::theme::palette(ui.ctx());
         let hovered = resp.hovered();
         if hovered {
             ui.painter()
@@ -24,7 +25,11 @@ pub(crate) fn delete_button(ui: &mut egui::Ui) -> bool {
             egui::Align2::CENTER_CENTER,
             "x",
             egui::FontId::proportional(SIZE_DELETE_GLYPH),
-            if hovered { RED } else { DIM },
+            if hovered {
+                p.error
+            } else {
+                p.on_surface_variant
+            },
         );
     }
     resp.clicked()
@@ -42,5 +47,5 @@ pub(crate) fn text_button(ui: &mut egui::Ui, label: &str, color: egui::Color32) 
 /// add affordance so every list shares one label convention and color.
 #[must_use]
 pub(crate) fn add_button(ui: &mut egui::Ui, label: &str) -> bool {
-    text_button(ui, label, GREEN)
+    text_button(ui, label, crate::ui::theme::palette(ui.ctx()).primary)
 }
