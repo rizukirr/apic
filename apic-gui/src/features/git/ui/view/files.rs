@@ -258,25 +258,7 @@ pub(super) fn folder_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::git::domain::status::Change;
-
-    fn file(path: &str, conflicted: bool) -> FileStatus {
-        FileStatus {
-            path: path.into(),
-            index: Change::Modified,
-            worktree: Change::Modified,
-            conflicted,
-        }
-    }
-
-    fn untracked(path: &str) -> FileStatus {
-        FileStatus {
-            path: path.into(),
-            index: Change::Untracked,
-            worktree: Change::Untracked,
-            conflicted: false,
-        }
-    }
+    use crate::features::git::domain::status::fixtures::{file, untracked};
 
     #[test]
     fn folder_with_only_untracked_files_offers_no_discard() {

@@ -277,6 +277,7 @@ mod tests {
     use super::*;
     use crate::features::git::data::jobs::DiffData;
     use crate::features::git::domain::conflict::{self, Choice};
+    use crate::features::git::domain::status::fixtures::file;
     use crate::features::git::domain::status::{Branches, Change, FileStatus};
 
     const CONTRACT_GET: &str =
@@ -290,15 +291,6 @@ mod tests {
             selected: Some((path.to_string(), staged)),
             diff: Some(((path.to_string(), staged), data)),
             ..GitState::default()
-        }
-    }
-
-    fn file(path: &str, conflicted: bool) -> FileStatus {
-        FileStatus {
-            path: path.into(),
-            index: Change::Modified,
-            worktree: Change::Modified,
-            conflicted,
         }
     }
 

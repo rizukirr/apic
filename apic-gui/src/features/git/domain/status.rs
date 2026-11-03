@@ -243,7 +243,33 @@ pub(crate) fn sections(
 }
 
 #[cfg(test)]
+pub(crate) mod fixtures {
+    use super::{Change, FileStatus};
+
+    /// A file modified in both the index and the worktree.
+    pub(crate) fn file(path: &str, conflicted: bool) -> FileStatus {
+        FileStatus {
+            path: path.into(),
+            index: Change::Modified,
+            worktree: Change::Modified,
+            conflicted,
+        }
+    }
+
+    /// A file untracked in both the index and the worktree.
+    pub(crate) fn untracked(path: &str) -> FileStatus {
+        FileStatus {
+            path: path.into(),
+            index: Change::Untracked,
+            worktree: Change::Untracked,
+            conflicted: false,
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use super::fixtures::file;
     use super::*;
 
     /// Joins porcelain v2 records with NUL, the way `-z` output is delimited.
@@ -393,15 +419,6 @@ mod tests {
         assert!(inside.contains(&"project/contracts/login.json"));
         assert_eq!(status.outside.len(), 1);
         assert_eq!(status.outside[0].path, "other/file.rs");
-    }
-
-    fn file(path: &str, conflicted: bool) -> FileStatus {
-        FileStatus {
-            path: path.into(),
-            index: Change::Modified,
-            worktree: Change::Modified,
-            conflicted,
-        }
     }
 
     #[test]
