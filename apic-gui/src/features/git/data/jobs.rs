@@ -62,6 +62,9 @@ pub(crate) enum JobResult {
 
     /// A branch listing.
     Branches(Result<Branches, String>),
+
+    /// What amending would rewrite, read when Amend is ticked.
+    Amend(Result<AmendInfo, String>),
 }
 
 /// Builds one `DiffData`: the line diff plus, for a `.json` path or a
@@ -198,6 +201,7 @@ pub(crate) enum Mutation {
     },
     Commit {
         message: String,
+        amend: bool,
     },
     SwitchBranch {
         name: String,
@@ -248,7 +252,8 @@ impl Mutation {
             Mutation::Stage { path } => format!("staged {path}"),
             Mutation::Unstage { path } => format!("unstaged {path}"),
             Mutation::Discard { path } => format!("discarded {path}"),
-            Mutation::Commit { .. } => "committed the staged changes".to_string(),
+            Mutation::Commit { amend: true, .. } => "amended the last commit".to_string(),
+            Mutation::Commit { amend: false, .. } => "committed the staged changes".to_string(),
             Mutation::SwitchBranch { name } => format!("switched to branch {name}"),
             Mutation::CreateBranch { name } => format!("created branch {name}"),
             Mutation::DeleteBranch { name } => format!("deleted branch {name}"),
@@ -262,7 +267,7 @@ impl Mutation {
             Mutation::Stage { path } => cli::stage(root, path),
             Mutation::Unstage { path } => cli::unstage(root, path),
             Mutation::Discard { path } => cli::discard(root, path),
-            Mutation::Commit { message } => cli::commit(root, message),
+            Mutation::Commit { message, amend } => cli::commit(root, message, *amend),
             Mutation::SwitchBranch { name } => cli::switch_branch(root, name),
             Mutation::CreateBranch { name } => cli::create_branch(root, name),
             Mutation::DeleteBranch { name } => cli::delete_branch(root, name),
@@ -272,6 +277,33 @@ impl Mutation {
             }
         }
     }
+}
+
+/// What amending would rewrite: the last commit's message, and the upstream
+/// that already holds that commit, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AmendInfo {
+    pub(crate) message: String,
+    pub(crate) pushed_to: Option<String>,
+}
+
+/// Starts reading what amending would rewrite.
+pub(crate) fn amend_info(
+    repo_root: PathBuf,
+    notify: impl Fn() + Send + 'static,
+) -> Receiver<JobResult> {
+    spawn(
+        move || {
+            JobResult::Amend(
+                cli::last_commit_message(&repo_root).map(|message| AmendInfo {
+                    message,
+                    pushed_to: cli::upstream(&repo_root)
+                        .filter(|_| cli::head_is_on_upstream(&repo_root)),
+                }),
+            )
+        },
+        notify,
+    )
 }
 
 /// Runs `job` on a new thread, sends its one result, then calls `notify` so

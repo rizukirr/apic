@@ -50,6 +50,10 @@ pub(crate) enum GitAction {
     /// Re-read `git status`.
     Refresh,
 
+    /// Tick or untick Amend on the commit box.
+    #[cfg_attr(not(test), expect(dead_code, reason = "no panel control sends it yet"))]
+    ToggleAmend,
+
     /// Show the diff for this repo-relative path, staged or unstaged.
     Select { path: String, staged: bool },
 
@@ -169,6 +173,18 @@ pub(crate) struct GitState {
     /// A branch listing is owed after a switch, create or delete, and starts
     /// once the mutation's own job has finished.
     pub(crate) needs_branches: bool,
+
+    /// Whether the next commit amends the last one.
+    pub(crate) amend: bool,
+
+    /// What was typed before Amend was ticked, restored on untick.
+    pub(crate) message_before_amend: Option<String>,
+
+    /// The upstream already holding the commit Amend would rewrite.
+    pub(crate) amend_pushed_to: Option<String>,
+
+    /// An amend read is owed, started by `poll` once nothing is pending.
+    pub(crate) needs_amend_info: bool,
 }
 
 /// Something a finished git job asks the app shell to do, because it touches
@@ -226,7 +242,27 @@ impl GitState {
             }
             GitAction::Commit => {
                 let message = self.commit_message.clone();
-                self.start_mutation(paths, ctx, Mutation::Commit { message });
+                self.start_mutation(
+                    paths,
+                    ctx,
+                    Mutation::Commit {
+                        message,
+                        amend: self.amend,
+                    },
+                );
+            }
+            GitAction::ToggleAmend => {
+                if self.amend {
+                    self.amend = false;
+                    self.needs_amend_info = false;
+                    self.amend_pushed_to = None;
+                    if let Some(message) = self.message_before_amend.take() {
+                        self.commit_message = message;
+                    }
+                } else {
+                    self.amend = true;
+                    self.needs_amend_info = true;
+                }
             }
             GitAction::RefreshBranches => self.start_branches(paths, ctx),
             GitAction::SwitchBranch { name } => {
@@ -272,6 +308,9 @@ impl GitState {
             if self.needs_branches {
                 self.needs_branches = false;
                 self.start_branches(paths, ctx);
+            } else if self.needs_amend_info {
+                self.needs_amend_info = false;
+                self.start_amend_info(paths, ctx);
             } else if self.needs_refresh {
                 self.needs_refresh = false;
                 self.start_status(paths, ctx);
@@ -295,6 +334,18 @@ impl GitState {
                 self.branches = branches;
                 self.error.clear();
             }
+            JobResult::Amend(Ok(info)) => {
+                if self.amend {
+                    self.message_before_amend =
+                        Some(std::mem::replace(&mut self.commit_message, info.message));
+                    self.amend_pushed_to = info.pushed_to;
+                }
+                self.error.clear();
+            }
+            JobResult::Amend(Err(e)) => {
+                self.amend = false;
+                self.error = e;
+            }
             JobResult::Status(Err(e))
             | JobResult::Diff(_, Err(e))
             | JobResult::Branches(Err(e)) => {
@@ -311,7 +362,12 @@ impl GitState {
                     self.diff = None;
                 }
                 match kind {
-                    MutateKind::Commit => self.commit_message.clear(),
+                    MutateKind::Commit => {
+                        self.commit_message.clear();
+                        self.amend = false;
+                        self.message_before_amend = None;
+                        self.amend_pushed_to = None;
+                    }
                     MutateKind::SwitchBranch => {
                         self.needs_branches = true;
                         events.push(GitEvent::BranchSwitched);
@@ -382,6 +438,17 @@ impl GitState {
             return;
         };
         self.pending = Some(jobs::mutate(paths.clone(), mutation, notifier(ctx)));
+    }
+
+    /// Starts reading what amending would rewrite, under the same one-job rule.
+    fn start_amend_info(&mut self, paths: Option<&RepoPaths>, ctx: &egui::Context) {
+        if self.pending.is_some() {
+            return;
+        }
+        let Some(paths) = paths else {
+            return;
+        };
+        self.pending = Some(jobs::amend_info(paths.repo_root.clone(), notifier(ctx)));
     }
 
     /// Starts `git branch`, under the same one-job rule.
@@ -801,5 +868,69 @@ mod tests {
         git.pending = Some(rx);
 
         settle_git(&mut git, &paths, &ctx);
+    }
+
+    #[test]
+    fn ticking_amend_prefills_and_unticking_restores() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let (mut git, paths) = git_at(&root);
+        let ctx = egui::Context::default();
+        git.commit_message = "draft".to_string();
+        git.handle(GitAction::ToggleAmend, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        let last = git_output(&root, &["log", "-1", "--format=%B"]);
+        assert_eq!(git.commit_message, last.trim_end());
+        assert!(git.amend);
+        git.handle(GitAction::ToggleAmend, Some(&paths), &ctx);
+        assert_eq!(git.commit_message, "draft");
+        assert!(!git.amend);
+    }
+
+    #[test]
+    fn amending_a_pushed_commit_warns_with_the_upstream() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let remote = tempdir();
+        git_output(&remote, &["init", "--bare"]);
+        git_output(
+            &root,
+            &["remote", "add", "origin", &remote.to_string_lossy()],
+        );
+        git_output(&root, &["push", "-u", "origin", "HEAD"]);
+        let (mut git, paths) = git_at(&root);
+        let ctx = egui::Context::default();
+        git.handle(GitAction::ToggleAmend, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert!(
+            git.amend_pushed_to
+                .as_deref()
+                .is_some_and(|u| u.starts_with("origin/"))
+        );
+    }
+
+    #[test]
+    fn a_successful_amend_clears_amend_and_the_message() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let (mut git, paths) = git_at(&root);
+        let ctx = egui::Context::default();
+        git.handle(GitAction::ToggleAmend, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        git.commit_message = "reworded initial".to_string();
+        git.handle(GitAction::Commit, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(
+            git_output(&root, &["log", "-1", "--format=%s"]).trim(),
+            "reworded initial"
+        );
+        assert!(!git.amend);
+        assert!(git.commit_message.is_empty());
     }
 }
