@@ -801,4 +801,29 @@ mod tests {
         assert!(app.contracts.path.is_none());
         assert!(app.contracts.selected.is_none());
     }
+
+    /// A git mutation's success message must reach the status bar through
+    /// `App::poll_git`, not only as a `GitEvent` from the view model.
+    #[test]
+    fn stage_through_app_reports_in_shell_status() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+        let mut app = app_at(root);
+        let ctx = egui::Context::default();
+        app.reload_project();
+        settle(&mut app, &ctx);
+
+        app.apply(
+            Action::Git(GitAction::Stage {
+                path: "contracts/sample.json".to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        assert_eq!(app.shell.status, "staged contracts/sample.json");
+    }
 }
