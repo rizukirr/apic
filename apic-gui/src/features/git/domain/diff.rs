@@ -334,6 +334,32 @@ pub(crate) fn line_diff(from: &str, to: &str) -> Vec<LineDiffRow> {
     rows
 }
 
+/// Drops the `diff --git`, `index`, `---` and `+++` preamble, keeping the
+/// hunks themselves: the first `@@` line is where the diff proper starts, so
+/// everything from there on is returned. The untracked-file path synthesises
+/// `+` lines with no header at all, so a body with no `@@` line is returned
+/// unchanged rather than assuming a header is always there.
+pub(crate) fn strip_diff_header(raw: &str) -> &str {
+    let mut consumed = 0;
+    for line in raw.lines() {
+        if line.starts_with("@@") {
+            return raw.get(consumed..).unwrap_or("");
+        }
+        consumed += line.len() + 1;
+    }
+    raw
+}
+
+/// The field-level changes between two revisions of a contract, or `None`
+/// when either side is absent, either side is not a contract, or the change
+/// is formatting only. `None` is the caller's cue to show the raw diff.
+pub(crate) fn semantic_changes(old: Option<&str>, new: Option<&str>) -> Option<Vec<FieldChange>> {
+    let old = parse(old?)?;
+    let new = parse(new?)?;
+    let changes = diff_models(&old, &new);
+    (!changes.is_empty()).then_some(changes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,5 +615,53 @@ mod tests {
                 .iter()
                 .any(|c| c.what == "response 200 part thumb filename")
         );
+    }
+
+    #[test]
+    fn strip_diff_header_drops_the_preamble_and_keeps_the_first_hunk_marker() {
+        let raw = "diff --git a/contracts/login.json b/contracts/login.json\nindex 2a4e428..5d3ef15 100644\n--- a/contracts/login.json\n+++ b/contracts/login.json\n@@ -1,3 +1,3 @@\n {\n-    \"name\": \"user-login\",\n+    \"name\": \"login-v2\",\n }\n";
+        let body = strip_diff_header(raw);
+        assert!(!body.contains("diff --git"));
+        assert!(!body.contains("index "));
+        assert!(body.starts_with("@@ -1,3 +1,3 @@\n"));
+    }
+
+    #[test]
+    fn strip_diff_header_keeps_every_hunk_marker() {
+        // Hunk-sized output has more than one `@@` line. A stripper that
+        // returned everything after the *first* one would leave the rest in
+        // the body for the renderer to print with its first character eaten.
+        let raw = "diff --git a/f b/f\nindex 1111111..2222222 100644\n--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n@@ -30,3 +30,3 @@\n c\n-d\n+D\n";
+        let body = strip_diff_header(raw);
+        assert_eq!(body.matches("@@ -").count(), 2);
+    }
+
+    #[test]
+    fn strip_diff_header_leaves_a_headerless_diff_unchanged() {
+        // The untracked-file path synthesises `+` lines with no header at
+        // all, so a diff with no `@@` line must pass through untouched.
+        let raw = "+first\n+second\n";
+        assert_eq!(strip_diff_header(raw), raw);
+    }
+
+    #[test]
+    fn semantic_changes_is_none_when_a_side_is_missing() {
+        let text = r#"{"name":"x","method":"GET","url":"http://a","headers":[],"responses":[]}"#;
+        assert!(semantic_changes(None, Some(text)).is_none());
+        assert!(semantic_changes(Some(text), None).is_none());
+    }
+
+    #[test]
+    fn semantic_changes_is_none_for_identical_contracts() {
+        let text = r#"{"name":"x","method":"GET","url":"http://a","headers":[],"responses":[]}"#;
+        assert!(semantic_changes(Some(text), Some(text)).is_none());
+    }
+
+    #[test]
+    fn semantic_changes_reports_a_method_change() {
+        let get = r#"{"name":"x","method":"GET","url":"http://a","headers":[],"responses":[]}"#;
+        let post = r#"{"name":"x","method":"POST","url":"http://a","headers":[],"responses":[]}"#;
+        let changes = semantic_changes(Some(get), Some(post)).expect("a method change is semantic");
+        assert!(!changes.is_empty());
     }
 }

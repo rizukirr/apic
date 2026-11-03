@@ -70,14 +70,7 @@ impl App {
         let Some(repo_root) = self.shell.repo_root.clone() else {
             return;
         };
-        let conflicted = self
-            .git
-            .status
-            .inside
-            .iter()
-            .chain(self.git.status.outside.iter())
-            .find(|f| f.path == path)
-            .is_some_and(|f| f.conflicted);
+        let conflicted = self.git.status.find(&path).is_some_and(|f| f.conflicted);
         let key = (path.clone(), staged);
         let (tx, rx) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
@@ -265,13 +258,7 @@ impl App {
                 self.git.error = String::new();
                 self.shell.status = message;
                 if let Some((path, _)) = &self.git.selected
-                    && !self
-                        .git
-                        .status
-                        .inside
-                        .iter()
-                        .chain(self.git.status.outside.iter())
-                        .any(|f| &f.path == path)
+                    && self.git.status.find(path).is_none()
                 {
                     self.git.selected = None;
                     self.git.diff = None;

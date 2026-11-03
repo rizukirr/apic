@@ -9,9 +9,11 @@ use eframe::egui;
 use egui::RichText;
 
 use crate::app::actions::GitAction;
-use crate::features::git::conflict::{self, Choice, Segment};
-use crate::features::git::diff::{self, FieldChange};
-use crate::features::git::model::{FileStatus, Status};
+use crate::features::git::domain::conflict::{self, Choice, Segment};
+use crate::features::git::domain::diff::{self, FieldChange, strip_diff_header};
+use crate::features::git::domain::status::{
+    DiscardTarget, FileStatus, Status, discard_target, sections,
+};
 use crate::features::git::state::{GitState, ResolveState};
 use crate::ui::components::{bordered_input, text_button};
 use crate::ui::theme::*;
@@ -418,7 +420,7 @@ fn discard_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction
                 ui.label(RichText::new("DISCARD").color(RED).strong().size(16.0));
             });
             ui.add_space(SPACE_MEDIUM);
-            match discard_target(state, &path) {
+            match discard_target(&state.status, &path) {
                 DiscardTarget::File => {
                     ui.label(RichText::new("Discard changes to").color(DIM));
                     ui.label(RichText::new(&path).color(TEXT).strong());
@@ -457,53 +459,6 @@ fn discard_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction
     } else {
         None
     }
-}
-
-/// What a pending discard path names: an exact file, or a folder holding some
-/// number of tracked files. Git only ever reports files in status, so a path
-/// that matches no `FileStatus::path` exactly is a folder.
-enum DiscardTarget {
-    File,
-    Folder(usize),
-}
-
-/// Resolves a pending discard path against the current status. The count for
-/// a folder is tracked files only, matching what `git checkout -- <dir>`
-/// actually reverts: untracked files under the folder are left alone.
-fn discard_target(state: &GitState, path: &str) -> DiscardTarget {
-    let all = state
-        .status
-        .inside
-        .iter()
-        .chain(state.status.outside.iter());
-    if all.clone().any(|f| f.path == path) {
-        return DiscardTarget::File;
-    }
-    let prefix = format!("{path}/");
-    let count = all
-        .filter(|f| f.tracked() && f.path.starts_with(&prefix))
-        .count();
-    DiscardTarget::Folder(count)
-}
-
-/// Splits a section's files into the three sidebar groups: unresolved
-/// conflicts, staged, and unstaged. `unmerged` in `model.rs` sets both
-/// `index` and `worktree` to `Modified` for a conflicted entry, which makes
-/// it satisfy `has_staged_change` and `has_worktree_change` at once; staged
-/// and unstaged are not meaningful for a file mid-merge, so a conflicted
-/// entry is excluded from both and only listed here, keeping every file in
-/// exactly one group.
-fn sections(files: &[FileStatus]) -> (Vec<&FileStatus>, Vec<&FileStatus>, Vec<&FileStatus>) {
-    let conflicted: Vec<&FileStatus> = files.iter().filter(|f| f.conflicted).collect();
-    let staged: Vec<&FileStatus> = files
-        .iter()
-        .filter(|f| !f.conflicted && f.has_staged_change())
-        .collect();
-    let unstaged: Vec<&FileStatus> = files
-        .iter()
-        .filter(|f| !f.conflicted && f.has_worktree_change())
-        .collect();
-    (conflicted, staged, unstaged)
 }
 
 /// Which of the sidebar's three groups a row belongs to, deciding both the
@@ -771,9 +726,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
         return None;
     };
 
-    let conflicted = find_file(state, &path)
-        .map(|f| f.conflicted)
-        .unwrap_or(false);
+    let conflicted = state.status.find(&path).is_some_and(|f| f.conflicted);
 
     ui.add_space(SPACE_SMALL);
     if !conflicted {
@@ -802,17 +755,8 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
     // ever renders an empty pane and there is nothing to instruct the user
     // out of.
     let semantic = (!state.show_raw_diff)
-        .then(|| {
-            match (
-                data.old_blob.as_deref().and_then(diff::parse),
-                data.new_blob.as_deref().and_then(diff::parse),
-            ) {
-                (Some(old), Some(new)) => Some(diff::diff_models(&old, &new)),
-                _ => None,
-            }
-        })
-        .flatten()
-        .filter(|changes| !changes.is_empty());
+        .then(|| diff::semantic_changes(data.old_blob.as_deref(), data.new_blob.as_deref()))
+        .flatten();
 
     match semantic {
         Some(changes) => semantic_diff_view(ui, &changes),
@@ -835,18 +779,7 @@ fn conflict_resolver(
 ) -> Option<GitAction> {
     let matches_path = state.resolve.as_ref().is_some_and(|r| r.path == path);
     if !matches_path {
-        state.resolve = new_blob.and_then(conflict::parse).map(|file| {
-            let block_count = file
-                .segments
-                .iter()
-                .filter(|s| matches!(s, Segment::Conflict { .. }))
-                .count();
-            ResolveState {
-                path: path.to_string(),
-                file,
-                choices: vec![None; block_count],
-            }
-        });
+        state.resolve = new_blob.and_then(|text| ResolveState::parse(path, text));
     }
 
     let Some(resolve) = state.resolve.as_mut() else {
@@ -1169,18 +1102,6 @@ fn empty_state(ui: &mut egui::Ui, title: &str, hint: &str) {
     });
 }
 
-/// The changed file's `FileStatus`, searched across both scopes so a
-/// conflict indicator is found regardless of whether the file sits inside or
-/// outside the contracts root.
-fn find_file<'a>(state: &'a GitState, path: &str) -> Option<&'a FileStatus> {
-    state
-        .status
-        .inside
-        .iter()
-        .chain(state.status.outside.iter())
-        .find(|f| f.path == path)
-}
-
 /// Renders `diff::diff_models` as one block per change. A single-line change
 /// keeps the field name in `DIM` followed by `from` in `RED`, an arrow, and
 /// `to` in `GREEN`. A change whose `from` or `to` spans multiple lines (a
@@ -1233,22 +1154,6 @@ fn multiline_change_view(ui: &mut egui::Ui, change: &FieldChange) {
     }
 }
 
-/// Drops the `diff --git`, `index`, `---` and `+++` preamble, keeping the
-/// hunks themselves: the first `@@` line is where the diff proper starts, so
-/// everything from there on is returned. The untracked-file path synthesises
-/// `+` lines with no header at all, so a body with no `@@` line is returned
-/// unchanged rather than assuming a header is always there.
-fn strip_diff_header(raw: &str) -> &str {
-    let mut consumed = 0;
-    for line in raw.lines() {
-        if line.starts_with("@@") {
-            return raw.get(consumed..).unwrap_or("");
-        }
-        consumed += line.len() + 1;
-    }
-    raw
-}
-
 /// Renders a diff body the way git prints it: markers kept, `+` green, `-`
 /// red, and each `@@` hunk header in cyan, which is the colour git itself
 /// uses for them. Keeping the marker is what makes a multi-hunk diff
@@ -1277,7 +1182,7 @@ fn raw_diff_view(ui: &mut egui::Ui, raw: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::git::model::{Branches, Change};
+    use crate::features::git::domain::status::{Branches, Change};
     use crate::features::git::state::DiffData;
 
     const CONTRACT_GET: &str =
@@ -1329,24 +1234,6 @@ mod tests {
         let dir = tree.dirs.get("dir").expect("dir node");
         assert_eq!(dir.tracked_count(), 1);
         assert!(!files[1].tracked());
-    }
-
-    #[test]
-    fn a_conflicted_entry_appears_once_in_the_conflicts_group_only() {
-        let files = [file("contracts/login.json", true)];
-        let (conflicted, staged, unstaged) = sections(&files);
-        assert_eq!(conflicted.len(), 1);
-        assert!(staged.is_empty());
-        assert!(unstaged.is_empty());
-    }
-
-    #[test]
-    fn a_file_modified_on_both_sides_without_conflict_still_lists_in_both_groups() {
-        let files = [file("src/both.rs", false)];
-        let (conflicted, staged, unstaged) = sections(&files);
-        assert!(conflicted.is_empty());
-        assert_eq!(staged.len(), 1);
-        assert_eq!(unstaged.len(), 1);
     }
 
     #[test]
@@ -1541,33 +1428,6 @@ mod tests {
         eframe::egui::__run_test_ui(|ui| {
             central_body(ui, &mut state);
         });
-    }
-
-    #[test]
-    fn strip_diff_header_drops_the_preamble_and_keeps_the_first_hunk_marker() {
-        let raw = "diff --git a/contracts/login.json b/contracts/login.json\nindex 2a4e428..5d3ef15 100644\n--- a/contracts/login.json\n+++ b/contracts/login.json\n@@ -1,3 +1,3 @@\n {\n-    \"name\": \"user-login\",\n+    \"name\": \"login-v2\",\n }\n";
-        let body = strip_diff_header(raw);
-        assert!(!body.contains("diff --git"));
-        assert!(!body.contains("index "));
-        assert!(body.starts_with("@@ -1,3 +1,3 @@\n"));
-    }
-
-    #[test]
-    fn strip_diff_header_keeps_every_hunk_marker() {
-        // Hunk-sized output has more than one `@@` line. A stripper that
-        // returned everything after the *first* one would leave the rest in
-        // the body for the renderer to print with its first character eaten.
-        let raw = "diff --git a/f b/f\nindex 1111111..2222222 100644\n--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n@@ -30,3 +30,3 @@\n c\n-d\n+D\n";
-        let body = strip_diff_header(raw);
-        assert_eq!(body.matches("@@ -").count(), 2);
-    }
-
-    #[test]
-    fn strip_diff_header_leaves_a_headerless_diff_unchanged() {
-        // The untracked-file path synthesises `+` lines with no header at
-        // all, so a diff with no `@@` line must pass through untouched.
-        let raw = "+first\n+second\n";
-        assert_eq!(strip_diff_header(raw), raw);
     }
 
     const CONFLICT_TEXT: &str = "{\n<<<<<<< HEAD\n  \"name\": \"main\",\n=======\n  \"name\": \"side\",\n>>>>>>> side\n  \"method\": \"GET\",\n<<<<<<< HEAD\n  \"url\": \"http://a\"\n=======\n  \"url\": \"http://b\"\n>>>>>>> side\n}\n";

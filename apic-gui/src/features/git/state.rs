@@ -1,8 +1,8 @@
 //! State owned by the git feature: the current status, the selected diff, and
 //! the in-flight background job (if any).
 
-use crate::features::git::conflict::{Choice, ConflictFile};
-use crate::features::git::model::{Branches, Status};
+use crate::features::git::domain::conflict::{self, Choice, ConflictFile, Segment};
+use crate::features::git::domain::status::{Branches, Status};
 
 /// One completed diff fetch: the raw line diff plus each side's file content,
 /// fetched only for a `.json` path since that is the only shape `diff::parse`
@@ -71,6 +71,25 @@ pub(crate) struct ResolveState {
     /// One entry per conflict block in `file`, in the same order. `None`
     /// until the user picks a side for that block.
     pub(crate) choices: Vec<Option<Choice>>,
+}
+
+impl ResolveState {
+    /// Parses the conflicted working file `text` at `path`, with every block
+    /// undecided. `None` when the markers do not parse, in which case the
+    /// panel falls back to the read-only diff.
+    pub(crate) fn parse(path: &str, text: &str) -> Option<ResolveState> {
+        let file = conflict::parse(text)?;
+        let block_count = file
+            .segments
+            .iter()
+            .filter(|s| matches!(s, Segment::Conflict { .. }))
+            .count();
+        Some(ResolveState {
+            path: path.to_string(),
+            file,
+            choices: vec![None; block_count],
+        })
+    }
 }
 
 /// Everything the git feature owns. `App` holds one of these; no other
