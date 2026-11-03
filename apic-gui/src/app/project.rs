@@ -297,10 +297,7 @@ impl App {
         self.contracts.selected_template = None;
         self.contracts.repair = None;
         self.reload_project();
-        Settings {
-            last_project: Some(folder),
-        }
-        .save();
+        Settings::update(|s| s.last_project = Some(folder));
     }
 
     /// `[ Import ]` → Postman: launch the file picker (background thread).

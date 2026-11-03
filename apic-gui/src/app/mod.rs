@@ -124,6 +124,20 @@ impl App {
                                     ui.close();
                                 }
                             });
+                            ui.menu_button(RichText::new("Theme").color(GREEN), |ui| {
+                                let current = ui.ctx().options(|o| o.theme_preference);
+                                for (preference, label) in [
+                                    (egui::ThemePreference::System, "System"),
+                                    (egui::ThemePreference::Dark, "Dark"),
+                                    (egui::ThemePreference::Light, "Light"),
+                                ] {
+                                    if ui.selectable_label(current == preference, label).clicked() {
+                                        ui.ctx().set_theme(preference);
+                                        Settings::update(|s| s.theme = preference);
+                                        ui.close();
+                                    }
+                                }
+                            });
                         });
                 });
             });

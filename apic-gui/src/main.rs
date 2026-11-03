@@ -17,6 +17,7 @@ mod settings;
 mod ui;
 
 use app::App;
+use settings::Settings;
 use ui::theme::install_themes;
 
 fn main() -> eframe::Result {
@@ -47,7 +48,7 @@ fn main() -> eframe::Result {
         "apic",
         options,
         Box::new(|cc| {
-            install_themes(&cc.egui_ctx, egui::ThemePreference::System);
+            install_themes(&cc.egui_ctx, Settings::load().theme);
             Ok(Box::new(App::new()))
         }),
     )
