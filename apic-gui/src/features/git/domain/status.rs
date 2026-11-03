@@ -3,7 +3,7 @@
 //! Nothing here spawns a process or touches egui, so the parser is testable
 //! against captured `git status --porcelain=v2 -z` bytes.
 //!
-//! Consumed by `service`, `state`, and `view`.
+//! Consumed by `data::cli`, `state`, and `view`.
 
 use std::path::Path;
 
@@ -99,6 +99,43 @@ pub(crate) struct Branches {
     pub(crate) all: Vec<String>,
 }
 
+impl Status {
+    /// The entry for `path`, searched across both scopes, so a file is found
+    /// whether it sits inside or outside the contracts root.
+    pub(crate) fn find(&self, path: &str) -> Option<&FileStatus> {
+        self.inside
+            .iter()
+            .chain(self.outside.iter())
+            .find(|f| f.path == path)
+    }
+}
+
+/// What a discard path names: an exact file, or a folder holding some number
+/// of tracked files. Git only ever reports files in status, so a path that
+/// matches no `FileStatus::path` exactly is a folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DiscardTarget {
+    File,
+    Folder(usize),
+}
+
+/// Resolves a discard path against `status`. The count for a folder is
+/// tracked files only, matching what `git checkout -- <dir>` actually
+/// reverts: untracked files under the folder are left alone.
+pub(crate) fn discard_target(status: &Status, path: &str) -> DiscardTarget {
+    if status.find(path).is_some() {
+        return DiscardTarget::File;
+    }
+    let prefix = format!("{path}/");
+    let count = status
+        .inside
+        .iter()
+        .chain(status.outside.iter())
+        .filter(|f| f.tracked() && f.path.starts_with(&prefix))
+        .count();
+    DiscardTarget::Folder(count)
+}
+
 /// Parses `git status --porcelain=v2 -z` output, splitting each entry by whether
 /// it falls under any of `scopes` (repo-relative prefixes, empty for the whole
 /// repo). A path with no scope list applying is impossible to express with one
@@ -183,8 +220,56 @@ fn in_scope(path: &str, scopes: &[&str]) -> bool {
             .any(|scope| Path::new(path).starts_with(scope))
 }
 
+/// Splits a section's files into the three sidebar groups: unresolved
+/// conflicts, staged, and unstaged. `unmerged` sets both
+/// `index` and `worktree` to `Modified` for a conflicted entry, which makes
+/// it satisfy `has_staged_change` and `has_worktree_change` at once; staged
+/// and unstaged are not meaningful for a file mid-merge, so a conflicted
+/// entry is excluded from both and only listed here, keeping every file in
+/// exactly one group.
+pub(crate) fn sections(
+    files: &[FileStatus],
+) -> (Vec<&FileStatus>, Vec<&FileStatus>, Vec<&FileStatus>) {
+    let conflicted: Vec<&FileStatus> = files.iter().filter(|f| f.conflicted).collect();
+    let staged: Vec<&FileStatus> = files
+        .iter()
+        .filter(|f| !f.conflicted && f.has_staged_change())
+        .collect();
+    let unstaged: Vec<&FileStatus> = files
+        .iter()
+        .filter(|f| !f.conflicted && f.has_worktree_change())
+        .collect();
+    (conflicted, staged, unstaged)
+}
+
+#[cfg(test)]
+pub(crate) mod fixtures {
+    use super::{Change, FileStatus};
+
+    /// A file modified in both the index and the worktree.
+    pub(crate) fn file(path: &str, conflicted: bool) -> FileStatus {
+        FileStatus {
+            path: path.into(),
+            index: Change::Modified,
+            worktree: Change::Modified,
+            conflicted,
+        }
+    }
+
+    /// A file untracked in both the index and the worktree.
+    pub(crate) fn untracked(path: &str) -> FileStatus {
+        FileStatus {
+            path: path.into(),
+            index: Change::Untracked,
+            worktree: Change::Untracked,
+            conflicted: false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::fixtures::file;
     use super::*;
 
     /// Joins porcelain v2 records with NUL, the way `-z` output is delimited.
@@ -334,5 +419,49 @@ mod tests {
         assert!(inside.contains(&"project/contracts/login.json"));
         assert_eq!(status.outside.len(), 1);
         assert_eq!(status.outside[0].path, "other/file.rs");
+    }
+
+    #[test]
+    fn a_conflicted_entry_appears_once_in_the_conflicts_group_only() {
+        let files = [file("contracts/login.json", true)];
+        let (conflicted, staged, unstaged) = sections(&files);
+        assert_eq!(conflicted.len(), 1);
+        assert!(staged.is_empty());
+        assert!(unstaged.is_empty());
+    }
+
+    #[test]
+    fn a_file_modified_on_both_sides_without_conflict_still_lists_in_both_groups() {
+        let files = [file("src/both.rs", false)];
+        let (conflicted, staged, unstaged) = sections(&files);
+        assert!(conflicted.is_empty());
+        assert_eq!(staged.len(), 1);
+        assert_eq!(unstaged.len(), 1);
+    }
+
+    #[test]
+    fn discard_target_names_an_exact_path_a_file() {
+        let status = Status {
+            inside: vec![file("dir/a.rs", false)],
+            outside: vec![],
+        };
+        assert_eq!(discard_target(&status, "dir/a.rs"), DiscardTarget::File);
+    }
+
+    #[test]
+    fn discard_target_counts_only_tracked_files_under_a_folder() {
+        let status = Status {
+            inside: vec![
+                file("dir/a.rs", false),
+                FileStatus {
+                    path: "dir/new.txt".into(),
+                    index: Change::Untracked,
+                    worktree: Change::Untracked,
+                    conflicted: false,
+                },
+            ],
+            outside: vec![file("dir/b.rs", false)],
+        };
+        assert_eq!(discard_target(&status, "dir"), DiscardTarget::Folder(2));
     }
 }

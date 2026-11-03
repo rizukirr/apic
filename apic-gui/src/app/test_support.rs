@@ -13,7 +13,9 @@ use eframe::egui;
 use crate::app::App;
 use crate::app::state::ShellState;
 use crate::features::contracts::state::ContractsState;
-use crate::features::git::state::GitState;
+use crate::features::git::data::cli;
+use crate::features::git::data::jobs::RepoPaths;
+use crate::features::git::ui::state::{GitEvent, GitState};
 
 /// Fresh directory per test, made unique with the process id and a counter,
 /// mirroring `apic-core/src/config.rs:309-317`, so parallel test runs never
@@ -30,7 +32,7 @@ pub(crate) fn tempdir() -> PathBuf {
 
 /// True when `git` is usable on this machine. Every test that needs a real
 /// repository returns early when this is false, matching
-/// `features::git::service::tests`.
+/// `features::git::data::cli::tests`.
 pub(crate) fn git_available() -> bool {
     Command::new("git").arg("--version").output().is_ok()
 }
@@ -151,7 +153,6 @@ pub(crate) fn app_at(root: PathBuf) -> App {
         contracts: ContractsState::default(),
         git: GitState::default(),
         pending_dialog: None,
-        needs_git_refresh: false,
     }
 }
 
@@ -167,6 +168,70 @@ pub(crate) fn settle(app: &mut App, ctx: &egui::Context) {
         app.poll_git(ctx);
         if app.git.pending.is_none() {
             return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("git job did not complete within {MAX_ITERS} polls");
+}
+
+/// Appends a newline to `path`, a change that dirties the working tree
+/// without breaking JSON validity (trailing whitespace is legal JSON).
+pub(crate) fn dirty(path: &Path) {
+    let mut content = std::fs::read_to_string(path).expect("fixture file reads");
+    content.push('\n');
+    std::fs::write(path, content).expect("fixture file writes");
+}
+
+/// Runs `git -C root <args>` and returns stdout as a string, for
+/// assertions that read the repository directly rather than the app's
+/// own cache.
+pub(crate) fn git_output(root: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("git spawns");
+    assert!(out.status.success(), "git {args:?} failed: {out:?}");
+    String::from_utf8(out.stdout).expect("git output is utf8")
+}
+
+/// Reads the branch currently checked out in `root` directly from git,
+/// never from `GitState`.
+pub(crate) fn current_branch(root: &Path) -> String {
+    git_output(root, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .trim()
+        .to_string()
+}
+
+/// The git half of `app_at`: a fresh `GitState` and the `RepoPaths` for the
+/// fixture at `root`. `repo_root` comes from `cli::discover`, the same source
+/// `App::reload_project` uses, so a symlinked temp dir compares the same way.
+pub(crate) fn git_at(root: &Path) -> (GitState, RepoPaths) {
+    let repo_root = cli::discover(root)
+        .expect("git runs")
+        .expect("the fixture is a repository");
+    let paths = RepoPaths {
+        repo_root,
+        root: root.join("contracts"),
+        project_root: Some(root.to_path_buf()),
+    };
+    (GitState::default(), paths)
+}
+
+/// Polls `state` until no job is pending and nothing queued remains to
+/// start, collecting every event, with the same bound as `settle`.
+pub(crate) fn settle_git(
+    state: &mut GitState,
+    paths: &RepoPaths,
+    ctx: &egui::Context,
+) -> Vec<GitEvent> {
+    const MAX_ITERS: u32 = 200;
+    let mut events = Vec::new();
+    for _ in 0..MAX_ITERS {
+        events.extend(state.poll(Some(paths), ctx));
+        if state.pending.is_none() {
+            return events;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }

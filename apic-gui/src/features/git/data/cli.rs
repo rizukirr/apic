@@ -1,13 +1,11 @@
-//! Every `git` invocation, and nothing else. No state, no egui, no threads:
-//! the threading lives in the app shell, which is what keeps this testable
-//! against a real temp-dir repository.
+//! Every `git` invocation, and nothing else. No state, no egui, no threads: the threading lives in `jobs`, which is what keeps this testable against a real temp-dir repository.
 //!
-//! Consumed by `state` and `view`.
+//! Consumed by `jobs` and the app shell's project discovery.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::features::git::model::{Branches, Status, parse_status};
+use crate::features::git::domain::status::{Branches, Status, parse_status};
 
 /// Runs `git -C <root> <args>` and returns stdout bytes.
 ///
@@ -207,22 +205,22 @@ mod tests {
         let st = status(&root, &[]).unwrap();
         assert_eq!(
             st.inside[0].index,
-            crate::features::git::model::Change::Modified
+            crate::features::git::domain::status::Change::Modified
         );
         assert_eq!(
             st.inside[0].worktree,
-            crate::features::git::model::Change::Unmodified
+            crate::features::git::domain::status::Change::Unmodified
         );
 
         unstage(&root, "file.txt").unwrap();
         let st = status(&root, &[]).unwrap();
         assert_eq!(
             st.inside[0].index,
-            crate::features::git::model::Change::Unmodified
+            crate::features::git::domain::status::Change::Unmodified
         );
         assert_eq!(
             st.inside[0].worktree,
-            crate::features::git::model::Change::Modified
+            crate::features::git::domain::status::Change::Modified
         );
 
         assert_eq!(

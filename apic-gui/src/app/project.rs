@@ -23,6 +23,24 @@ fn display_location(path: &Path) -> String {
 }
 
 impl App {
+    /// Reconciles the open contract with the freshly checked-out branch.
+    /// A checkout can change or remove the tree behind every piece of
+    /// derived contract state at once, and `reload_project` only rebuilds
+    /// `contracts.entries`. Does not touch `shell.project_root` or persisted
+    /// settings, unlike `activate_project`: a checkout changes neither.
+    pub(crate) fn reconcile_after_checkout(&mut self) {
+        self.reload_project();
+        let path = self.contracts.path.clone();
+        match path.and_then(|p| self.contracts.entries.iter().position(|e| e.path == p)) {
+            Some(i) => self.load(i),
+            None => {
+                self.contracts.model = None;
+                self.contracts.path = None;
+                self.contracts.selected = None;
+            }
+        }
+    }
+
     /// Discovers contracts for the active project and reads each one's method for
     /// the sidebar badge. Resolves everything against `self.shell.project_root`; never
     /// reads the process current directory.
@@ -37,14 +55,14 @@ impl App {
             return;
         };
 
-        match crate::features::git::service::discover(&root) {
+        match crate::features::git::data::cli::discover(&root) {
             Ok(repo_root) => {
                 self.shell.repo_root = repo_root;
                 // The tab strip's dirty indicator must be correct before the
                 // Git tab is ever opened, so a project load fetches status
                 // itself instead of waiting for tab activation.
                 if self.shell.repo_root.is_some() {
-                    self.request_status_refresh();
+                    self.git.request_refresh();
                 }
             }
             Err(err) => {

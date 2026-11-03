@@ -6,25 +6,24 @@
 //! touch any other feature's state.
 
 pub(crate) mod actions;
-pub(crate) mod git_jobs;
 pub(crate) mod project;
 pub(crate) mod state;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
 use std::path::PathBuf;
 
 use eframe::egui;
 use egui::RichText;
 
-use crate::app::actions::{Action, GitAction, SidebarAction};
+use crate::app::actions::{Action, SidebarAction};
 use crate::app::state::{DialogKind, ShellState, SidebarTab};
 use crate::features::contracts::state::ContractsState;
 use crate::features::contracts::view::{
     CentralOutcome, FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, sidebar_body,
 };
-use crate::features::git::state::GitState;
-use crate::features::git::view;
+use crate::features::git::ui::state::{GitAction, GitEvent, GitState};
+use crate::features::git::ui::view;
 use crate::settings::Settings;
 use crate::ui::theme::*;
 
@@ -52,12 +51,6 @@ pub(crate) struct App {
     /// In-flight native file dialog, run on a background thread so the portal
     /// call never blocks the UI, plus the action to perform on its result.
     pub(crate) pending_dialog: Option<(DialogKind, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
-
-    /// Set when a status refresh is owed, a project just loaded or a contract
-    /// was just saved, and consumed by `git_jobs::maybe_refresh_status` once
-    /// no other git job is in flight. This is what makes the Git tab's dirty
-    /// indicator correct without ever having activated the tab.
-    pub(crate) needs_git_refresh: bool,
 }
 
 impl App {
@@ -67,7 +60,6 @@ impl App {
             contracts: ContractsState::default(),
             git: GitState::default(),
             pending_dialog: None,
-            needs_git_refresh: false,
         };
         let settings = Settings::load();
         if let Some(root) = settings.last_project
@@ -276,8 +268,27 @@ impl App {
         if out.saved {
             // A save is the one moment the app itself dirties the tree and
             // knows it, so keep the tab honest without a filesystem watcher.
-            self.request_status_refresh();
+            self.git.request_refresh();
         }
+    }
+
+    /// Polls the git view model and applies the events it returns. Called
+    /// every frame from `App::ui`.
+    pub(crate) fn poll_git(&mut self, ctx: &egui::Context) {
+        let paths = self.shell.repo_paths();
+        let events = self.git.poll(paths.as_ref(), ctx);
+        for event in events {
+            match event {
+                GitEvent::Status(text) => self.shell.status = text,
+                GitEvent::BranchSwitched => self.reconcile_after_checkout(),
+            }
+        }
+    }
+
+    /// Passes one git action to the git view model with the current repo paths.
+    fn handle_git(&mut self, action: GitAction, ctx: &egui::Context) {
+        let paths = self.shell.repo_paths();
+        self.git.handle(action, paths.as_ref(), ctx);
     }
 
     /// Apply an action returned by the top bar or the sidebar to app state.
@@ -325,69 +336,24 @@ impl App {
                     tab == SidebarTab::Git && self.shell.sidebar_tab != SidebarTab::Git;
                 self.shell.sidebar_tab = tab;
                 if entered_git {
-                    self.spawn(ctx);
+                    self.handle_git(GitAction::Refresh, ctx);
                 }
             }
-            Action::Git(GitAction::Refresh) => {
-                self.spawn(ctx);
+            Action::Git(GitAction::SwitchBranch { .. })
+                if self.contracts.editing
+                    && self.contracts.model != self.contracts.original_model =>
+            {
+                let open = self
+                    .contracts
+                    .path
+                    .as_deref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "the open contract".to_string());
+                let msg = format!("cannot switch branch, {open} has unsaved edits");
+                self.git.error = msg.clone();
+                self.shell.status = msg;
             }
-            Action::Git(GitAction::Select { path, staged }) => {
-                self.git.selected = Some((path.clone(), staged));
-                let cached =
-                    matches!(&self.git.diff, Some((key, _)) if *key == (path.clone(), staged));
-                if !cached {
-                    self.spawn_diff(ctx, path, staged);
-                }
-            }
-            Action::Git(GitAction::Stage { path }) => {
-                self.spawn_stage(ctx, path);
-            }
-            Action::Git(GitAction::Unstage { path }) => {
-                self.spawn_unstage(ctx, path);
-            }
-            Action::Git(GitAction::RequestDiscard { path }) => {
-                self.git.pending_discard = Some(path);
-            }
-            Action::Git(GitAction::ConfirmDiscard) => {
-                if let Some(path) = self.git.pending_discard.take() {
-                    self.spawn_discard(ctx, path);
-                }
-            }
-            Action::Git(GitAction::Commit) => {
-                self.spawn_commit(ctx, self.git.commit_message.clone());
-            }
-            Action::Git(GitAction::RefreshBranches) => {
-                self.spawn_branches(ctx);
-            }
-            Action::Git(GitAction::SwitchBranch { name }) => {
-                if self.contracts.editing && self.contracts.model != self.contracts.original_model {
-                    let open = self
-                        .contracts
-                        .path
-                        .as_deref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| "the open contract".to_string());
-                    let msg = format!("cannot switch branch, {open} has unsaved edits");
-                    self.git.error = msg.clone();
-                    self.shell.status = msg;
-                } else {
-                    self.spawn_switch_branch(ctx, name);
-                }
-            }
-            Action::Git(GitAction::CreateBranch { name }) => {
-                self.spawn_create_branch(ctx, name);
-            }
-            Action::Git(GitAction::RequestBranchDelete { name }) => {
-                self.git.pending_branch_delete = Some(name);
-            }
-            Action::Git(GitAction::ConfirmBranchDelete) => {
-                if let Some(name) = self.git.pending_branch_delete.take() {
-                    self.spawn_delete_branch(ctx, name);
-                }
-            }
-            Action::Git(GitAction::ResolveConflict { path, text }) => {
-                self.spawn_resolve(ctx, path, text);
-            }
+            Action::Git(action) => self.handle_git(action, ctx),
         }
     }
 }
@@ -401,7 +367,6 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.poll_dialog(&ctx);
         self.poll_git(&ctx);
-        self.maybe_refresh_status(&ctx);
         let top = self.top_bar(ui).map(Action::Sidebar);
         self.bottom_bar(ui);
         let side = self.sidebar(ui);
@@ -423,30 +388,8 @@ mod tests {
 
     use crate::app::state::SidebarTab;
     use crate::app::test_support::{
-        app_at, conflict_fixture, git_available, project_fixture, settle, tempdir,
+        app_at, current_branch, dirty, git_available, project_fixture, settle, tempdir,
     };
-
-    /// Appends a newline to `path`, a change that dirties the working tree
-    /// without breaking JSON validity (trailing whitespace is legal JSON).
-    fn dirty(path: &std::path::Path) {
-        let mut content = std::fs::read_to_string(path).expect("fixture file reads");
-        content.push('\n');
-        std::fs::write(path, content).expect("fixture file writes");
-    }
-
-    /// Runs `git -C root <args>` and returns stdout as a string, for
-    /// assertions that read the repository directly rather than the app's
-    /// own cache.
-    fn git_output(root: &std::path::Path, args: &[&str]) -> String {
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(root)
-            .args(args)
-            .output()
-            .expect("git spawns");
-        assert!(out.status.success(), "git {args:?} failed: {out:?}");
-        String::from_utf8(out.stdout).expect("git output is utf8")
-    }
 
     /// A minimal but valid contract, loaded the same way `load()` does.
     fn sample_model() -> EditModel {
@@ -604,7 +547,7 @@ mod tests {
             SidebarTab::Explorer,
             "the tab must never switch to Git for this to prove anything"
         );
-        app.maybe_refresh_status(&ctx);
+        app.poll_git(&ctx);
         settle(&mut app, &ctx);
 
         assert!(
@@ -615,107 +558,6 @@ mod tests {
                 .any(|f| f.path == "contracts/sample.json"),
             "reload_project must populate status without the Git tab ever opening: {:?}",
             app.git.status.inside
-        );
-    }
-
-    /// Pins the second shipped defect: routing `GitAction::Stage` through
-    /// `apply` must actually stage the file in the repository. Read the
-    /// result from `git` directly rather than from `app.git.status`, so this
-    /// cannot pass on the app merely agreeing with itself.
-    #[test]
-    fn stage_action_stages_in_the_repository() {
-        if !git_available() {
-            return;
-        }
-        let root = project_fixture();
-        dirty(&root.join("contracts").join("sample.json"));
-
-        let mut app = app_at(root.clone());
-        let ctx = egui::Context::default();
-        app.reload_project();
-        app.maybe_refresh_status(&ctx);
-        settle(&mut app, &ctx);
-
-        app.apply(
-            Action::Git(GitAction::Stage {
-                path: "contracts/sample.json".to_string(),
-            }),
-            &ctx,
-        );
-        settle(&mut app, &ctx);
-
-        let porcelain = git_output(&root, &["status", "--porcelain=v2"]);
-        let line = porcelain
-            .lines()
-            .find(|l| l.ends_with("contracts/sample.json"))
-            .unwrap_or_else(|| panic!("git must report the file: {porcelain:?}"));
-        let xy = line.split(' ').nth(1).expect("an XY field");
-        let index_char = xy.as_bytes()[0];
-        assert_ne!(
-            index_char, b'.',
-            "the index column must show a staged change, got {line:?}"
-        );
-    }
-
-    #[test]
-    fn selecting_another_file_keeps_the_raw_diff_toggle() {
-        if !git_available() {
-            return;
-        }
-        let root = project_fixture();
-        let mut app = app_at(root.clone());
-        let ctx = egui::Context::default();
-        app.reload_project();
-
-        app.git.show_raw_diff = true;
-        app.apply(
-            Action::Git(GitAction::Select {
-                path: "contracts/sample.json".to_string(),
-                staged: false,
-            }),
-            &ctx,
-        );
-        settle(&mut app, &ctx);
-
-        // The toggle is a panel mode now, not a per-file one. This is the
-        // deleted reset in `apply` pinned, and it lives here rather than in
-        // the view because the flag's lifetime is an app concern.
-        assert!(app.git.show_raw_diff);
-    }
-
-    /// Drives a commit through the dispatch and confirms it against the
-    /// repository's own log, not the app's cache.
-    #[test]
-    fn commit_action_commits_the_staged_change() {
-        if !git_available() {
-            return;
-        }
-        let root = project_fixture();
-        dirty(&root.join("contracts").join("sample.json"));
-
-        let mut app = app_at(root.clone());
-        let ctx = egui::Context::default();
-        app.reload_project();
-        app.maybe_refresh_status(&ctx);
-        settle(&mut app, &ctx);
-
-        app.apply(
-            Action::Git(GitAction::Stage {
-                path: "contracts/sample.json".to_string(),
-            }),
-            &ctx,
-        );
-        settle(&mut app, &ctx);
-
-        app.git.commit_message = "pin the stage wiring".to_string();
-        app.apply(Action::Git(GitAction::Commit), &ctx);
-        settle(&mut app, &ctx);
-
-        let subject = git_output(&root, &["log", "-1", "--format=%s"]);
-        assert_eq!(subject.trim(), "pin the stage wiring");
-        assert!(
-            app.git.commit_message.is_empty(),
-            "a successful commit must clear the message box"
         );
     }
 
@@ -733,7 +575,7 @@ mod tests {
         let mut app = app_at(root);
         let ctx = egui::Context::default();
         app.reload_project();
-        app.maybe_refresh_status(&ctx);
+        app.poll_git(&ctx);
         settle(&mut app, &ctx);
 
         assert!(
@@ -774,14 +616,6 @@ mod tests {
         settle(&mut app, &ctx);
     }
 
-    /// Reads the branch currently checked out in `root` directly from git,
-    /// never from `app.git`.
-    fn current_branch(root: &std::path::Path) -> String {
-        git_output(root, &["rev-parse", "--abbrev-ref", "HEAD"])
-            .trim()
-            .to_string()
-    }
-
     /// A switch must be refused, before anything is spawned, while the open
     /// contract has edits that differ from its pre-edit snapshot. Otherwise
     /// a checkout would silently discard them.
@@ -794,6 +628,9 @@ mod tests {
         let mut app = app_at(root.clone());
         let ctx = egui::Context::default();
         app.reload_project();
+        // Drain the refresh the reload queued, so its success cannot clear
+        // the error the refusal sets.
+        settle(&mut app, &ctx);
         let i = app
             .contracts
             .entries
@@ -965,145 +802,28 @@ mod tests {
         assert!(app.contracts.selected.is_none());
     }
 
-    /// A create must add the branch without switching the repository to it.
+    /// A git mutation's success message must reach the status bar through
+    /// `App::poll_git`, not only as a `GitEvent` from the view model.
     #[test]
-    fn create_branch_adds_without_switching() {
+    fn stage_through_app_reports_in_shell_status() {
         if !git_available() {
             return;
         }
         let root = project_fixture();
-        let mut app = app_at(root.clone());
+        dirty(&root.join("contracts").join("sample.json"));
+        let mut app = app_at(root);
         let ctx = egui::Context::default();
         app.reload_project();
-
-        app.apply(
-            Action::Git(GitAction::CreateBranch {
-                name: "apic-third".to_string(),
-            }),
-            &ctx,
-        );
         settle(&mut app, &ctx);
 
-        assert_eq!(
-            current_branch(&root),
-            "apic-test",
-            "a create must not change the checked-out branch"
-        );
-        let listed = git_output(&root, &["branch", "--list", "apic-third"]);
-        assert!(
-            listed.contains("apic-third"),
-            "the new branch must be listed: {listed:?}"
-        );
-    }
-
-    /// A delete git refuses (unmerged commits) must leave the branch in
-    /// place and surface git's own message in `git.error`.
-    #[test]
-    fn refused_delete_leaves_the_branch_and_reports_git_error() {
-        if !git_available() {
-            return;
-        }
-        let root = project_fixture();
-        let mut app = app_at(root.clone());
-        let ctx = egui::Context::default();
-        app.reload_project();
-
         app.apply(
-            Action::Git(GitAction::RequestBranchDelete {
-                name: "apic-second".to_string(),
-            }),
-            &ctx,
-        );
-        app.apply(Action::Git(GitAction::ConfirmBranchDelete), &ctx);
-        settle(&mut app, &ctx);
-
-        let listed = git_output(&root, &["branch", "--list", "apic-second"]);
-        assert!(
-            listed.contains("apic-second"),
-            "a refused delete must leave the branch present: {listed:?}"
-        );
-        assert!(
-            !app.git.error.is_empty(),
-            "git's refusal must land in git.error"
-        );
-    }
-
-    /// Resolving a real conflict through `App::apply` must both write the
-    /// resolved text and stage it, since a written file that is not staged
-    /// still reads as unmerged. Read the outcome from `git status
-    /// --porcelain=v2` against the temp repo, not from `app.git`, so this
-    /// cannot pass on the app agreeing with itself. `u`-prefixed lines are
-    /// git's unmerged entries, so their absence for this path is what proves
-    /// the conflict actually cleared.
-    #[test]
-    fn resolve_conflict_stages_the_file_and_clears_the_unmerged_entry() {
-        if !git_available() {
-            return;
-        }
-        let root = conflict_fixture();
-        let mut app = app_at(root.clone());
-        let ctx = egui::Context::default();
-        app.reload_project();
-
-        app.apply(
-            Action::Git(GitAction::ResolveConflict {
+            Action::Git(GitAction::Stage {
                 path: "contracts/sample.json".to_string(),
-                text: apic_core::template::DEFAULT.to_string(),
             }),
             &ctx,
         );
         settle(&mut app, &ctx);
 
-        assert!(
-            app.git.error.is_empty(),
-            "resolve must not report an error: {}",
-            app.git.error
-        );
-
-        let porcelain = git_output(&root, &["status", "--porcelain=v2"]);
-        assert!(
-            !porcelain
-                .lines()
-                .any(|l| l.starts_with("u ") && l.ends_with("contracts/sample.json")),
-            "the path must no longer show as unmerged: {porcelain:?}"
-        );
-        let line = porcelain
-            .lines()
-            .find(|l| l.ends_with("contracts/sample.json"))
-            .unwrap_or_else(|| panic!("git must still report the file: {porcelain:?}"));
-        let xy = line.split(' ').nth(1).expect("an XY field");
-        assert_ne!(
-            xy.as_bytes()[0],
-            b'.',
-            "the index column must show a staged change, got {line:?}"
-        );
-    }
-
-    /// After a resolve, the file on disk must carry none of the conflict
-    /// markers: a leftover marker means the write half of the resolve did
-    /// not actually apply the rendered text.
-    #[test]
-    fn resolve_conflict_removes_the_markers_from_disk() {
-        if !git_available() {
-            return;
-        }
-        let root = conflict_fixture();
-        let mut app = app_at(root.clone());
-        let ctx = egui::Context::default();
-        app.reload_project();
-
-        app.apply(
-            Action::Git(GitAction::ResolveConflict {
-                path: "contracts/sample.json".to_string(),
-                text: apic_core::template::DEFAULT.to_string(),
-            }),
-            &ctx,
-        );
-        settle(&mut app, &ctx);
-
-        let content = std::fs::read_to_string(root.join("contracts").join("sample.json")).unwrap();
-        assert!(!content.contains("<<<<<<<"), "got: {content:?}");
-        assert!(!content.contains("======="), "got: {content:?}");
-        assert!(!content.contains(">>>>>>>"), "got: {content:?}");
+        assert_eq!(app.shell.status, "staged contracts/sample.json");
     }
 }

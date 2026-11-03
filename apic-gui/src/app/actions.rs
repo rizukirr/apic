@@ -6,6 +6,7 @@
 
 use crate::app::state::SidebarTab;
 use crate::features::contracts::state::DeleteTarget;
+use crate::features::git::ui::state::GitAction;
 
 /// A one-shot action requested by the header or sidebar this frame.
 pub(crate) enum SidebarAction {
@@ -29,52 +30,6 @@ pub(crate) enum SidebarAction {
 
     /// Switch which panel fills the sidebar frame.
     SwitchTab(SidebarTab),
-}
-
-/// A one-shot action requested by the Git panel this frame.
-pub(crate) enum GitAction {
-    /// Re-read `git status`.
-    Refresh,
-
-    /// Show the diff for this repo-relative path, staged or unstaged.
-    Select { path: String, staged: bool },
-
-    /// Stage this repo-relative path.
-    Stage { path: String },
-
-    /// Unstage this repo-relative path, leaving the working tree untouched.
-    Unstage { path: String },
-
-    /// Ask to discard this tracked path, shows a confirmation before
-    /// anything is reverted.
-    RequestDiscard { path: String },
-
-    /// The pending discard was confirmed, revert it.
-    ConfirmDiscard,
-
-    /// Commit the currently staged changes with `GitState::commit_message`.
-    Commit,
-
-    /// Re-read the branch list.
-    RefreshBranches,
-
-    /// Switch to this local branch.
-    SwitchBranch { name: String },
-
-    /// Create this branch without switching to it.
-    CreateBranch { name: String },
-
-    /// Ask to delete this branch, shows a confirmation before anything is
-    /// removed.
-    RequestBranchDelete { name: String },
-
-    /// The pending branch delete was confirmed, delete it.
-    ConfirmBranchDelete,
-
-    /// Write the rendered resolution `text` for this conflicted path and
-    /// stage it. The text is already rendered, this action carries no
-    /// markers for the job to parse.
-    ResolveConflict { path: String, text: String },
 }
 
 /// Anything a view returned this frame, from either sidebar tab.
