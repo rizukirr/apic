@@ -17,37 +17,17 @@ use eframe::egui;
 use egui::RichText;
 
 use crate::app::actions::{Action, SidebarAction};
-use crate::app::state::{CentralView, DialogKind, ShellState};
+use crate::app::state::{CentralView, DialogKind, ShellState, SidebarView};
 use crate::features::contracts::state::ContractsState;
 use crate::features::contracts::view::{
-    CentralOutcome, FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, sidebar_body,
-    templates_body,
+    CentralOutcome, FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, header_actions,
+    sidebar_body, templates_body,
 };
 use crate::features::git::ui::state::{GitAction, GitEvent, GitState};
 use crate::features::git::ui::view;
 use crate::settings::Settings;
 use crate::ui::components::{icon_button, section_header};
 use crate::ui::theme::*;
-
-/// The Git section header: a toggle on the title and a refresh icon.
-fn git_section_header(ui: &mut egui::Ui, open: bool, title: RichText) -> Option<Action> {
-    let mut action = None;
-    let toggled = section_header(ui, open, title, |ui| {
-        if icon_button(
-            ui,
-            egui_phosphor::regular::ARROWS_CLOCKWISE,
-            "Refresh status",
-        )
-        .clicked()
-        {
-            action = Some(Action::Git(GitAction::Refresh));
-        }
-    });
-    if toggled {
-        action = Some(Action::Sidebar(SidebarAction::ToggleGitSection));
-    }
-    action
-}
 
 /// egui's default fonts plus the Phosphor icon font as a fallback for
 /// proportional text, so any label can carry an `egui_phosphor::regular`
@@ -113,8 +93,9 @@ impl App {
     }
 
     /// Top header: sidebar toggle, the project dropdown (new, open, import) and
-    /// the theme menu. Returns an action when one of those is chosen.
-    fn top_bar(&mut self, ui: &mut egui::Ui) -> Option<SidebarAction> {
+    /// the branch dropdown and the theme menu. Returns an action when one of
+    /// those is chosen.
+    fn top_bar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         let p = palette(ui.ctx());
         let mut action = None;
         let project = self
@@ -129,7 +110,7 @@ impl App {
             ui.horizontal(|ui| {
                 ui.set_min_height(TOOLBAR_ROW_H);
                 if icon_button(ui, egui_phosphor::regular::SIDEBAR, "Toggle sidebar").clicked() {
-                    action = Some(SidebarAction::ToggleSidebar);
+                    action = Some(Action::Sidebar(SidebarAction::ToggleSidebar));
                 }
                 egui::MenuBar::new()
                     .style(|style: &mut egui::Style| {
@@ -140,18 +121,23 @@ impl App {
                         let title = format!("{project} {}", egui_phosphor::regular::CARET_DOWN);
                         ui.menu_button(RichText::new(title).color(p.on_surface).strong(), |ui| {
                             if ui.button("New project").clicked() {
-                                action = Some(SidebarAction::NewProject);
+                                action = Some(Action::Sidebar(SidebarAction::NewProject));
                                 ui.close();
                             }
                             if ui.button("Open project").clicked() {
-                                action = Some(SidebarAction::OpenProject);
+                                action = Some(Action::Sidebar(SidebarAction::OpenProject));
                                 ui.close();
                             }
                             if ui.button("Import Postman collection").clicked() {
-                                action = Some(SidebarAction::ImportPostman);
+                                action = Some(Action::Sidebar(SidebarAction::ImportPostman));
                                 ui.close();
                             }
                         });
+                        if self.shell.repo_root.is_some()
+                            && let Some(a) = view::branch_menu(ui, &mut self.git)
+                        {
+                            action = Some(Action::Git(a));
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.menu_button(RichText::new("Theme").color(p.primary), |ui| {
                                 let current = ui.ctx().options(|o| o.theme_preference);
@@ -192,8 +178,8 @@ impl App {
         });
     }
 
-    /// The left sidebar: the contract tree, with the Templates and Git
-    /// sections docked at the bottom.
+    /// The left sidebar: the Contracts or Changes list, with the Templates and
+    /// Commit sections docked at the bottom.
     fn sidebar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         if !self.shell.sidebar_open {
             return None;
@@ -223,52 +209,105 @@ impl App {
                         action = Some(Action::Sidebar(a));
                     }
                 });
-                let (git_label, git_color) = view::tab_label("Git", &self.git.status, p);
-                let branch = self.git.branches.current.clone().unwrap_or_default();
-                let title = RichText::new(format!(
-                    "{} {git_label}  {branch}",
-                    egui_phosphor::regular::GIT_BRANCH
-                ))
-                .color(git_color);
-                if self.shell.git_open {
-                    egui::Panel::bottom("git_section_open")
+                let commit_title =
+                    RichText::new(format!("{} Commit", egui_phosphor::regular::GIT_COMMIT))
+                        .color(p.on_surface);
+                if self.shell.commit_open {
+                    egui::Panel::bottom("commit_section_open")
                         .resizable(true)
-                        .default_size(260.0)
-                        .min_size(120.0)
+                        .default_size(160.0)
+                        .min_size(100.0)
                         .show(ui, |ui| {
-                            if let Some(a) = git_section_header(ui, true, title.clone()) {
-                                action = Some(a);
+                            if section_header(ui, true, commit_title, |_| {}) {
+                                action = Some(Action::Sidebar(SidebarAction::ToggleCommitSection));
                             }
-                            if let Some(a) = view::branch_menu(ui, &mut self.git) {
-                                action = Some(Action::Git(a));
-                            }
-                            egui::Panel::bottom("git_commit_temp")
-                                .default_size(120.0)
-                                .show(ui, |ui| {
-                                    if let Some(a) = view::commit_body(ui, &mut self.git) {
-                                        action = Some(Action::Git(a));
-                                    }
-                                });
-                            if let Some(a) = view::changes_body(
-                                ui,
-                                &mut self.git,
-                                self.shell.repo_root.as_deref(),
-                            ) {
-                                action = Some(Action::Git(a));
-                            }
-                            if let Some(a) = view::dialogs(ui.ctx(), &mut self.git) {
+                            if let Some(a) = view::commit_body(ui, &mut self.git) {
                                 action = Some(Action::Git(a));
                             }
                         });
                 } else {
-                    egui::Panel::bottom("git_section_closed").show(ui, |ui| {
-                        if let Some(a) = git_section_header(ui, false, title.clone()) {
-                            action = Some(a);
+                    egui::Panel::bottom("commit_section_closed").show(ui, |ui| {
+                        if section_header(ui, false, commit_title, |_| {}) {
+                            action = Some(Action::Sidebar(SidebarAction::ToggleCommitSection));
                         }
                     });
                 }
-                if let Some(a) = sidebar_body(ui, &mut self.contracts) {
-                    action = Some(Action::Sidebar(a));
+                egui::Panel::top("sidebar_header").show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let (changes_label, changes_color) =
+                            view::tab_label("Changes", &self.git.status, p);
+                        let changes_title =
+                            format!("{} {changes_label}", egui_phosphor::regular::GIT_DIFF);
+                        let current = match self.shell.sidebar_view {
+                            SidebarView::Contracts => RichText::new(format!(
+                                "{} Contracts {}",
+                                egui_phosphor::regular::FOLDER_SIMPLE,
+                                egui_phosphor::regular::CARET_DOWN
+                            ))
+                            .color(p.on_surface),
+                            SidebarView::Changes => RichText::new(format!(
+                                "{changes_title} {}",
+                                egui_phosphor::regular::CARET_DOWN
+                            ))
+                            .color(changes_color),
+                        };
+                        ui.menu_button(current, |ui| {
+                            let contracts =
+                                format!("{} Contracts", egui_phosphor::regular::FOLDER_SIMPLE);
+                            if ui
+                                .button(RichText::new(contracts).color(p.on_surface))
+                                .clicked()
+                            {
+                                action = Some(Action::Sidebar(SidebarAction::SwitchView(
+                                    SidebarView::Contracts,
+                                )));
+                                ui.close();
+                            }
+                            if ui
+                                .button(RichText::new(changes_title).color(changes_color))
+                                .clicked()
+                            {
+                                action = Some(Action::Sidebar(SidebarAction::SwitchView(
+                                    SidebarView::Changes,
+                                )));
+                                ui.close();
+                            }
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            match self.shell.sidebar_view {
+                                SidebarView::Contracts => {
+                                    if let Some(a) = header_actions(ui, &mut self.contracts) {
+                                        action = Some(Action::Sidebar(a));
+                                    }
+                                }
+                                SidebarView::Changes => {
+                                    if icon_button(
+                                        ui,
+                                        egui_phosphor::regular::ARROWS_CLOCKWISE,
+                                        "Refresh status",
+                                    )
+                                    .clicked()
+                                    {
+                                        action = Some(Action::Git(GitAction::Refresh));
+                                    }
+                                }
+                            }
+                        });
+                    });
+                });
+                match self.shell.sidebar_view {
+                    SidebarView::Contracts => {
+                        if let Some(a) = sidebar_body(ui, &mut self.contracts) {
+                            action = Some(Action::Sidebar(a));
+                        }
+                    }
+                    SidebarView::Changes => {
+                        if let Some(a) =
+                            view::changes_body(ui, &mut self.git, self.shell.repo_root.as_deref())
+                        {
+                            action = Some(Action::Git(a));
+                        }
+                    }
                 }
             });
         action
@@ -377,9 +416,13 @@ impl App {
             Action::Sidebar(SidebarAction::ToggleSidebar) => {
                 self.shell.sidebar_open = !self.shell.sidebar_open;
             }
-            Action::Sidebar(SidebarAction::ToggleGitSection) => {
-                self.shell.git_open = !self.shell.git_open;
-                if self.shell.git_open {
+            Action::Sidebar(SidebarAction::ToggleCommitSection) => {
+                self.shell.commit_open = !self.shell.commit_open;
+            }
+            Action::Sidebar(SidebarAction::SwitchView(view)) => {
+                let was = self.shell.sidebar_view;
+                self.shell.sidebar_view = view;
+                if view == SidebarView::Changes && was != SidebarView::Changes {
                     self.handle_git(GitAction::Refresh, ctx);
                 }
             }
@@ -419,13 +462,16 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.poll_dialog(&ctx);
         self.poll_git(&ctx);
-        let top = self.top_bar(ui).map(Action::Sidebar);
+        let top = self.top_bar(ui);
         self.bottom_bar(ui);
         let side = self.sidebar(ui);
         if let Some(a) = top.or(side) {
             self.apply(a, &ctx);
         }
         self.central(ui);
+        if let Some(a) = view::dialogs(&ctx, &mut self.git) {
+            self.apply(Action::Git(a), &ctx);
+        }
         self.new_template_dialog(&ctx);
         self.new_request_dialog(&ctx);
         self.delete_dialog(&ctx);
@@ -599,17 +645,20 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_renders_each_section_state_in_both_themes() {
+    fn sidebar_renders_each_view_and_section_state_in_both_themes() {
         for preference in crate::ui::theme::BOTH_THEMES {
-            for (git_open, templates_open) in
-                [(false, false), (true, false), (false, true), (true, true)]
-            {
-                let mut app = app_at(tempdir());
-                app.shell.git_open = git_open;
-                app.shell.templates_open = templates_open;
-                crate::ui::theme::run_in_theme(preference, |ui| {
-                    let _ = app.sidebar(ui);
-                });
+            for view in [SidebarView::Contracts, SidebarView::Changes] {
+                for (commit_open, templates_open) in
+                    [(false, false), (true, false), (false, true), (true, true)]
+                {
+                    let mut app = app_at(tempdir());
+                    app.shell.sidebar_view = view;
+                    app.shell.commit_open = commit_open;
+                    app.shell.templates_open = templates_open;
+                    crate::ui::theme::run_in_theme(preference, |ui| {
+                        let _ = app.sidebar(ui);
+                    });
+                }
             }
             if git_available() {
                 let root = project_fixture();
@@ -619,17 +668,20 @@ mod tests {
                     .expect("template writes");
                 let mut app = app_at(root);
                 app.reload_project();
-                app.shell.git_open = true;
+                app.shell.commit_open = true;
                 app.shell.templates_open = true;
-                crate::ui::theme::run_in_theme(preference, |ui| {
-                    let _ = app.sidebar(ui);
-                });
+                for view in [SidebarView::Contracts, SidebarView::Changes] {
+                    app.shell.sidebar_view = view;
+                    crate::ui::theme::run_in_theme(preference, |ui| {
+                        let _ = app.sidebar(ui);
+                    });
+                }
             }
         }
     }
 
     #[test]
-    fn opening_the_git_section_starts_a_status_refresh() {
+    fn switching_to_changes_starts_a_status_refresh() {
         if !git_available() {
             return;
         }
@@ -639,14 +691,34 @@ mod tests {
         settle(&mut app, &ctx);
         assert!(app.git.pending.is_none());
 
-        app.apply(Action::Sidebar(SidebarAction::ToggleGitSection), &ctx);
+        app.apply(
+            Action::Sidebar(SidebarAction::SwitchView(SidebarView::Changes)),
+            &ctx,
+        );
 
-        assert!(app.shell.git_open);
+        assert_eq!(app.shell.sidebar_view, SidebarView::Changes);
         assert!(
             app.git.pending.is_some(),
-            "opening Git must start a status refresh"
+            "switching to Changes must start a status refresh"
         );
         settle(&mut app, &ctx);
+    }
+
+    #[test]
+    fn top_bar_renders_with_and_without_a_repository() {
+        for preference in crate::ui::theme::BOTH_THEMES {
+            let mut app = app_at(tempdir());
+            crate::ui::theme::run_in_theme(preference, |ui| {
+                let _ = app.top_bar(ui);
+            });
+            if git_available() {
+                let mut app = app_at(project_fixture());
+                app.reload_project();
+                crate::ui::theme::run_in_theme(preference, |ui| {
+                    let _ = app.top_bar(ui);
+                });
+            }
+        }
     }
 
     #[test]
@@ -689,8 +761,8 @@ mod tests {
 
         app.reload_project();
         assert!(
-            !app.shell.git_open,
-            "the Git section must never open for this to prove anything"
+            app.shell.sidebar_view == SidebarView::Contracts,
+            "the sidebar must never switch to Changes for this to prove anything"
         );
         app.poll_git(&ctx);
         settle(&mut app, &ctx);

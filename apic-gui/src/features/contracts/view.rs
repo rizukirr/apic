@@ -1061,43 +1061,36 @@ fn template_menu_items(name: &str, path: &std::path::Path) -> Vec<(&'static str,
     )]
 }
 
-/// Left sidebar body: a TEMPLATES section on top, then the contract picker
-/// (folder tree, method-badged, filtered by search).
+/// The Contracts view's header icons: filter toggle and new request.
+pub(crate) fn header_actions(
+    ui: &mut egui::Ui,
+    state: &mut ContractsState,
+) -> Option<SidebarAction> {
+    let mut action = None;
+    if icon_button(ui, egui_phosphor::regular::PLUS, "New request").clicked() {
+        action = Some(SidebarAction::NewRequest(String::new()));
+    }
+    if icon_button(
+        ui,
+        egui_phosphor::regular::MAGNIFYING_GLASS,
+        "Filter contracts",
+    )
+    .clicked()
+    {
+        state.toggle_search();
+    }
+    action
+}
+
+/// Left sidebar body: the filter row and the contract picker (folder tree,
+/// method-badged, filtered by search).
 ///
 /// The sidebar region above the bottom sections is owned by the app shell, not
 /// by this feature; this only fills it.
 pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Option<SidebarAction> {
-    let p = palette(ui.ctx());
     let tree = build_tree(&state.entries, &state.search);
     let selected = state.selected;
     let mut action = None;
-    ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icon_button(ui, egui_phosphor::regular::PLUS, "New request").clicked() {
-                action = Some(SidebarAction::NewRequest(String::new()));
-            }
-            if icon_button(
-                ui,
-                egui_phosphor::regular::MAGNIFYING_GLASS,
-                "Filter contracts",
-            )
-            .clicked()
-            {
-                state.toggle_search();
-            }
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "{} Contracts",
-                        egui_phosphor::regular::FOLDER_SIMPLE
-                    ))
-                    .color(p.on_surface)
-                    .strong(),
-                );
-            });
-        });
-    });
     if state.search_open {
         bordered_input(ui, &mut state.search, f32::INFINITY, "Filter contracts");
     }

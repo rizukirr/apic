@@ -32,8 +32,11 @@ pub(crate) struct ShellState {
     /// What fills the central panel, set by the last click in the sidebar.
     pub(crate) central: CentralView,
 
-    /// Whether the Git section at the bottom of the sidebar is expanded.
-    pub(crate) git_open: bool,
+    /// Which list fills the sidebar's main area.
+    pub(crate) sidebar_view: SidebarView,
+
+    /// Whether the Commit section at the bottom of the sidebar is expanded.
+    pub(crate) commit_open: bool,
 
     /// Whether the Templates section at the bottom of the sidebar is expanded.
     pub(crate) templates_open: bool,
@@ -65,11 +68,21 @@ impl Default for ShellState {
             status: String::new(),
             sidebar_open: true,
             central: CentralView::Contracts,
-            git_open: false,
+            sidebar_view: SidebarView::Contracts,
+            commit_open: false,
             templates_open: false,
             repo_root: None,
         }
     }
+}
+
+/// Which list fills the sidebar's main area.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SidebarView {
+    /// The contract tree.
+    Contracts,
+    /// The git changes: conflicts, staged, unstaged and outside files.
+    Changes,
 }
 
 /// What fills the central panel: the last thing clicked in the sidebar.
