@@ -49,7 +49,8 @@ pub(crate) fn tab_label(name: &str, status: &Status, p: &Palette) -> (String, eg
 }
 
 /// The file list for the Git section: the error line when set, then the
-/// CONFLICTS, STAGED and UNSTAGED groups and the changes outside the project.
+/// collapsible Conflicts, Staged changes and Changes groups with their counts
+/// and the changes outside the project.
 /// The refresh control and the dirty indicator live in the section header.
 pub(crate) fn changes_body(
     ui: &mut egui::Ui,
@@ -74,87 +75,90 @@ pub(crate) fn changes_body(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             if !conflicted.is_empty() {
-                ui.label(
-                    RichText::new("CONFLICTS")
-                        .color(p.on_surface_variant)
-                        .size(11.0),
-                );
-                FileTree::from_files(&conflicted).show(
-                    ui,
-                    "",
-                    RowMode::Conflicted,
-                    selected.as_ref(),
-                    &mut action,
-                );
-                ui.add_space(SPACE_SMALL);
+                change_group(ui, "git_conflicts", "Conflicts", conflicted.len(), |ui| {
+                    FileTree::from_files(&conflicted).show(
+                        ui,
+                        "",
+                        RowMode::Conflicted,
+                        selected.as_ref(),
+                        &mut action,
+                    );
+                });
             }
-
-            ui.label(
-                RichText::new("STAGED")
-                    .color(p.on_surface_variant)
-                    .size(11.0),
-            );
-            if staged.is_empty() {
-                ui.label(RichText::new("(none)").color(p.on_surface_variant));
+            if !staged.is_empty() {
+                change_group(ui, "git_staged", "Staged changes", staged.len(), |ui| {
+                    FileTree::from_files(&staged).show(
+                        ui,
+                        "",
+                        RowMode::Staged,
+                        selected.as_ref(),
+                        &mut action,
+                    );
+                });
             }
-            FileTree::from_files(&staged).show(
-                ui,
-                "",
-                RowMode::Staged,
-                selected.as_ref(),
-                &mut action,
-            );
-
-            ui.add_space(SPACE_SMALL);
-            ui.label(
-                RichText::new("UNSTAGED")
-                    .color(p.on_surface_variant)
-                    .size(11.0),
-            );
-            if unstaged.is_empty() {
-                ui.label(RichText::new("(none)").color(p.on_surface_variant));
+            if !unstaged.is_empty() {
+                change_group(ui, "git_unstaged", "Changes", unstaged.len(), |ui| {
+                    FileTree::from_files(&unstaged).show(
+                        ui,
+                        "",
+                        RowMode::Unstaged,
+                        selected.as_ref(),
+                        &mut action,
+                    );
+                });
             }
-            FileTree::from_files(&unstaged).show(
-                ui,
-                "",
-                RowMode::Unstaged,
-                selected.as_ref(),
-                &mut action,
-            );
+            if conflicted.is_empty()
+                && staged.is_empty()
+                && unstaged.is_empty()
+                && state.status.outside.is_empty()
+            {
+                ui.label(RichText::new("No changes").color(p.on_surface_variant));
+            }
 
             if !state.status.outside.is_empty() {
-                ui.add_space(SPACE_SMALL);
-                ui.separator();
-                let arrow = if state.show_outside { "▼" } else { "▶" };
-                let label = format!(
-                    "{} {} change(s) outside this project",
-                    arrow,
-                    state.status.outside.len()
-                );
-                if ui
-                    .selectable_label(false, RichText::new(label).color(p.on_surface_variant))
-                    .clicked()
-                {
+                let title = format!("Outside this project  {}", state.status.outside.len());
+                let header =
+                    egui::CollapsingHeader::new(RichText::new(title).color(p.on_surface_variant))
+                        .id_salt("git_outside")
+                        .open(Some(state.show_outside))
+                        .show(ui, |ui| {
+                            for file in &state.status.outside {
+                                let mode = if file.conflicted {
+                                    RowMode::Conflicted
+                                } else if file.has_staged_change() {
+                                    RowMode::Staged
+                                } else {
+                                    RowMode::Unstaged
+                                };
+                                if let Some(a) = file_row(ui, file, mode, selected.as_ref()) {
+                                    action = Some(a);
+                                }
+                            }
+                        });
+                if header.header_response.clicked() {
                     state.show_outside = !state.show_outside;
-                }
-                if state.show_outside {
-                    for file in &state.status.outside {
-                        let mode = if file.conflicted {
-                            RowMode::Conflicted
-                        } else if file.has_staged_change() {
-                            RowMode::Staged
-                        } else {
-                            RowMode::Unstaged
-                        };
-                        if let Some(a) = file_row(ui, file, mode, selected.as_ref()) {
-                            action = Some(a);
-                        }
-                    }
                 }
             }
         });
 
     action
+}
+
+/// One collapsible group of changed files with its count, open by default.
+fn change_group(
+    ui: &mut egui::Ui,
+    id: &str,
+    title: &str,
+    count: usize,
+    body: impl FnOnce(&mut egui::Ui),
+) {
+    let p = palette(ui.ctx());
+    egui::CollapsingHeader::new(
+        RichText::new(format!("{title}  {count}")).color(p.on_surface_variant),
+    )
+    .id_salt(id)
+    .default_open(true)
+    .show(ui, body);
 }
 
 /// The commit box for the Git section: the Amend toggle, the Commit button
@@ -301,7 +305,7 @@ mod tests {
     use super::*;
     use crate::features::git::data::jobs::DiffData;
     use crate::features::git::domain::conflict::{self, Choice};
-    use crate::features::git::domain::status::fixtures::file;
+    use crate::features::git::domain::status::fixtures::{file, untracked};
     use crate::features::git::domain::status::{Branches, Change, FileStatus};
 
     const CONTRACT_GET: &str =
@@ -781,6 +785,33 @@ mod tests {
                 };
                 run_in_theme(preference, |ui| {
                     commit_body(ui, &mut state);
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn changes_body_renders_empty_mixed_and_conflicted_in_both_themes() {
+        let statuses = [
+            Status::default(),
+            Status {
+                inside: vec![file("a.json", false), untracked("b.json")],
+                outside: vec![file("c.json", false)],
+            },
+            Status {
+                inside: vec![file("d.json", true)],
+                outside: vec![],
+            },
+        ];
+        for preference in BOTH_THEMES {
+            for status in &statuses {
+                let mut state = GitState {
+                    status: status.clone(),
+                    show_outside: true,
+                    ..GitState::default()
+                };
+                run_in_theme(preference, |ui| {
+                    let _ = changes_body(ui, &mut state, Some(std::path::Path::new("/repo")));
                 });
             }
         }

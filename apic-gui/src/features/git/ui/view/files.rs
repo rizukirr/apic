@@ -1,5 +1,6 @@
 //! The git sidebar's changed-file rows and folder tree: one row per file or
-//! folder with its stage, unstage and discard controls, grouped by directory.
+//! folder, grouped by directory. Rows carry their actions in a hover and
+//! right-click menu, like the Contracts tree.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -7,8 +8,9 @@ use std::path::Path;
 use eframe::egui;
 use egui::RichText;
 
-use crate::features::git::domain::status::FileStatus;
+use crate::features::git::domain::status::{Change, FileStatus};
 use crate::features::git::ui::state::GitAction;
+use crate::ui::components::row_menu_button;
 use crate::ui::theme::*;
 
 /// Which of the sidebar's three groups a row belongs to, deciding both the
@@ -36,12 +38,78 @@ impl RowMode {
     }
 }
 
-/// One changed-file row: the change letter, the file name (truncated), and a
-/// red conflict indicator when the file is in a merge conflict.
+/// The colour of a change letter: success for added or untracked, warning
+/// for modified or renamed, error for deleted or conflicted.
+fn change_color(change: Change, conflicted: bool, p: &Palette) -> egui::Color32 {
+    if conflicted {
+        return p.error;
+    }
+    match change {
+        Change::Added | Change::Untracked => p.success,
+        Change::Modified | Change::Renamed => p.warning,
+        Change::Deleted => p.error,
+        Change::Unmodified => p.on_surface_variant,
+    }
+}
+
+/// The menu entries for a file row. A conflicted row has none: staging it
+/// would write its conflict markers into the index, and clicking the row
+/// opens the resolver instead.
+pub(super) fn file_menu_items(file: &FileStatus, mode: RowMode) -> Vec<(&'static str, GitAction)> {
+    let path = file.path.clone();
+    match mode {
+        RowMode::Staged => vec![("Unstage", GitAction::Unstage { path })],
+        RowMode::Unstaged => {
+            let mut items = vec![("Stage", GitAction::Stage { path: path.clone() })];
+            if file.tracked() {
+                items.push(("Discard changes", GitAction::RequestDiscard { path }));
+            }
+            items
+        }
+        RowMode::Conflicted => Vec::new(),
+    }
+}
+
+/// The menu entries for a folder row, acting on its repo-relative path.
+pub(super) fn folder_menu_items(
+    folder_path: &str,
+    mode: RowMode,
+    node: &FileTree,
+) -> Vec<(&'static str, GitAction)> {
+    let path = folder_path.to_string();
+    match mode {
+        RowMode::Staged if node.any_staged() => vec![("Unstage all", GitAction::Unstage { path })],
+        RowMode::Staged | RowMode::Conflicted => Vec::new(),
+        RowMode::Unstaged => {
+            let mut items = vec![("Stage all", GitAction::Stage { path: path.clone() })];
+            if node.tracked_count() > 0 {
+                items.push(("Discard changes", GitAction::RequestDiscard { path }));
+            }
+            items
+        }
+    }
+}
+
+/// Renders `items` as menu buttons, recording the clicked one in `out`.
+fn menu_items_ui(
+    ui: &mut egui::Ui,
+    items: Vec<(&'static str, GitAction)>,
+    out: &mut Option<GitAction>,
+) {
+    for (label, action) in items {
+        if ui.button(label).clicked() {
+            *out = Some(action);
+            ui.close();
+        }
+    }
+}
+
+/// One changed-file row: the change letter, the selectable file name
+/// (truncated), and a hover `⋮` and right-click menu with the row's actions.
 ///
-/// The conflict indicator is reserved first with a right-to-left layout, and
-/// the label is nested inside a left-to-right layout marked `.truncate()`,
-/// the pattern in `features::contracts::view` so a long file name truncates
+/// The menu button is reserved first with a right-to-left layout, and the
+/// name is nested inside a left-to-right layout marked `.truncate()`, the
+/// pattern in `features::contracts::view` so a long file name truncates
 /// instead of forcing the panel wider than its dragged width.
 pub(super) fn file_row(
     ui: &mut egui::Ui,
@@ -51,6 +119,8 @@ pub(super) fn file_row(
 ) -> Option<GitAction> {
     let p = palette(ui.ctx());
     let mut action = None;
+    let mut menu_action = None;
+    let mut context_action = None;
     let staged = mode.staged();
     let change = if staged { file.index } else { file.worktree };
     let name = Path::new(&file.path)
@@ -58,62 +128,45 @@ pub(super) fn file_row(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| file.path.clone());
     let is_selected = selected == Some(&(file.path.clone(), staged));
+    let has_menu = !file_menu_items(file, mode).is_empty();
     ui.horizontal(|ui| {
+        let hovered = ui.rect_contains_pointer(ui.max_rect());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            match mode {
-                RowMode::Staged => {
-                    if ui
-                        .small_button(RichText::new("-").color(p.on_surface_variant))
-                        .on_hover_text(format!("Unstage {}", file.path))
-                        .clicked()
-                    {
-                        action = Some(GitAction::Unstage {
-                            path: file.path.clone(),
-                        });
-                    }
-                }
-                RowMode::Unstaged => {
-                    if file.tracked()
-                        && ui
-                            .small_button(RichText::new("x").color(p.error))
-                            .on_hover_text(format!("Discard {}", file.path))
-                            .clicked()
-                    {
-                        action = Some(GitAction::RequestDiscard {
-                            path: file.path.clone(),
-                        });
-                    }
-                    if ui
-                        .small_button(RichText::new("+").color(p.success))
-                        .on_hover_text(format!("Stage {}", file.path))
-                        .clicked()
-                    {
-                        action = Some(GitAction::Stage {
-                            path: file.path.clone(),
-                        });
-                    }
-                }
-                RowMode::Conflicted => {}
-            }
-            if file.conflicted {
-                ui.label(RichText::new("●").color(p.error))
-                    .on_hover_text("Conflicted");
+            if has_menu {
+                row_menu_button(ui, hovered, |ui| {
+                    menu_items_ui(ui, file_menu_items(file, mode), &mut menu_action)
+                });
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.label(RichText::new(change.letter()).color(p.on_surface_variant));
+                let letter = if file.conflicted {
+                    "U"
+                } else {
+                    change.letter()
+                };
+                ui.label(
+                    RichText::new(letter)
+                        .color(change_color(change, file.conflicted, p))
+                        .size(11.0),
+                );
                 let button =
                     egui::Button::selectable(is_selected, RichText::new(name).color(p.on_surface))
                         .truncate();
-                if ui.add(button).clicked() {
+                let response = ui.add(button);
+                if response.clicked() {
                     action = Some(GitAction::Select {
                         path: file.path.clone(),
                         staged,
                     });
                 }
+                if has_menu {
+                    response.context_menu(|ui| {
+                        menu_items_ui(ui, file_menu_items(file, mode), &mut context_action)
+                    });
+                }
             });
         });
     });
-    action
+    menu_action.or(context_action).or(action)
 }
 
 /// A folder tree of a section's changed files, built from their
@@ -198,9 +251,10 @@ impl<'a> FileTree<'a> {
     }
 }
 
-/// One folder row: the same actions as a file row, acting on the folder's
-/// repo-relative path. Buttons are reserved first with a right-to-left
-/// layout, and the name is `.truncate()`d, matching `file_row`.
+/// One folder row: the name, with the same actions as a file row in a hover
+/// and right-click menu, acting on the folder's repo-relative path. The menu
+/// button is reserved first with a right-to-left layout, and the name is
+/// `.truncate()`d, matching `file_row`.
 pub(super) fn folder_row(
     ui: &mut egui::Ui,
     folder_path: &str,
@@ -209,53 +263,37 @@ pub(super) fn folder_row(
     node: &FileTree,
 ) -> Option<GitAction> {
     let p = palette(ui.ctx());
-    let mut action = None;
+    let mut menu_action = None;
+    let mut context_action = None;
+    let has_menu = !folder_menu_items(folder_path, mode, node).is_empty();
+    let hovered = ui.rect_contains_pointer(ui.max_rect());
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        match mode {
-            RowMode::Staged => {
-                if node.any_staged()
-                    && ui
-                        .small_button(RichText::new("-").color(p.on_surface_variant))
-                        .on_hover_text(format!("Unstage {folder_path}"))
-                        .clicked()
-                {
-                    action = Some(GitAction::Unstage {
-                        path: folder_path.to_string(),
-                    });
-                }
-            }
-            RowMode::Unstaged => {
-                let tracked_count = node.tracked_count();
-                if tracked_count > 0
-                    && ui
-                        .small_button(RichText::new("x").color(p.error))
-                        .on_hover_text(format!(
-                            "Discard {folder_path} ({tracked_count} tracked file{})",
-                            if tracked_count == 1 { "" } else { "s" }
-                        ))
-                        .clicked()
-                {
-                    action = Some(GitAction::RequestDiscard {
-                        path: folder_path.to_string(),
-                    });
-                }
-                if ui
-                    .small_button(RichText::new("+").color(p.success))
-                    .on_hover_text(format!("Stage {folder_path}"))
-                    .clicked()
-                {
-                    action = Some(GitAction::Stage {
-                        path: folder_path.to_string(),
-                    });
-                }
-            }
-            RowMode::Conflicted => {}
+        if has_menu {
+            row_menu_button(ui, hovered, |ui| {
+                menu_items_ui(
+                    ui,
+                    folder_menu_items(folder_path, mode, node),
+                    &mut menu_action,
+                )
+            });
         }
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.add(egui::Label::new(RichText::new(name).color(p.on_surface_variant)).truncate());
+            let label = egui::Label::new(RichText::new(name).color(p.on_surface_variant))
+                .truncate()
+                .sense(egui::Sense::click());
+            let response = ui.add(label);
+            if has_menu {
+                response.context_menu(|ui| {
+                    menu_items_ui(
+                        ui,
+                        folder_menu_items(folder_path, mode, node),
+                        &mut context_action,
+                    )
+                });
+            }
         });
     });
-    action
+    menu_action.or(context_action)
 }
 
 #[cfg(test)]
@@ -280,5 +318,76 @@ mod tests {
         let dir = tree.dirs.get("dir").expect("dir node");
         assert_eq!(dir.tracked_count(), 1);
         assert!(!files[1].tracked());
+    }
+
+    #[test]
+    fn file_menu_offers_stage_discard_unstage_by_row() {
+        let tracked = file("a.json", false);
+        let unstaged = file_menu_items(&tracked, RowMode::Unstaged);
+        assert!(
+            unstaged
+                .iter()
+                .any(|(_, a)| matches!(a, GitAction::Stage { path } if path == "a.json"))
+        );
+        assert!(
+            unstaged
+                .iter()
+                .any(|(_, a)| matches!(a, GitAction::RequestDiscard { path } if path == "a.json"))
+        );
+        let new = untracked("b.json");
+        let untracked_items = file_menu_items(&new, RowMode::Unstaged);
+        assert!(
+            untracked_items
+                .iter()
+                .any(|(_, a)| matches!(a, GitAction::Stage { .. }))
+        );
+        assert!(
+            !untracked_items
+                .iter()
+                .any(|(_, a)| matches!(a, GitAction::RequestDiscard { .. }))
+        );
+        let staged = file_menu_items(&tracked, RowMode::Staged);
+        assert!(
+            staged
+                .iter()
+                .any(|(_, a)| matches!(a, GitAction::Unstage { path } if path == "a.json"))
+        );
+        assert!(file_menu_items(&file("c.json", true), RowMode::Conflicted).is_empty());
+    }
+
+    #[test]
+    fn folder_menu_offers_stage_all_discard_unstage_all_by_row() {
+        let only_new = [untracked("dir/a.txt")];
+        let refs: Vec<&FileStatus> = only_new.iter().collect();
+        let tree = FileTree::from_files(&refs);
+        let dir = tree.dirs.get("dir").expect("dir node");
+        let items = folder_menu_items("dir", RowMode::Unstaged, dir);
+        assert!(
+            items
+                .iter()
+                .any(|(_, a)| matches!(a, GitAction::Stage { path } if path == "dir"))
+        );
+        assert!(
+            !items
+                .iter()
+                .any(|(_, a)| matches!(a, GitAction::RequestDiscard { .. }))
+        );
+
+        let mixed = [file("dir/a.rs", false)];
+        let refs: Vec<&FileStatus> = mixed.iter().collect();
+        let tree = FileTree::from_files(&refs);
+        let dir = tree.dirs.get("dir").expect("dir node");
+        let unstaged = folder_menu_items("dir", RowMode::Unstaged, dir);
+        assert!(
+            unstaged
+                .iter()
+                .any(|(_, a)| matches!(a, GitAction::RequestDiscard { path } if path == "dir"))
+        );
+        let staged = folder_menu_items("dir", RowMode::Staged, dir);
+        assert!(
+            staged
+                .iter()
+                .any(|(_, a)| matches!(a, GitAction::Unstage { path } if path == "dir"))
+        );
     }
 }

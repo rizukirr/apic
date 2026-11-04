@@ -233,6 +233,7 @@ impl App {
                     });
                 }
                 egui::Panel::top("sidebar_header").show(ui, |ui| {
+                    ui.add_space(SPACE_SMALL);
                     ui.horizontal(|ui| {
                         let (changes_label, changes_color) =
                             view::tab_label("Changes", &self.git.status, p);
@@ -294,6 +295,7 @@ impl App {
                             }
                         });
                     });
+                    ui.add_space(SPACE_SMALL);
                 });
                 match self.shell.sidebar_view {
                     SidebarView::Contracts => {
