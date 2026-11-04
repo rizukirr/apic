@@ -21,7 +21,7 @@ use crate::features::git::domain::diff as domain_diff;
 use crate::features::git::domain::status::{Status, split_conflicts};
 use crate::features::git::ui::state::GitAction;
 use crate::features::git::ui::state::GitState;
-use crate::ui::components::text_button;
+use crate::ui::components::{empty_state, text_button};
 use crate::ui::theme::*;
 
 /// What the Git section header should render, decided purely from a `Status`: the label
@@ -261,20 +261,6 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
         None => raw_diff_view(ui, &data.raw),
     }
     None
-}
-
-/// The centered placeholder shown before a selection exists and while the
-/// diff for the current selection is still loading.
-fn empty_state(ui: &mut egui::Ui, title: &str, hint: &str) {
-    let p = palette(ui.ctx());
-    ui.add_space(40.0);
-    ui.vertical_centered(|ui| {
-        ui.label(RichText::new(title).color(p.on_surface_variant).size(16.0));
-        if !hint.is_empty() {
-            ui.add_space(SPACE_SMALL);
-            ui.label(RichText::new(hint).color(p.on_surface_variant));
-        }
-    });
 }
 
 #[cfg(test)]

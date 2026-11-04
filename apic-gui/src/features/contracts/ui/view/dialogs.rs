@@ -1,4 +1,5 @@
-//! The contracts modals: new template, new request and delete confirmation.
+//! The contracts modals: new template, new request, new example and delete
+//! confirmation.
 
 use eframe::egui;
 use egui::RichText;
@@ -14,8 +15,12 @@ use crate::ui::theme::*;
 pub(crate) const FOCUS_NEW_REQUEST: &str = "apic.focus.new_request";
 pub(crate) const FOCUS_NEW_TEMPLATE: &str = "apic.focus.new_template";
 
-/// Renders whichever of the new-template, new-request and delete dialogs is
-/// open.
+// egui temp-data key set once the new-example popup has focused its code
+// field, so the focus lands only on the frame the popup opens.
+const NEW_EXAMPLE_FOCUSED: &str = "apic.new_example.focused";
+
+/// Renders whichever of the new-template, new-request, new-example and delete
+/// dialogs is open.
 ///
 /// # Returns
 ///
@@ -23,8 +28,9 @@ pub(crate) const FOCUS_NEW_TEMPLATE: &str = "apic.focus.new_template";
 pub(crate) fn dialogs(ctx: &egui::Context, state: &mut ContractsState) -> Option<ContractsAction> {
     let template = new_template_dialog(ctx, state);
     let request = new_request_dialog(ctx, state);
+    let example = new_example_dialog(ctx, state);
     let delete = delete_dialog(ctx, state);
-    template.or(request).or(delete)
+    template.or(request).or(example).or(delete)
 }
 
 /// Renders the "new template" dialog when open, and returns what was chosen.
@@ -164,6 +170,80 @@ fn new_request_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option
     }
 }
 
+/// Renders the "new example" popup when open, and returns what was chosen.
+fn new_example_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<ContractsAction> {
+    let focused_id = egui::Id::new(NEW_EXAMPLE_FOCUSED);
+    let Some((code, name)) = state.new_example.as_mut() else {
+        ctx.data_mut(|d| d.remove::<bool>(focused_id));
+        return None;
+    };
+    let p = palette(ctx);
+    let mut create = false;
+    let mut cancel = false;
+    let modal = egui::Modal::new(egui::Id::new("new_example_modal"))
+        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
+        .show(ctx, |ui| {
+            ui.set_min_width(320.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("New example")
+                        .color(p.primary)
+                        .strong()
+                        .size(16.0),
+                );
+            });
+            ui.add_space(SPACE_MEDIUM);
+            let code_resp = ui
+                .horizontal(|ui| {
+                    ui.label(RichText::new("Code").color(p.on_surface_variant));
+                    bordered_input(ui, code, f32::INFINITY, "200")
+                })
+                .inner;
+            // A status code is exactly three digits.
+            code.retain(|c| c.is_ascii_digit());
+            code.truncate(3);
+            let name_resp = ui
+                .horizontal(|ui| {
+                    ui.label(RichText::new("Name").color(p.on_surface_variant));
+                    bordered_input(ui, name, f32::INFINITY, "")
+                })
+                .inner;
+            // Drop the caret into the code field the frame the popup opens.
+            if !ui.data(|d| d.get_temp::<bool>(focused_id).unwrap_or(false)) {
+                code_resp.request_focus();
+                ui.data_mut(|d| d.insert_temp(focused_id, true));
+            }
+            let valid = code.len() == 3;
+            // Submit on Enter in either field, same as clicking OK.
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if valid && enter && (code_resp.lost_focus() || name_resp.lost_focus()) {
+                create = true;
+            }
+            ui.add_space(SPACE_LARGE);
+            ui.columns(2, |cols| {
+                cols[0].vertical_centered(|ui| {
+                    ui.add_enabled_ui(valid, |ui| {
+                        if text_button(ui, "OK", p.primary) {
+                            create = true;
+                        }
+                    });
+                });
+                cols[1].vertical_centered(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        });
+    if create {
+        Some(ContractsAction::CreateExample)
+    } else if cancel || modal.should_close() {
+        Some(ContractsAction::CancelDialog)
+    } else {
+        None
+    }
+}
+
 /// Renders the delete-confirmation dialog when a delete is pending, and
 /// returns what was chosen.
 fn delete_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<ContractsAction> {
@@ -217,5 +297,31 @@ fn delete_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<Cont
         Some(ContractsAction::CancelDialog)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::theme::{BOTH_THEMES, run_in_theme};
+
+    #[test]
+    fn new_example_popup_renders_in_both_themes() {
+        for preference in BOTH_THEMES {
+            run_in_theme(preference, |ui| {
+                let ctx = ui.ctx().clone();
+                let mut state = ContractsState {
+                    new_example: Some(("404".to_string(), "Not found".to_string())),
+                    ..Default::default()
+                };
+                dialogs(&ctx, &mut state);
+                state.new_example = Some(("4x".to_string(), String::new()));
+                dialogs(&ctx, &mut state);
+                assert_eq!(
+                    state.new_example.as_ref().map(|(code, _)| code.as_str()),
+                    Some("4")
+                );
+            });
+        }
     }
 }

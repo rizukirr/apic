@@ -61,16 +61,34 @@ pub(crate) fn tcell_edit(ui: &mut egui::Ui, buf: &mut String, hint: &str) -> egu
     )
 }
 
-/// `tcell_edit` in the monospace font, for cells that hold code-like values
-/// such as header values.
-pub(crate) fn tcell_edit_code(ui: &mut egui::Ui, buf: &mut String, hint: &str) -> egui::Response {
+/// `tcell_edit` whose text is laid out by [`super::url_layout_job`], so the
+/// `{{var}}` parts of a value show in the variable colour like the URL bar.
+/// `monospace` picks the monospace font (header values) over the body font
+/// (query values).
+pub(crate) fn tcell_edit_vars(
+    ui: &mut egui::Ui,
+    buf: &mut String,
+    hint: &str,
+    monospace: bool,
+) -> egui::Response {
     let p = crate::ui::theme::palette(ui.ctx());
+    let style = if monospace {
+        egui::TextStyle::Monospace
+    } else {
+        egui::TextStyle::Body
+    };
+    let font = style.resolve(ui.style());
+    let mut layouter = |ui: &egui::Ui, buf: &dyn TextBuffer, wrap_width: f32| {
+        let mut job = super::url_layout_job(buf.as_str(), p, font.clone());
+        job.wrap.max_width = wrap_width;
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
     ui.add(
         egui::TextEdit::singleline(buf)
             .frame(egui::Frame::NONE)
-            .font(egui::TextStyle::Monospace)
+            .font(style)
             .hint_text(hint)
-            .text_color(p.on_surface)
+            .layouter(&mut layouter)
             .desired_width(f32::INFINITY),
     )
 }
@@ -113,8 +131,7 @@ pub(crate) fn json_editor(ui: &mut egui::Ui, buf: &mut String, editing: bool) {
     let line_count = text.lines().count().max(1);
     let mut layouter = json_layouter;
     egui::Frame::new()
-        .fill(p.surface_container_lowest)
-        .inner_margin(egui::Margin::same(8))
+        .inner_margin(egui::Margin::symmetric(0, 4))
         .show(ui, |ui| {
             ui.horizontal_top(|ui| {
                 let gutter: String = (1..=line_count).map(|n| format!("{n}\n")).collect();

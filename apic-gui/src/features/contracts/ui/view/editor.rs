@@ -11,9 +11,11 @@ use egui::{Color32, RichText};
 use apic_core::edit::{EditAction, EditBody, EditModel, Field, apply};
 use apic_core::json::method_str;
 
+use crate::features::contracts::ui::state::ContractsAction;
 use crate::ui::components::{
-    add_button, delete_button, fill_column, header_label, json_editor, metadata_table,
-    required_chip, section_label, table_frame, tcell_edit, tcell_edit_code, text_button,
+    delete_button, fill_column, grid_cell, header_label, json_editor, metadata_table,
+    required_chip, section_label, table_frame, tcell_edit, tcell_edit_vars, text_button, url_bar,
+    url_layout_job,
 };
 use crate::ui::focus::{request_new_row_focus, take_pending_focus};
 use crate::ui::theme::*;
@@ -30,358 +32,645 @@ pub(super) fn method_color(method: &str, p: &Palette) -> Color32 {
     }
 }
 
-/// A filled, method-colored badge (read mode); the edit view uses a plain
-/// button instead so it can cycle the method on click.
+/// A filled, rounded, method-colored pill (read mode); the edit view uses a
+/// dropdown instead so it can change the method.
 fn method_badge(ui: &mut egui::Ui, method: &str) {
     let p = palette(ui.ctx());
-    ui.label(
-        RichText::new(format!(" {method} "))
-            .color(p.surface)
-            .background_color(method_color(method, p))
-            .strong(),
-    );
+    egui::Frame::NONE
+        .fill(method_color(method, p))
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(8, 2))
+        .show(ui, |ui| {
+            ui.label(RichText::new(method).color(p.surface).strong());
+        });
 }
 
-// egui temp-data keys for the "focus the new row's name field" markers, one per
+// egui temp-data keys for the "focus a new row's cell" markers, one per
 // editable list.
 const FOCUS_QUERY: &str = "apic.focus.query";
 const FOCUS_HEADER: &str = "apic.focus.header";
+const FOCUS_RESPONSE_HEADER: &str = "apic.focus.response_header";
 
-/// The endpoint name, rendered inline on the toolbar row (left of EDIT/SAVE).
-/// Editable frameless heading in edit mode; a heading label otherwise.
-pub(super) fn endpoint_name(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
-    let p = palette(ui.ctx());
-    if editing {
-        ui.add(
-            egui::TextEdit::singleline(&mut model.name)
-                .frame(egui::Frame::NONE)
-                .hint_text("endpoint name")
-                .font(egui::TextStyle::Heading)
-                .text_color(p.on_surface)
-                .desired_width(f32::INFINITY),
-        );
-    } else {
-        ui.label(RichText::new(&model.name).color(p.on_surface).heading());
+/// Width of the delete column: the trash icon plus the grid cell's padding.
+const DELETE_COL_W: f32 = 36.0;
+
+/// An editable table that ends, while editing, in an empty add row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum RowTable {
+    Query,
+    Header,
+    ResponseHeader(usize),
+}
+
+/// A text column of a [`RowTable`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum RowColumn {
+    Key,
+    Value,
+    Description,
+}
+
+impl RowColumn {
+    /// The placeholder shown in an empty cell of this column.
+    fn hint(self) -> &'static str {
+        match self {
+            RowColumn::Key => "Key",
+            RowColumn::Value => "Value",
+            RowColumn::Description => "Description",
+        }
     }
 }
 
-/// The endpoint description, shown under the name/url row. Frameless multiline in
-/// edit mode; dim text otherwise (hidden when empty in view mode).
-pub(super) fn endpoint_description(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+impl RowTable {
+    /// The table's text columns, in display order.
+    fn columns(self) -> &'static [RowColumn] {
+        match self {
+            RowTable::Query => &[RowColumn::Key, RowColumn::Value, RowColumn::Description],
+            RowTable::Header | RowTable::ResponseHeader(_) => &[RowColumn::Key, RowColumn::Value],
+        }
+    }
+
+    /// The temp-data key of the table's pending-focus marker.
+    fn focus_key(self) -> &'static str {
+        match self {
+            RowTable::Query => FOCUS_QUERY,
+            RowTable::Header => FOCUS_HEADER,
+            RowTable::ResponseHeader(_) => FOCUS_RESPONSE_HEADER,
+        }
+    }
+
+    /// The field whose `Add` action appends an empty row to this table.
+    fn add_field(self) -> Field {
+        match self {
+            RowTable::Query => Field::QueryAdd,
+            RowTable::Header => Field::HeaderAdd,
+            RowTable::ResponseHeader(r) => Field::ResponseHeaderAdd(r),
+        }
+    }
+
+    /// The number of rows the table holds in `model`.
+    fn len(self, model: &EditModel) -> usize {
+        match self {
+            RowTable::Query => model.query.len(),
+            RowTable::Header => model.headers.len(),
+            RowTable::ResponseHeader(r) => model.responses.get(r).map_or(0, |r| r.headers.len()),
+        }
+    }
+}
+
+/// The text of `column` in row `row` of `table`, or `None` when the row or the
+/// column does not exist.
+fn cell_text_mut(
+    model: &mut EditModel,
+    table: RowTable,
+    row: usize,
+    column: RowColumn,
+) -> Option<&mut String> {
+    match table {
+        RowTable::Query => {
+            let q = model.query.get_mut(row)?;
+            Some(match column {
+                RowColumn::Key => &mut q.name,
+                RowColumn::Value => &mut q.value,
+                RowColumn::Description => &mut q.description,
+            })
+        }
+        RowTable::Header | RowTable::ResponseHeader(_) => {
+            let h = match table {
+                RowTable::ResponseHeader(r) => model.responses.get_mut(r)?.headers.get_mut(row)?,
+                _ => model.headers.get_mut(row)?,
+            };
+            match column {
+                RowColumn::Key => Some(&mut h.name),
+                RowColumn::Value => Some(&mut h.value),
+                RowColumn::Description => None,
+            }
+        }
+    }
+}
+
+/// Turns the empty add row's text into a real row. `texts` holds one scratch
+/// buffer per entry of [`RowTable::columns`]. When any is non-empty, one row is
+/// appended through the table's `Add` action and every non-empty buffer is
+/// moved into its column of that row, leaving the buffers empty.
+///
+/// # Returns
+///
+/// The new row's index and the first column that held text, or `None` when
+/// every buffer was empty (or the table could not grow) and nothing changed.
+fn adopt_ghost_text(
+    model: &mut EditModel,
+    table: RowTable,
+    texts: &mut [String],
+) -> Option<(usize, RowColumn)> {
+    let first = table
+        .columns()
+        .iter()
+        .zip(texts.iter())
+        .find(|(_, t)| !t.is_empty())
+        .map(|(c, _)| *c)?;
+    let before = table.len(model);
+    apply(
+        model,
+        &EditAction::Add {
+            field: table.add_field(),
+        },
+    );
+    if table.len(model) != before + 1 {
+        return None;
+    }
+    for (column, text) in table.columns().iter().zip(texts.iter_mut()) {
+        if !text.is_empty()
+            && let Some(cell) = cell_text_mut(model, table, before, *column)
+        {
+            *cell = std::mem::take(text);
+        }
+    }
+    Some((before, first))
+}
+
+/// The pending-focus ident of one cell, `row:column`.
+fn cell_focus_ident(row: usize, column: RowColumn) -> String {
+    format!("{row}:{column:?}")
+}
+
+/// The egui temp-data ids of `table`'s add-row scratch buffers, one per column.
+fn ghost_ids(ui: &egui::Ui, table: RowTable) -> Vec<egui::Id> {
+    table
+        .columns()
+        .iter()
+        .map(|c| ui.make_persistent_id(("ghost_row", table, *c)))
+        .collect()
+}
+
+/// Reads the add-row scratch buffers stored under `ids`.
+fn load_ghost(ui: &egui::Ui, ids: &[egui::Id]) -> Vec<String> {
+    ids.iter()
+        .map(|id| ui.data(|d| d.get_temp::<String>(*id)).unwrap_or_default())
+        .collect()
+}
+
+/// Adopts any text typed into the add row this frame as a new row, asks for
+/// the same cell of that row to take focus next frame, and stores the
+/// (now empty, or untouched) scratch buffers back under `ids`.
+fn finish_ghost(ui: &egui::Ui, model: &mut EditModel, table: RowTable, mut texts: Vec<String>) {
+    if let Some((row, column)) = adopt_ghost_text(model, table, &mut texts) {
+        request_new_row_focus(ui, table.focus_key(), cell_focus_ident(row, column));
+    }
+    for (id, text) in ghost_ids(ui, table).into_iter().zip(texts) {
+        ui.data_mut(|d| d.insert_temp(id, text));
+    }
+}
+
+/// An editable text cell of `table`'s `column`, bound to `buf`. Value cells
+/// colour `{{var}}` spans (monospace for headers, body font for query
+/// values). For a real row (`row` is `Some`) a pending focus for this cell is
+/// claimed and the caret put at the end of the text; the add row passes `None`.
+fn edit_cell(
+    ui: &mut egui::Ui,
+    table: RowTable,
+    row: Option<usize>,
+    column: RowColumn,
+    buf: &mut String,
+) {
+    let hint = column.hint();
+    let resp = match column {
+        RowColumn::Value => tcell_edit_vars(ui, buf, hint, table != RowTable::Query),
+        RowColumn::Key | RowColumn::Description => tcell_edit(ui, buf, hint),
+    };
+    let Some(row) = row else {
+        return;
+    };
+    let key = table.focus_key();
+    let ident = cell_focus_ident(row, column);
+    let pending = ui.data(|d| d.get_temp::<String>(egui::Id::new(key)));
+    if pending.as_deref() != Some(ident.as_str()) {
+        return;
+    }
+    take_pending_focus(ui, key, &ident, &resp);
+    let mut state = egui::TextEdit::load_state(ui.ctx(), resp.id).unwrap_or_default();
+    let end = egui::text::CCursor::new(buf.chars().count());
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(end)));
+    state.store(ui.ctx(), resp.id);
+}
+
+/// A read-only text cell of `table`'s `column`: keys in `info`, values with
+/// their `{{var}}` spans coloured (monospace for headers), descriptions plain.
+fn read_cell(ui: &mut egui::Ui, table: RowTable, column: RowColumn, text: &str) {
+    let p = palette(ui.ctx());
+    match column {
+        RowColumn::Key => {
+            ui.label(RichText::new(text).color(p.info));
+        }
+        RowColumn::Value => {
+            let style = if table == RowTable::Query {
+                egui::TextStyle::Body
+            } else {
+                egui::TextStyle::Monospace
+            };
+            let font = style.resolve(ui.style());
+            ui.label(url_layout_job(text, p, font));
+        }
+        RowColumn::Description => {
+            ui.label(RichText::new(text).color(p.on_surface));
+        }
+    }
+}
+
+/// A text cell of a real row: [`edit_cell`] while editing, else [`read_cell`].
+fn text_cell(
+    row: &mut egui_extras::TableRow<'_, '_>,
+    table: RowTable,
+    (i, column): (usize, RowColumn),
+    buf: &mut String,
+    editing: bool,
+) {
+    row.col(|ui| {
+        grid_cell(ui, |ui| {
+            if editing {
+                edit_cell(ui, table, Some(i), column, buf);
+            } else {
+                read_cell(ui, table, column, buf);
+            }
+        });
+    });
+}
+
+/// The add row closing an editable table: empty fields bound to the scratch
+/// buffers `texts` (one per [`RowTable::columns`] entry), with the requirement
+/// and delete cells left empty.
+fn ghost_row(row: &mut egui_extras::TableRow<'_, '_>, table: RowTable, texts: &mut [String]) {
+    let mut texts = texts.iter_mut();
+    for (n, column) in table.columns().iter().enumerate() {
+        if n == 1 {
+            row.col(|ui| grid_cell(ui, |_| {}));
+        }
+        if let Some(buf) = texts.next() {
+            row.col(|ui| grid_cell(ui, |ui| edit_cell(ui, table, None, *column, buf)));
+        }
+    }
+    row.col(|ui| grid_cell(ui, |_| {}));
+}
+
+/// The endpoint title on the toolbar row: the name in bold, then `: ` and the
+/// description when it is not blank, both at body size and truncated to the
+/// available width. In edit mode the name and description are two frameless
+/// single-line fields separated by a `:` label.
+pub(super) fn endpoint_title(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     let p = palette(ui.ctx());
     if editing {
-        ui.add(
-            egui::TextEdit::multiline(&mut model.description)
-                .frame(egui::Frame::NONE)
-                .hint_text("description")
-                .text_color(p.on_surface_variant)
-                .desired_rows(2)
-                .desired_width(f32::INFINITY),
-        );
-    } else if !model.description.is_empty() {
-        ui.label(RichText::new(&model.description).color(p.on_surface_variant));
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut model.name)
+                    .frame(egui::Frame::NONE)
+                    .hint_text("endpoint name")
+                    .font(font)
+                    .text_color(p.on_surface)
+                    .desired_width(120.0)
+                    .clip_text(false),
+            );
+            ui.label(RichText::new(":").color(p.on_surface));
+            ui.add(
+                egui::TextEdit::singleline(&mut model.description)
+                    .frame(egui::Frame::NONE)
+                    .hint_text("description")
+                    .text_color(p.on_surface)
+                    .desired_width(f32::INFINITY),
+            );
+        });
+        return;
     }
+    let style = ui.style().clone();
+    let mut job = egui::text::LayoutJob::default();
+    RichText::new(&model.name)
+        .strong()
+        .color(p.on_surface)
+        .append_to(
+            &mut job,
+            &style,
+            egui::FontSelection::Default,
+            egui::Align::Center,
+        );
+    if !model.description.trim().is_empty() {
+        RichText::new(format!(": {}", model.description))
+            .color(p.on_surface)
+            .append_to(
+                &mut job,
+                &style,
+                egui::FontSelection::Default,
+                egui::Align::Center,
+            );
+    }
+    ui.add(egui::Label::new(job).truncate());
 }
 
 /// The `[ METHOD ] [ url................ ]` top row.
 pub(super) fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     let p = palette(ui.ctx());
-    table_frame(ui, |ui| {
-        ui.horizontal(|ui| {
-            let method = method_str(&model.method);
-            if editing {
-                // Pick the HTTP method from a dropdown of all the choices.
-                egui::ComboBox::from_id_salt("method")
-                    .width(90.0)
-                    .selected_text(
-                        RichText::new(&method)
-                            .color(method_color(&method, p))
-                            .strong(),
-                    )
-                    .show_ui(ui, |ui| {
-                        for m in apic_core::json::method_all() {
-                            let name = method_str(&m);
-                            let selected = name == method;
-                            if ui
-                                .selectable_label(
-                                    selected,
-                                    RichText::new(&name).color(method_color(&name, p)).strong(),
-                                )
-                                .clicked()
-                            {
-                                model.method = m;
-                            }
+    url_bar(ui, |ui| {
+        let method = method_str(&model.method);
+        if editing {
+            // Pick the HTTP method from a dropdown of all the choices.
+            egui::ComboBox::from_id_salt("method")
+                .width(90.0)
+                .selected_text(
+                    RichText::new(&method)
+                        .color(method_color(&method, p))
+                        .strong(),
+                )
+                .show_ui(ui, |ui| {
+                    for m in apic_core::json::method_all() {
+                        let name = method_str(&m);
+                        let selected = name == method;
+                        if ui
+                            .selectable_label(
+                                selected,
+                                RichText::new(&name).color(method_color(&name, p)).strong(),
+                            )
+                            .clicked()
+                        {
+                            model.method = m;
                         }
-                    });
-            } else {
-                method_badge(ui, &method);
-            }
-            ui.add_space(SPACE_MEDIUM);
-            if editing {
-                ui.add(
-                    egui::TextEdit::singleline(&mut model.url)
-                        .font(egui::TextStyle::Monospace)
-                        .frame(egui::Frame::NONE)
-                        .hint_text("https://host/path/{id}")
-                        .text_color(p.info)
-                        .desired_width(f32::INFINITY),
-                );
-            } else {
-                ui.label(RichText::new(&model.url).color(p.info).strong().monospace());
-            }
-        });
+                    }
+                });
+        } else {
+            method_badge(ui, &method);
+        }
+        ui.add_space(SPACE_MEDIUM);
+        let font = egui::TextStyle::Monospace.resolve(ui.style());
+        if editing {
+            let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+                let mut job = url_layout_job(buf.as_str(), p, font.clone());
+                job.wrap.max_width = wrap_width;
+                ui.fonts_mut(|f| f.layout_job(job))
+            };
+            ui.add(
+                egui::TextEdit::singleline(&mut model.url)
+                    .font(egui::TextStyle::Monospace)
+                    .frame(egui::Frame::NONE)
+                    .hint_text("https://host/path/{id}")
+                    .layouter(&mut layouter)
+                    .desired_width(f32::INFINITY),
+            );
+        } else {
+            ui.label(url_layout_job(&model.url, p, font));
+        }
     });
 }
 
 /// Body of the QUERY PARAMS section. Uses the flat `{name, value, description}`
-/// query model; path variables now live inline in the URL string.
+/// query model; path variables now live inline in the URL string. While
+/// editing, the table ends in an empty add row.
 pub(super) fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
-    let p = palette(ui.ctx());
+    let table = RowTable::Query;
     let mut actions: Vec<EditAction> = Vec::new();
+    let ids = ghost_ids(ui, table);
+    let mut ghost = load_ghost(ui, &ids);
     table_frame(ui, |ui| {
         let fixed = if editing {
-            vec![120.0, 88.0, 120.0, 26.0]
+            vec![120.0, 88.0, 120.0, DELETE_COL_W]
         } else {
             vec![120.0, 88.0, 120.0]
         };
         let stretch = fill_column(ui, &fixed);
         let mut t = metadata_table(ui)
+            .id_salt("query_table")
             .column(Column::exact(120.0)) // key
             .column(Column::exact(88.0)) // requirement
             .column(Column::exact(120.0)) // value
             .column(stretch); // description
         if editing {
-            t = t.column(Column::exact(26.0)); // delete
+            t = t.column(Column::exact(DELETE_COL_W)); // delete
         }
         t.header(TABLE_HEADER_H, |mut h| {
-            h.col(|ui| header_label(ui, "key"));
-            h.col(|ui| header_label(ui, "requirement"));
-            h.col(|ui| header_label(ui, "value"));
-            h.col(|ui| header_label(ui, "description"));
+            for label in ["Key", "Requirement", "Value", "Description"] {
+                h.col(|ui| grid_cell(ui, |ui| header_label(ui, label)));
+            }
             if editing {
-                h.col(|_| {});
+                h.col(|ui| grid_cell(ui, |_| {}));
             }
         })
         .body(|mut body| {
             for i in 0..model.query.len() {
                 body.row(TABLE_ROW_H, |mut row| {
+                    let q = &mut model.query[i];
+                    text_cell(&mut row, table, (i, RowColumn::Key), &mut q.name, editing);
                     row.col(|ui| {
-                        if editing {
-                            let r = tcell_edit(ui, &mut model.query[i].name, "name");
-                            take_pending_focus(ui, FOCUS_QUERY, i, &r);
-                        } else {
-                            ui.label(RichText::new(&model.query[i].name).color(p.info));
-                        }
-                    });
-                    row.col(|ui| {
-                        if required_chip(ui, model.query[i].required, editing).is_some() {
-                            actions.push(EditAction::ToggleBool {
-                                field: Field::QueryRequired(i),
-                            });
-                        }
-                    });
-                    row.col(|ui| {
-                        if editing {
-                            tcell_edit(ui, &mut model.query[i].value, "value");
-                        } else {
-                            ui.label(RichText::new(&model.query[i].value).color(p.on_surface));
-                        }
-                    });
-                    row.col(|ui| {
-                        if editing {
-                            tcell_edit(ui, &mut model.query[i].description, "description");
-                        } else {
-                            ui.label(
-                                RichText::new(&model.query[i].description).color(p.on_surface),
-                            );
-                        }
-                    });
-                    if editing {
-                        row.col(|ui| {
-                            if delete_button(ui) {
-                                actions.push(EditAction::Delete {
-                                    field: Field::QueryName(i),
+                        grid_cell(ui, |ui| {
+                            if required_chip(ui, q.required, editing).is_some() {
+                                actions.push(EditAction::ToggleBool {
+                                    field: Field::QueryRequired(i),
                                 });
                             }
+                        });
+                    });
+                    text_cell(
+                        &mut row,
+                        table,
+                        (i, RowColumn::Value),
+                        &mut q.value,
+                        editing,
+                    );
+                    text_cell(
+                        &mut row,
+                        table,
+                        (i, RowColumn::Description),
+                        &mut q.description,
+                        editing,
+                    );
+                    if editing {
+                        row.col(|ui| {
+                            grid_cell(ui, |ui| {
+                                if delete_button(ui) {
+                                    actions.push(EditAction::Delete {
+                                        field: Field::QueryName(i),
+                                    });
+                                }
+                            });
                         });
                     }
                 });
             }
+            if editing {
+                body.row(TABLE_ROW_H, |mut row| {
+                    ghost_row(&mut row, table, &mut ghost)
+                });
+            }
         });
     });
-    if editing && add_button(ui, "+ query") {
-        request_new_row_focus(ui, FOCUS_QUERY, model.query.len());
-        actions.push(EditAction::Add {
-            field: Field::QueryAdd,
-        });
-    }
     for a in &actions {
         apply(model, a);
     }
+    if editing {
+        finish_ghost(ui, model, table, ghost);
+    }
 }
 
-/// Response header rows for the selected response `idx`.
+/// Response header rows for the selected response `idx`. While editing, the
+/// table ends in an empty add row.
 pub(super) fn response_headers(
     ui: &mut egui::Ui,
     model: &mut EditModel,
     idx: usize,
     editing: bool,
 ) {
-    let p = palette(ui.ctx());
-    let Some(_) = model.responses.get(idx) else {
+    if idx >= model.responses.len() {
         return;
-    };
+    }
+    let table = RowTable::ResponseHeader(idx);
     let mut actions: Vec<EditAction> = Vec::new();
+    let ids = ghost_ids(ui, table);
+    let mut ghost = load_ghost(ui, &ids);
     table_frame(ui, |ui| {
         let fixed = if editing {
-            vec![150.0, 88.0, 26.0]
+            vec![150.0, 88.0, DELETE_COL_W]
         } else {
             vec![150.0, 88.0]
         };
         let stretch = fill_column(ui, &fixed);
         let mut t = metadata_table(ui)
+            .id_salt("response_headers_table")
             .column(Column::exact(150.0)) // header
             .column(Column::exact(88.0)) // requirement
             .column(stretch); // value
         if editing {
-            t = t.column(Column::exact(26.0)); // delete
+            t = t.column(Column::exact(DELETE_COL_W)); // delete
         }
         t.header(TABLE_HEADER_H, |mut h| {
-            h.col(|ui| header_label(ui, "header"));
-            h.col(|ui| header_label(ui, "requirement"));
-            h.col(|ui| header_label(ui, "value"));
+            for label in ["Header", "Requirement", "Value"] {
+                h.col(|ui| grid_cell(ui, |ui| header_label(ui, label)));
+            }
             if editing {
-                h.col(|_| {});
+                h.col(|ui| grid_cell(ui, |_| {}));
             }
         })
         .body(|mut body| {
             let len = model.responses[idx].headers.len();
             for i in 0..len {
                 body.row(TABLE_ROW_H, |mut row| {
+                    let h = &mut model.responses[idx].headers[i];
+                    text_cell(&mut row, table, (i, RowColumn::Key), &mut h.name, editing);
                     row.col(|ui| {
-                        if editing {
-                            tcell_edit(ui, &mut model.responses[idx].headers[i].name, "name");
-                        } else {
-                            ui.label(
-                                RichText::new(&model.responses[idx].headers[i].name).color(p.info),
-                            );
-                        }
+                        grid_cell(ui, |ui| {
+                            // Response headers have no toggle action; flip directly.
+                            if let Some(new) = required_chip(ui, h.required, editing) {
+                                h.required = new;
+                            }
+                        });
                     });
-                    row.col(|ui| {
-                        let required = model.responses[idx].headers[i].required;
-                        // Response headers have no toggle action; flip directly.
-                        if let Some(new) = required_chip(ui, required, editing) {
-                            model.responses[idx].headers[i].required = new;
-                        }
-                    });
-                    row.col(|ui| {
-                        if editing {
-                            tcell_edit(ui, &mut model.responses[idx].headers[i].value, "value");
-                        } else {
-                            ui.label(
-                                RichText::new(&model.responses[idx].headers[i].value)
-                                    .color(p.on_surface),
-                            );
-                        }
-                    });
+                    text_cell(
+                        &mut row,
+                        table,
+                        (i, RowColumn::Value),
+                        &mut h.value,
+                        editing,
+                    );
                     if editing {
                         row.col(|ui| {
-                            if delete_button(ui) {
-                                actions.push(EditAction::Delete {
-                                    field: Field::ResponseHeaderName(idx, i),
-                                });
-                            }
+                            grid_cell(ui, |ui| {
+                                if delete_button(ui) {
+                                    actions.push(EditAction::Delete {
+                                        field: Field::ResponseHeaderName(idx, i),
+                                    });
+                                }
+                            });
                         });
                     }
                 });
             }
+            if editing {
+                body.row(TABLE_ROW_H, |mut row| {
+                    ghost_row(&mut row, table, &mut ghost)
+                });
+            }
         });
     });
-    if editing && add_button(ui, "+ header") {
-        actions.push(EditAction::Add {
-            field: Field::ResponseHeaderAdd(idx),
-        });
-    }
     for a in &actions {
         apply(model, a);
     }
+    if editing {
+        finish_ghost(ui, model, table, ghost);
+    }
 }
 
+/// The request headers table. While editing, it ends in an empty add row.
 pub(super) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
-    let p = palette(ui.ctx());
+    let table = RowTable::Header;
     let mut actions: Vec<EditAction> = Vec::new();
+    let ids = ghost_ids(ui, table);
+    let mut ghost = load_ghost(ui, &ids);
     table_frame(ui, |ui| {
         let fixed = if editing {
-            vec![150.0, 88.0, 26.0]
+            vec![150.0, 88.0, DELETE_COL_W]
         } else {
             vec![150.0, 88.0]
         };
         let stretch = fill_column(ui, &fixed);
         let mut t = metadata_table(ui)
+            .id_salt("request_headers_table")
             .column(Column::exact(150.0)) // header
             .column(Column::exact(88.0)) // requirement
             .column(stretch); // value
         if editing {
-            t = t.column(Column::exact(26.0)); // delete
+            t = t.column(Column::exact(DELETE_COL_W)); // delete
         }
         t.header(TABLE_HEADER_H, |mut h| {
-            h.col(|ui| header_label(ui, "header"));
-            h.col(|ui| header_label(ui, "requirement"));
-            h.col(|ui| header_label(ui, "value"));
+            for label in ["Header", "Requirement", "Value"] {
+                h.col(|ui| grid_cell(ui, |ui| header_label(ui, label)));
+            }
             if editing {
-                h.col(|_| {});
+                h.col(|ui| grid_cell(ui, |_| {}));
             }
         })
         .body(|mut body| {
             for i in 0..model.headers.len() {
                 body.row(TABLE_ROW_H, |mut row| {
+                    let h = &mut model.headers[i];
+                    text_cell(&mut row, table, (i, RowColumn::Key), &mut h.name, editing);
                     row.col(|ui| {
-                        if editing {
-                            let r = tcell_edit(ui, &mut model.headers[i].name, "name");
-                            take_pending_focus(ui, FOCUS_HEADER, i, &r);
-                        } else {
-                            ui.label(RichText::new(&model.headers[i].name).color(p.info));
-                        }
-                    });
-                    row.col(|ui| {
-                        if required_chip(ui, model.headers[i].required, editing).is_some() {
-                            actions.push(EditAction::ToggleBool {
-                                field: Field::HeaderRequired(i),
-                            });
-                        }
-                    });
-                    row.col(|ui| {
-                        if editing {
-                            tcell_edit_code(ui, &mut model.headers[i].value, "value");
-                        } else {
-                            ui.label(
-                                RichText::new(&model.headers[i].value)
-                                    .color(p.on_surface)
-                                    .monospace(),
-                            );
-                        }
-                    });
-                    if editing {
-                        row.col(|ui| {
-                            if delete_button(ui) {
-                                actions.push(EditAction::Delete {
-                                    field: Field::HeaderName(i),
+                        grid_cell(ui, |ui| {
+                            if required_chip(ui, h.required, editing).is_some() {
+                                actions.push(EditAction::ToggleBool {
+                                    field: Field::HeaderRequired(i),
                                 });
                             }
+                        });
+                    });
+                    text_cell(
+                        &mut row,
+                        table,
+                        (i, RowColumn::Value),
+                        &mut h.value,
+                        editing,
+                    );
+                    if editing {
+                        row.col(|ui| {
+                            grid_cell(ui, |ui| {
+                                if delete_button(ui) {
+                                    actions.push(EditAction::Delete {
+                                        field: Field::HeaderName(i),
+                                    });
+                                }
+                            });
                         });
                     }
                 });
             }
+            if editing {
+                body.row(TABLE_ROW_H, |mut row| {
+                    ghost_row(&mut row, table, &mut ghost)
+                });
+            }
         });
     });
-    if editing && add_button(ui, "+ header") {
-        request_new_row_focus(ui, FOCUS_HEADER, model.headers.len());
-        actions.push(EditAction::Add {
-            field: Field::HeaderAdd,
-        });
-    }
     for a in &actions {
         apply(model, a);
+    }
+    if editing {
+        finish_ghost(ui, model, table, ghost);
     }
 }
 
@@ -424,133 +713,169 @@ pub(super) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bo
     ui.add_space(SPACE_MEDIUM);
 }
 
-/// The response-code tab strip: one selectable tab per response code plus a
-/// `+ new response` button. In edit mode the active tab's code is edited inline
-/// (frameless) and carries an `x` to delete that response. Selecting a tab sets
-/// `resp_tab`, so both `responses()` and the RespHeader tab share it.
-pub(super) fn response_code_selector(
+/// Color for an HTTP status code by its class: 2xx success, 3xx info, 4xx
+/// warning, 5xx and anything that is not a three-digit code error.
+pub(super) fn status_color(code: &str, p: &Palette) -> Color32 {
+    if code.len() != 3 || !code.bytes().all(|b| b.is_ascii_digit()) {
+        return p.error;
+    }
+    match code.as_bytes()[0] {
+        b'2' => p.success,
+        b'3' => p.info,
+        b'4' => p.warning,
+        _ => p.error,
+    }
+}
+
+/// The stable id of the selected response's code field, so picking another
+/// response in [`response_picker`] can move the caret to it in
+/// [`response_fields`].
+fn resp_code_edit_id() -> egui::Id {
+    egui::Id::new("resp_code_edit")
+}
+
+/// The response-example picker: a frameless dropdown whose selected text is
+/// `code title` in its status color, with one `code - title` entry per
+/// response. In edit mode the list ends with a "+ New example" entry. Picking an
+/// entry sets `resp_tab`, so the body and headers tabs show that response, and
+/// while editing moves the caret to its code field.
+///
+/// # Returns
+///
+/// [`ContractsAction::OpenNewExample`] when "+ New example" was clicked.
+pub(super) fn response_picker(
     ui: &mut egui::Ui,
-    model: &mut EditModel,
+    model: &EditModel,
     resp_tab: &mut usize,
     editing: bool,
-) {
+) -> Option<ContractsAction> {
     let p = palette(ui.ctx());
-    let mut actions: Vec<EditAction> = Vec::new();
-    // The active tab's code editor carries a stable id so we can move the caret
-    // to it the instant a tab is selected or a new response is added.
-    let code_edit_id = ui.make_persistent_id("resp_code_edit");
-    // Set when the active response changes this frame so the code field takes
-    // focus on the next frame (when it renders as the editable, active tab).
+    let mut action = None;
     let mut focus_code = false;
-    // The strip scrolls horizontally rather than wrapping, so many response
-    // codes stay on one line with the tabs' `code - title` labels intact.
-    egui::ScrollArea::horizontal()
-        .id_salt("resp_code_strip")
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                for i in 0..model.responses.len() {
-                    let selected = i == *resp_tab;
-                    let code_ok = model.responses[i].code.trim().parse::<u16>().is_ok();
-                    let color = if !code_ok {
-                        p.error
-                    } else if selected {
-                        p.success
-                    } else {
-                        p.on_surface_variant
-                    };
-                    if editing && selected {
-                        // The active tab is edited in place, no bordered box:
-                        // `[code] - [title] x`, code first so focus lands there.
-                        // Tight spacing so the fields read as one label, not a row.
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        // Size the code field to its text (min 3 digits) so the
-                        // `-` hugs the code instead of sitting past a fixed width.
-                        let code_w = {
-                            let code = &model.responses[i].code;
-                            let shown: String = if code.chars().count() < 3 {
-                                "000".to_string()
-                            } else {
-                                code.chars().take(6).collect()
-                            };
-                            let font = egui::TextStyle::Body.resolve(ui.style());
-                            ui.painter()
-                                .layout_no_wrap(shown, font, egui::Color32::PLACEHOLDER)
-                                .size()
-                                .x
-                        };
-                        ui.add(
-                            egui::TextEdit::singleline(&mut model.responses[i].code)
-                                .id(code_edit_id)
-                                .frame(egui::Frame::NONE)
-                                .desired_width(code_w + 10.0)
-                                .text_color(color),
-                        );
-                        // A status code is exactly 3 digits: drop anything else
-                        // and cap the length as the user types.
-                        let code = &mut model.responses[i].code;
-                        if code.len() > 3 || !code.bytes().all(|b| b.is_ascii_digit()) {
-                            *code = code
-                                .chars()
-                                .filter(|c| c.is_ascii_digit())
-                                .take(3)
-                                .collect();
-                        }
-                        ui.label(RichText::new("-").color(p.on_surface_variant));
-                        // Size the title field to its text (30-char cap) so the
-                        // `x` sits right after the title instead of a fixed gap.
-                        let title_w = {
-                            let title = &model.responses[i].description;
-                            let shown: String = if title.is_empty() {
-                                "title".to_string()
-                            } else {
-                                title.chars().take(30).collect()
-                            };
-                            let font = egui::TextStyle::Body.resolve(ui.style());
-                            ui.painter()
-                                .layout_no_wrap(shown, font, egui::Color32::PLACEHOLDER)
-                                .size()
-                                .x
-                        };
-                        ui.add(
-                            egui::TextEdit::singleline(&mut model.responses[i].description)
-                                .frame(egui::Frame::NONE)
-                                .desired_width(title_w + 18.0)
-                                .hint_text("title")
-                                .text_color(p.on_surface_variant),
-                        );
-                        if delete_button(ui) {
-                            actions.push(EditAction::Delete {
-                                field: Field::ResponseCode(i),
-                            });
-                        }
-                    } else {
-                        let label = status_tab_label(
-                            &model.responses[i].code,
-                            &model.responses[i].description,
-                        );
-                        if ui
-                            .selectable_label(selected, RichText::new(label).color(color).strong())
-                            .clicked()
-                        {
-                            *resp_tab = i;
-                            focus_code = true;
-                        }
+    let selected_text = model
+        .responses
+        .get(*resp_tab)
+        .map(|r| {
+            RichText::new(status_picker_label(&r.code, &r.description))
+                .color(status_color(r.code.trim(), p))
+                .strong()
+        })
+        .unwrap_or_else(|| RichText::new("?").color(p.on_surface_variant));
+    ui.scope(|ui| {
+        // No box around the closed dropdown, only the colored status text.
+        let widgets = &mut ui.visuals_mut().widgets;
+        for w in [
+            &mut widgets.inactive,
+            &mut widgets.hovered,
+            &mut widgets.active,
+            &mut widgets.open,
+        ] {
+            w.bg_fill = Color32::TRANSPARENT;
+            w.weak_bg_fill = Color32::TRANSPARENT;
+            w.bg_stroke = egui::Stroke::NONE;
+        }
+        egui::ComboBox::from_id_salt("resp_example")
+            .selected_text(selected_text)
+            .show_ui(ui, |ui| {
+                for (i, r) in model.responses.iter().enumerate() {
+                    let label = RichText::new(status_tab_label(&r.code, &r.description))
+                        .color(status_color(r.code.trim(), p));
+                    if ui.selectable_label(i == *resp_tab, label).clicked() {
+                        *resp_tab = i;
+                        focus_code = true;
                     }
                 }
-                if editing && add_button(ui, "+ new response") {
-                    // Focus the new tab's code so the user can type it straight away.
-                    *resp_tab = model.responses.len();
-                    focus_code = true;
-                    actions.push(EditAction::Add {
-                        field: Field::ResponseAdd,
-                    });
+                if editing {
+                    ui.separator();
+                    if ui.button("+ New example").clicked() {
+                        action = Some(ContractsAction::OpenNewExample);
+                        ui.close();
+                    }
                 }
             });
-        });
+    });
     if editing && focus_code {
-        ui.ctx().memory_mut(|m| m.request_focus(code_edit_id));
+        ui.ctx()
+            .memory_mut(|m| m.request_focus(resp_code_edit_id()));
     }
+    action
+}
+
+/// The selected response's code and title, edited in place with no bordered
+/// box as `[code] - [title] x`, where `x` deletes the response. Only drawn in
+/// edit mode. The code field keeps at most three digits.
+pub(super) fn response_fields(ui: &mut egui::Ui, model: &mut EditModel, resp_tab: usize) {
+    let p = palette(ui.ctx());
+    let i = resp_tab;
+    if i >= model.responses.len() {
+        return;
+    }
+    let mut actions: Vec<EditAction> = Vec::new();
+    ui.horizontal(|ui| {
+        // Tight spacing so the fields read as one label.
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let color = status_color(model.responses[i].code.trim(), p);
+        // Size the code field to its text (min 3 digits) so the `-` hugs the
+        // code instead of sitting past a fixed width.
+        let code_w = {
+            let code = &model.responses[i].code;
+            let shown: String = if code.chars().count() < 3 {
+                "000".to_string()
+            } else {
+                code.chars().take(6).collect()
+            };
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            ui.painter()
+                .layout_no_wrap(shown, font, egui::Color32::PLACEHOLDER)
+                .size()
+                .x
+        };
+        ui.add(
+            egui::TextEdit::singleline(&mut model.responses[i].code)
+                .id(resp_code_edit_id())
+                .frame(egui::Frame::NONE)
+                .desired_width(code_w + 10.0)
+                .text_color(color),
+        );
+        // A status code is exactly 3 digits: drop anything else and cap the
+        // length as the user types.
+        let code = &mut model.responses[i].code;
+        if code.len() > 3 || !code.bytes().all(|b| b.is_ascii_digit()) {
+            *code = code
+                .chars()
+                .filter(|c| c.is_ascii_digit())
+                .take(3)
+                .collect();
+        }
+        ui.label(RichText::new("-").color(p.on_surface_variant));
+        // Size the title field to its text (30-char cap) so the `x` sits right
+        // after the title instead of a fixed gap.
+        let title_w = {
+            let title = &model.responses[i].description;
+            let shown: String = if title.is_empty() {
+                "title".to_string()
+            } else {
+                title.chars().take(30).collect()
+            };
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            ui.painter()
+                .layout_no_wrap(shown, font, egui::Color32::PLACEHOLDER)
+                .size()
+                .x
+        };
+        ui.add(
+            egui::TextEdit::singleline(&mut model.responses[i].description)
+                .frame(egui::Frame::NONE)
+                .desired_width(title_w + 18.0)
+                .hint_text("title")
+                .text_color(p.on_surface_variant),
+        );
+        if delete_button(ui) {
+            actions.push(EditAction::Delete {
+                field: Field::ResponseCode(i),
+            });
+        }
+    });
     for a in &actions {
         apply(model, a);
     }
@@ -560,11 +885,23 @@ pub(super) fn response_code_selector(
 /// title, truncated to 30 characters (with an ellipsis) so long titles never
 /// stretch a tab off the strip.
 fn status_tab_label(code: &str, title: &str) -> String {
+    status_label(code, title, " - ")
+}
+
+/// The picker's selected text: `code title`, or just `code` when the response
+/// has no title, truncated like [`status_tab_label`].
+fn status_picker_label(code: &str, title: &str) -> String {
+    status_label(code, title, " ")
+}
+
+/// `code`, `sep` and `title` joined, or just `code` without a title, cut to 30
+/// characters with an ellipsis.
+fn status_label(code: &str, title: &str, sep: &str) -> String {
     let code = if code.trim().is_empty() { "?" } else { code };
     let full = if title.trim().is_empty() {
         code.to_string()
     } else {
-        format!("{code} - {title}")
+        format!("{code}{sep}{title}")
     };
     if full.chars().count() > 30 {
         let head: String = full.chars().take(29).collect();
@@ -618,18 +955,122 @@ mod tests {
                 .unwrap();
                 let mut m = EditModel::from_contract(c);
                 let mut resp = 0usize;
-                endpoint_name(ui, &mut m, true);
-                endpoint_description(ui, &mut m, true);
+                endpoint_title(ui, &mut m, true);
+                endpoint_title(ui, &mut m, false);
                 method_url_row(ui, &mut m, true);
                 headers(ui, &mut m, true);
                 headers(ui, &mut m, false);
                 query_section(ui, &mut m, true);
                 request_body(ui, &mut m, true);
-                response_code_selector(ui, &mut m, &mut resp, true);
+                response_picker(ui, &m, &mut resp, true);
+                response_fields(ui, &mut m, resp);
                 response_body(ui, &mut m, 0, true);
                 response_headers(ui, &mut m, 0, true);
             });
         }
+    }
+
+    /// A contract with one row in every table, so each test can see that the
+    /// add row appends after the existing rows.
+    fn model_with_rows() -> EditModel {
+        let c = apic_core::json::json_get(
+            r#"{ "name":"t","method":"GET","url":"https://h",
+             "query":[{"name":"page","value":"2","description":"d","required":true}],
+             "headers":[{"name":"Accept","value":"*/*","required":true}],
+             "responses":[{"code":200,"description":"ok",
+                "headers":[{"name":"X","value":"1","required":false}]}] }"#,
+            None,
+        )
+        .unwrap();
+        EditModel::from_contract(c)
+    }
+
+    /// Every text column of `row` in `table`, in display order.
+    fn row_texts(model: &mut EditModel, table: RowTable, row: usize) -> Vec<String> {
+        table
+            .columns()
+            .iter()
+            .map(|c| cell_text_mut(model, table, row, *c).unwrap().clone())
+            .collect()
+    }
+
+    #[test]
+    fn typing_in_the_empty_row_adds_one_row() {
+        for table in [
+            RowTable::Query,
+            RowTable::Header,
+            RowTable::ResponseHeader(0),
+        ] {
+            for (n, column) in table.columns().iter().enumerate() {
+                let mut m = model_with_rows();
+                let before = table.len(&m);
+                let mut texts = vec![String::new(); table.columns().len()];
+                texts[n] = "{{token}}".to_string();
+                let adopted = adopt_ghost_text(&mut m, table, &mut texts);
+                assert_eq!(adopted, Some((before, *column)), "{table:?} {column:?}");
+                assert_eq!(table.len(&m), before + 1, "{table:?} {column:?}");
+                let mut expected = vec![String::new(); table.columns().len()];
+                expected[n] = "{{token}}".to_string();
+                assert_eq!(row_texts(&mut m, table, before), expected);
+                assert!(texts.iter().all(String::is_empty), "scratch is cleared");
+            }
+            let mut m = model_with_rows();
+            let before = table.len(&m);
+            let mut empty = vec![String::new(); table.columns().len()];
+            assert_eq!(adopt_ghost_text(&mut m, table, &mut empty), None);
+            assert_eq!(table.len(&m), before, "an empty add row adds nothing");
+        }
+    }
+
+    #[test]
+    fn typed_keys_land_in_one_new_row_with_the_caret_at_the_end() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install_themes(&ctx, egui::ThemePreference::Dark);
+        let mut m = model_with_rows();
+        m.headers.clear();
+        let frame = |events: Vec<egui::Event>, m: &mut EditModel| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(800.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| headers(ui, m, true));
+            out.textures_delta.clear();
+        };
+        let tab = egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(Vec::new(), &mut m);
+        // With no rows, the add row's key field is the first focusable widget.
+        frame(vec![tab], &mut m);
+        frame(vec![egui::Event::Text("a".into())], &mut m);
+        frame(Vec::new(), &mut m);
+        frame(vec![egui::Event::Text("b".into())], &mut m);
+        frame(Vec::new(), &mut m);
+        assert_eq!(m.headers.len(), 1, "typing adds exactly one row");
+        assert_eq!(
+            m.headers[0].name, "ab",
+            "the caret followed into the new row"
+        );
+        assert_eq!(m.headers[0].value, "");
+    }
+
+    #[test]
+    fn status_color_follows_the_code_class() {
+        let p = &crate::ui::theme::TOKYO_NIGHT_STORM;
+        assert_eq!(status_color("200", p), p.success);
+        assert_eq!(status_color("301", p), p.info);
+        assert_eq!(status_color("404", p), p.warning);
+        assert_eq!(status_color("500", p), p.error);
+        assert_eq!(status_color("abc", p), p.error);
+        assert_eq!(status_color("20", p), p.error);
     }
 
     #[test]

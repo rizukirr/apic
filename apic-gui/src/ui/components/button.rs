@@ -6,7 +6,7 @@ use egui::RichText;
 
 use crate::ui::theme::SIZE_DELETE_GLYPH;
 
-/// A frameless `x` row-removal button: muted by default, brightening to red
+/// A frameless trash-icon row-removal button: muted by default, brightening to red
 /// over a subtle rounded backdrop on hover so it clearly reads as clickable.
 /// Returns `true` on click.
 #[must_use]
@@ -23,7 +23,7 @@ pub(crate) fn delete_button(ui: &mut egui::Ui) -> bool {
         ui.painter().text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "x",
+            egui_phosphor::regular::TRASH,
             egui::FontId::proportional(SIZE_DELETE_GLYPH),
             if hovered {
                 p.error
@@ -53,11 +53,4 @@ pub(crate) fn icon_button(ui: &mut egui::Ui, icon: &str, hover_text: &str) -> eg
 #[must_use]
 pub(crate) fn text_button(ui: &mut egui::Ui, label: &str, color: egui::Color32) -> bool {
     ui.button(RichText::new(label).color(color)).clicked()
-}
-
-/// A green `+ <noun>` add button. Returns `true` on click. Centralizes the
-/// add affordance so every list shares one label convention and color.
-#[must_use]
-pub(crate) fn add_button(ui: &mut egui::Ui, label: &str) -> bool {
-    text_button(ui, label, crate::ui::theme::palette(ui.ctx()).primary)
 }

@@ -28,6 +28,24 @@ use crate::settings::Settings;
 use crate::ui::components::{icon_button, section_header};
 use crate::ui::theme::*;
 
+/// What the app bar's theme toggle switches to from the theme now showing,
+/// with the icon and hover text for that switch: a sun while dark (switch to
+/// light), a moon while light (switch to dark).
+fn theme_toggle(current: egui::Theme) -> (egui::ThemePreference, &'static str, &'static str) {
+    match current {
+        egui::Theme::Dark => (
+            egui::ThemePreference::Light,
+            egui_phosphor::regular::SUN,
+            "Switch to light theme",
+        ),
+        egui::Theme::Light => (
+            egui::ThemePreference::Dark,
+            egui_phosphor::regular::MOON,
+            "Switch to dark theme",
+        ),
+    }
+}
+
 /// egui's default fonts plus the Phosphor icon font as a fallback for
 /// proportional text, so any label can carry an `egui_phosphor::regular`
 /// icon.
@@ -93,7 +111,7 @@ impl App {
     }
 
     /// Top header: sidebar toggle, the project dropdown (new, open, import) and
-    /// the branch dropdown and the theme menu. Returns an action when one of
+    /// the branch dropdown and the theme toggle. Returns an action when one of
     /// those is chosen.
     fn top_bar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         let p = palette(ui.ctx());
@@ -139,20 +157,11 @@ impl App {
                             action = Some(Action::Git(a));
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.menu_button(RichText::new("Theme").color(p.primary), |ui| {
-                                let current = ui.ctx().options(|o| o.theme_preference);
-                                for (preference, label) in [
-                                    (egui::ThemePreference::System, "System"),
-                                    (egui::ThemePreference::Dark, "Dark"),
-                                    (egui::ThemePreference::Light, "Light"),
-                                ] {
-                                    if ui.selectable_label(current == preference, label).clicked() {
-                                        ui.ctx().set_theme(preference);
-                                        Settings::update(|s| s.theme = preference);
-                                        ui.close();
-                                    }
-                                }
-                            });
+                            let (next, icon, hover) = theme_toggle(ui.ctx().theme());
+                            if icon_button(ui, icon, hover).clicked() {
+                                ui.ctx().set_theme(next);
+                                Settings::update(|s| s.theme = next);
+                            }
                         });
                     });
             });
@@ -571,6 +580,16 @@ mod tests {
     /// driverless environments.
     #[cfg(windows)]
     #[test]
+    fn theme_toggle_flips_between_dark_and_light() {
+        let (next, icon, _) = theme_toggle(egui::Theme::Dark);
+        assert_eq!(next, egui::ThemePreference::Light);
+        assert_eq!(icon, egui_phosphor::regular::SUN);
+        let (next, icon, _) = theme_toggle(egui::Theme::Light);
+        assert_eq!(next, egui::ThemePreference::Dark);
+        assert_eq!(icon, egui_phosphor::regular::MOON);
+    }
+
+    #[test]
     fn fonts_with_icons_registers_phosphor() {
         let fonts = fonts_with_icons();
         assert!(fonts.font_data.contains_key("phosphor"));
@@ -700,7 +719,9 @@ mod tests {
                     field: apic_core::edit::Field::QueryAdd,
                 },
             );
-            ctx.data_mut(|d| d.insert_temp(egui::Id::new("apic.focus.query"), new_idx.to_string()));
+            ctx.data_mut(|d| {
+                d.insert_temp(egui::Id::new("apic.focus.query"), format!("{new_idx}:Key"))
+            });
         }
         let delays = run_at(&mut app, 1280.0, 800.0, 16);
         let tail_zero = delays[8..].iter().all(|d| *d == std::time::Duration::ZERO);

@@ -5,11 +5,11 @@ use eframe::egui;
 use egui::RichText;
 
 use super::editor::{
-    endpoint_description, endpoint_name, headers, method_url_row, query_section, request_body,
-    response_body, response_code_selector, response_headers,
+    endpoint_title, headers, method_url_row, query_section, request_body, response_body,
+    response_fields, response_headers, response_picker,
 };
-use crate::features::contracts::ui::state::{ContractsAction, ContractsState, MainTab, RespTab};
-use crate::ui::components::text_button;
+use crate::features::contracts::ui::state::{ContractsAction, ContractsState, RespTab};
+use crate::ui::components::{Tab, empty_state, icon_button, tab_strip, text_button};
 use crate::ui::theme::*;
 
 /// The central body for the loaded contract: the viewer/editor, the repair
@@ -35,30 +35,22 @@ pub(crate) fn central_body(
     let p = palette(ui.ctx());
     let no_project = !has_project;
     let mut action = None;
+    let has_unsaved = state.has_unsaved_edits();
     let ContractsState {
         model,
         editing,
         resp_tab,
-        main_tab,
         resp_tab_view,
         repair,
         entries,
         ..
     } = state;
     if no_project {
-        ui.add_space(40.0);
-        ui.vertical_centered(|ui| {
-            ui.label(
-                RichText::new("No project open")
-                    .color(p.on_surface_variant)
-                    .size(16.0),
-            );
-            ui.add_space(SPACE_SMALL);
-            ui.label(
-                RichText::new("Use Open to open a project folder, or New to create one.")
-                    .color(p.on_surface_variant),
-            );
-        });
+        empty_state(
+            ui,
+            "No project open",
+            "Use Open to open a project folder, or New to create one.",
+        );
         return None;
     }
     if let Some(rep) = repair.as_mut() {
@@ -70,7 +62,7 @@ pub(crate) fn central_body(
                     .strong(),
             );
         } else {
-            ui.label(RichText::new("INVALID CONTRACT").color(p.error).strong());
+            ui.label(RichText::new("Invalid contract").color(p.error).strong());
             ui.label(RichText::new(&rep.error).color(p.warning).size(12.0));
         }
         ui.add_space(SPACE_SMALL);
@@ -104,156 +96,262 @@ pub(crate) fn central_body(
         return action;
     }
     let Some(model) = model.as_mut() else {
-        ui.add_space(40.0);
-        ui.vertical_centered(|ui| {
-            ui.label(RichText::new("WELCOME TO APIC").color(p.primary).size(28.0));
-            ui.label(RichText::new("Select a contract on the left.").color(p.on_surface_variant));
-        });
+        empty_state(ui, "No contract open", "Select a contract on the left.");
         return None;
     };
 
-    // Toolbar row: endpoint name on the left, EDIT/SAVE on the right.
+    // Toolbar row: endpoint name on the left, edit and save icons on the right.
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add_space(SPACE_SMALL); // end padding, right of Save
-            if text_button(ui, "Save", p.primary) {
+            ui.add_space(SPACE_SMALL);
+            if has_unsaved {
+                ui.label(RichText::new("●").color(p.warning).size(10.0));
+            }
+            if icon_button(ui, egui_phosphor::regular::FLOPPY_DISK, "Save").clicked() {
                 action = Some(ContractsAction::Save);
             }
-            let edit_label = if *editing { "Cancel" } else { "Edit" };
-            if text_button(ui, edit_label, p.primary) {
+            let (icon, hover) = if *editing {
+                (egui_phosphor::regular::X, "Cancel")
+            } else {
+                (egui_phosphor::regular::PENCIL_SIMPLE, "Edit")
+            };
+            if icon_button(ui, icon, hover).clicked() {
                 action = Some(ContractsAction::ToggleEdit);
             }
             // The name fills the space to the left of the buttons.
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.add_space(SPACE_SMALL); // start padding, left of the name
-                endpoint_name(ui, model, *editing);
+                endpoint_title(ui, model, *editing);
             });
         });
     });
     ui.add_space(SPACE_SMALL);
 
     egui::Frame::NONE
-        .inner_margin(egui::Margin::same(10))
+        .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
-            method_url_row(ui, model, *editing);
-            ui.add_space(SPACE_SMALL);
-
-            // 50:50 split with a vertical divider between the panes:
-            // request tabs on the left, Response on the right.
-            ui.horizontal_top(|ui| {
-                let gap = ui.spacing().item_spacing.x;
-                // Reserve the divider's own width plus a gap on each side so the
-                // two panes stay an even 50:50.
-                let divider_w = 6.0;
-                let col_w = ((ui.available_width() - divider_w - gap * 2.0) / 2.0).max(0.0);
-                let col_h = ui.available_height();
-
-                // Left pane: Overview / Headers / Query / Request.
-                ui.allocate_ui_with_layout(
-                    egui::vec2(col_w, col_h),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |left| {
-                        left.horizontal(|ui| {
-                            let mut t = |ui: &mut egui::Ui, label: &str, which: MainTab| {
-                                if ui
-                                    .selectable_label(
-                                        *main_tab == which,
-                                        RichText::new(label).color(if *main_tab == which {
-                                            p.primary
-                                        } else {
-                                            p.on_surface_variant
-                                        }),
-                                    )
-                                    .clicked()
-                                {
-                                    *main_tab = which;
-                                }
-                            };
-                            t(ui, "Overview", MainTab::Overview);
-                            t(ui, "Headers", MainTab::Headers);
-                            t(ui, "Query", MainTab::Query);
-                            t(ui, "Request", MainTab::Request);
+            // Request tabs in a resizable left pane, Response in the rest.
+            // The panel paints its divider with the parent's noninteractive
+            // stroke, so that stroke is swapped only around the panel.
+            let half = (ui.available_width() / 2.0).max(240.0);
+            let saved_stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+            ui.visuals_mut().widgets.noninteractive.bg_stroke =
+                egui::Stroke::new(1.0, p.outline_variant);
+            egui::Panel::left("contract_request_pane")
+                .resizable(true)
+                .default_size(half)
+                .min_size(240.0)
+                .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                    right: 16,
+                    ..Default::default()
+                }))
+                .show(ui, |left| {
+                    left.visuals_mut().widgets.noninteractive.bg_stroke = saved_stroke;
+                    method_url_row(left, model, *editing);
+                    left.add_space(12.0);
+                    // One scroll per pane (distinct id) so the left
+                    // and right panes scroll independently.
+                    egui::ScrollArea::vertical()
+                        .id_salt("left_pane_scroll")
+                        .auto_shrink([false, false])
+                        .show(left, |ui| {
+                            section_heading(ui, "Headers");
+                            headers(ui, model, *editing);
+                            ui.add_space(16.0);
+                            section_heading(ui, "Query");
+                            query_section(ui, model, *editing);
+                            ui.add_space(16.0);
+                            section_heading(ui, "Request");
+                            request_body(ui, model, *editing);
                         });
-                        left.separator();
-                        // One scroll per pane (distinct id) so the left
-                        // and right panes scroll independently.
-                        egui::ScrollArea::vertical()
-                            .id_salt("left_pane_scroll")
-                            .auto_shrink([false, false])
-                            .show(left, |ui| match *main_tab {
-                                MainTab::Overview => endpoint_description(ui, model, *editing),
-                                MainTab::Headers => headers(ui, model, *editing),
-                                MainTab::Query => query_section(ui, model, *editing),
-                                MainTab::Request => request_body(ui, model, *editing),
-                            });
-                    },
-                );
+                });
+            ui.visuals_mut().widgets.noninteractive.bg_stroke = saved_stroke;
 
-                ui.separator();
-
-                // Right pane: a Response / Header tab bar over a shared,
-                // per-response status strip.
-                ui.allocate_ui_with_layout(
-                    egui::vec2(col_w, col_h),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |right| {
-                        right.horizontal(|ui| {
-                            let mut t = |ui: &mut egui::Ui, label: &str, which: RespTab| {
-                                if ui
-                                    .selectable_label(
-                                        *resp_tab_view == which,
-                                        RichText::new(label).color(if *resp_tab_view == which {
-                                            p.primary
-                                        } else {
-                                            p.on_surface_variant
-                                        }),
-                                    )
-                                    .clicked()
-                                {
-                                    *resp_tab_view = which;
-                                }
-                            };
-                            t(ui, "Response", RespTab::Body);
-                            t(ui, "Header", RespTab::Headers);
-                        });
-                        right.separator();
-                        // One scroll per pane (distinct id) starting under
-                        // the "Response" title, so the left and right panes
-                        // scroll independently as plain vertical content.
-                        egui::ScrollArea::vertical()
-                            .id_salt("right_pane_scroll")
-                            .auto_shrink([false, false])
-                            .show(right, |ui| {
-                                // An endpoint is expected to document a
-                                // response, so default to a 200 in edit mode
-                                // (its editor shows without "+ new response").
-                                if *editing && model.responses.is_empty() {
-                                    model.responses.push(apic_core::edit::EditResponse::blank());
-                                }
-                                // Per-response status strip; its `code -
-                                // title` tabs select the response whose
-                                // body/headers the tab bar above shows.
-                                response_code_selector(ui, model, resp_tab, *editing);
-                                if model.responses.is_empty() {
-                                    ui.label(
-                                        RichText::new("(no responses)").color(p.on_surface_variant),
-                                    );
-                                    return;
-                                }
-                                if *resp_tab >= model.responses.len() {
-                                    *resp_tab = 0;
-                                }
-                                ui.add_space(SPACE_SMALL);
-                                let idx = *resp_tab;
-                                match *resp_tab_view {
-                                    RespTab::Body => response_body(ui, model, idx, *editing),
-                                    RespTab::Headers => response_headers(ui, model, idx, *editing),
-                                }
-                            });
-                    },
-                );
-            });
+            egui::Frame::NONE
+                .inner_margin(egui::Margin {
+                    left: 16,
+                    ..Default::default()
+                })
+                .show(ui, |ui| {
+                    if let Some(a) = response_pane(ui, model, resp_tab, resp_tab_view, *editing) {
+                        action = Some(a);
+                    }
+                });
         });
     action
+}
+
+/// The right pane: one header row with the `Response` and `Headers` tabs on
+/// the left and the response picker on the right, the selected response's
+/// code and title fields while editing, then the selected tab's body.
+///
+/// # Returns
+///
+/// The action the response picker asks for this frame.
+fn response_pane(
+    ui: &mut egui::Ui,
+    model: &mut apic_core::edit::EditModel,
+    resp_tab: &mut usize,
+    resp_tab_view: &mut RespTab,
+    editing: bool,
+) -> Option<ContractsAction> {
+    let mut action = None;
+    // An endpoint is expected to document a response, so default to a 200 in
+    // edit mode (its editor shows without "+ New example").
+    if editing && model.responses.is_empty() {
+        model.responses.push(apic_core::edit::EditResponse::blank());
+    }
+    if *resp_tab >= model.responses.len() {
+        *resp_tab = 0;
+    }
+    let resp_headers = model
+        .responses
+        .get(*resp_tab)
+        .map_or(0, |r| r.headers.len());
+    ui.horizontal(|ui| {
+        let mut idx = resp_tab_index(*resp_tab_view);
+        tab_strip(
+            ui,
+            &mut idx,
+            &[
+                Tab::new("Response"),
+                Tab::new("Headers").count(resp_headers),
+            ],
+        );
+        *resp_tab_view = resp_tab_at(idx);
+        if model.responses.is_empty() {
+            return;
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            action = response_picker(ui, model, resp_tab, editing);
+        });
+    });
+    if editing && !model.responses.is_empty() {
+        response_fields(ui, model, *resp_tab);
+    }
+    ui.add_space(8.0);
+    egui::ScrollArea::vertical()
+        .id_salt("right_pane_scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            if model.responses.is_empty() {
+                empty_state(ui, "No responses", "");
+                return;
+            }
+            let idx = *resp_tab;
+            match *resp_tab_view {
+                RespTab::Body => response_body(ui, model, idx, editing),
+                RespTab::Headers => response_headers(ui, model, idx, editing),
+            }
+        });
+    action
+}
+
+/// A left-pane section heading: `label` in bold, in `on_surface_variant`.
+fn section_heading(ui: &mut egui::Ui, label: &str) {
+    let p = palette(ui.ctx());
+    ui.label(RichText::new(label).strong().color(p.on_surface_variant));
+    ui.add_space(6.0);
+}
+
+/// The [`tab_strip`] index of a response sub-tab.
+fn resp_tab_index(tab: RespTab) -> usize {
+    match tab {
+        RespTab::Body => 0,
+        RespTab::Headers => 1,
+    }
+}
+
+/// The response sub-tab at a [`tab_strip`] index.
+fn resp_tab_at(idx: usize) -> RespTab {
+    match idx {
+        1 => RespTab::Headers,
+        _ => RespTab::Body,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apic_core::edit::EditModel;
+
+    use crate::ui::theme::{BOTH_THEMES, run_in_theme};
+
+    fn model_from(json: &str) -> EditModel {
+        let contract = apic_core::json::json_get(json, None).expect("valid sample contract");
+        EditModel::from_contract(contract)
+    }
+
+    fn sample_model() -> EditModel {
+        model_from(
+            r#"{
+            "name": "test",
+            "method": "GET",
+            "url": "https://example.com",
+            "headers": [],
+            "responses": [ { "code": 200, "description": "ok" } ]
+        }"#,
+        )
+    }
+
+    #[test]
+    fn central_body_renders_each_state_in_both_themes() {
+        for preference in BOTH_THEMES {
+            run_in_theme(preference, |ui| {
+                let mut state = ContractsState::default();
+                central_body(ui, &mut state, false);
+                central_body(ui, &mut state, true);
+
+                state.model = Some(sample_model());
+                state.original_model = state.model.clone();
+                central_body(ui, &mut state, true);
+
+                let mut described = ContractsState {
+                    model: Some(model_from(
+                        r#"{ "name": "Login", "description": "Authenticate the user", "method": "POST",
+                            "url": "{{baseUrl}}/auth/login", "headers": [], "responses": [] }"#,
+                    )),
+                    ..Default::default()
+                };
+                central_body(ui, &mut described, true);
+                let mut undescribed = ContractsState {
+                    model: Some(model_from(
+                        r#"{ "name": "Login", "description": "", "method": "POST",
+                            "url": "{{baseUrl}}/auth/login", "headers": [], "responses": [] }"#,
+                    )),
+                    ..Default::default()
+                };
+                central_body(ui, &mut undescribed, true);
+
+                state.editing = true;
+                if let Some(model) = state.model.as_mut() {
+                    model.name = "renamed".to_owned();
+                }
+                assert!(state.has_unsaved_edits());
+                central_body(ui, &mut state, true);
+
+                let mut empty = ContractsState {
+                    model: Some(model_from(
+                        r#"{ "name": "none", "method": "GET", "url": "https://example.com", "headers": [], "responses": [] }"#,
+                    )),
+                    ..Default::default()
+                };
+                central_body(ui, &mut empty, true);
+
+                let mut classes = ContractsState {
+                    model: Some(model_from(
+                        r#"{ "name": "classes", "method": "GET", "url": "https://example.com", "headers": [],
+                            "responses": [ { "code": 200, "description": "ok" }, { "code": 301, "description": "moved" },
+                                           { "code": 404, "description": "not found" }, { "code": 500, "description": "boom" } ] }"#,
+                    )),
+                    ..Default::default()
+                };
+                central_body(ui, &mut classes, true);
+                classes.editing = true;
+                classes.resp_tab = 2;
+                central_body(ui, &mut classes, true);
+            });
+        }
+    }
 }

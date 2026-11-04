@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use apic_core::edit::EditModel;
+use apic_core::edit::{EditAction, EditModel, Field, apply};
 use apic_core::json::method_str;
 
 use crate::features::contracts::data::files;
@@ -22,17 +22,6 @@ pub(crate) struct Repair {
     pub(crate) error: String,
 }
 
-/// The active tab in the left pane. Response lives permanently in the right
-/// pane, so it is not a variant here.
-#[derive(Clone, Copy, PartialEq, Default)]
-pub(crate) enum MainTab {
-    #[default]
-    Overview,
-    Headers,
-    Query,
-    Request,
-}
-
 /// The active sub-tab inside the Response tab.
 #[derive(Clone, Copy, PartialEq, Default)]
 pub(crate) enum RespTab {
@@ -45,8 +34,8 @@ pub(crate) enum RespTab {
 /// feature may read or write it.
 ///
 /// Deriving `Default` is correct here: every field's initial value is its
-/// type's default, and `MainTab`/`RespTab` carry `#[default]` on the variants
-/// the app starts on (`Overview` and `Body`).
+/// type's default, and `RespTab` carries `#[default]` on the variant the app
+/// starts on (`Body`).
 #[derive(Default)]
 pub(crate) struct ContractsState {
     pub(crate) entries: Vec<Entry>,
@@ -59,9 +48,6 @@ pub(crate) struct ContractsState {
     /// Whether the contract filter field is shown. Hiding it clears `search`, so no rows stay filtered without a visible field.
     pub(crate) search_open: bool,
     pub(crate) resp_tab: usize,
-
-    /// The active top-level editor tab; reset to [`MainTab::Overview`] on load.
-    pub(crate) main_tab: MainTab,
 
     /// The active sub-tab inside the Response tab; reset to [`RespTab::Body`].
     pub(crate) resp_tab_view: RespTab,
@@ -85,6 +71,9 @@ pub(crate) struct ContractsState {
     /// Index into `templates` of the template to seed a new request from, used
     /// only when more than one template exists (the dialog shows a chooser).
     pub(crate) new_request_seed: usize,
+
+    /// The new-example popup's code and name buffers while it is open.
+    pub(crate) new_example: Option<(String, String)>,
 
     /// When `Some`, the delete-confirmation dialog is open for this target.
     pub(crate) pending_delete: Option<DeleteTarget>,
@@ -119,11 +108,15 @@ pub(crate) enum ContractsAction {
     CreateRequest,
     /// Create what the new-template dialog holds.
     CreateTemplate,
+    /// Open the new-example popup.
+    OpenNewExample,
+    /// Add the example the popup holds and select it.
+    CreateExample,
     /// Ask to delete something, shows a confirmation first.
     RequestDelete(DeleteTarget),
     /// The pending delete was confirmed.
     ConfirmDelete,
-    /// Close whichever of the new-request, new-template or delete dialogs is open.
+    /// Close whichever of the new-request, new-template, new-example or delete dialogs is open.
     CancelDialog,
     /// Enter edit mode, or leave it restoring the pre-edit model.
     ToggleEdit,
@@ -268,6 +261,10 @@ impl ContractsState {
                 let name = self.new_template.take().unwrap_or_default();
                 self.create_template(&name, paths, &mut events);
             }
+            ContractsAction::OpenNewExample => {
+                self.new_example = Some((String::new(), String::new()));
+            }
+            ContractsAction::CreateExample => self.create_example(),
             ContractsAction::RequestDelete(target) => self.pending_delete = Some(target),
             ContractsAction::ConfirmDelete => {
                 if let Some(target) = self.pending_delete.take() {
@@ -277,6 +274,7 @@ impl ContractsState {
             ContractsAction::CancelDialog => {
                 self.new_request = None;
                 self.new_template = None;
+                self.new_example = None;
                 self.pending_delete = None;
             }
             ContractsAction::ToggleEdit => {
@@ -291,6 +289,32 @@ impl ContractsState {
             ContractsAction::ToggleSearch => self.toggle_search(),
         }
         events
+    }
+
+    /// Adds the response the new-example popup holds and selects it. A code
+    /// that is not exactly three ASCII digits, or no open model, leaves the
+    /// popup open and changes nothing.
+    fn create_example(&mut self) {
+        let Some((code, name)) = self.new_example.take() else {
+            return;
+        };
+        let valid = code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit());
+        let Some(model) = self.model.as_mut().filter(|_| valid) else {
+            self.new_example = Some((code, name));
+            return;
+        };
+        apply(
+            model,
+            &EditAction::Add {
+                field: Field::ResponseAdd,
+            },
+        );
+        let index = model.responses.len().saturating_sub(1);
+        if let Some(response) = model.responses.last_mut() {
+            response.code = code;
+            response.description = name.trim().to_string();
+        }
+        self.resp_tab = index;
     }
 
     /// Enter edit mode, snapshotting the current model so the edits can be
@@ -340,7 +364,6 @@ impl ContractsState {
                 self.selected = Some(i);
                 self.selected_template = None;
                 self.resp_tab = 0;
-                self.main_tab = MainTab::Overview;
                 self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
@@ -371,7 +394,6 @@ impl ContractsState {
                 self.selected = None;
                 self.selected_template = Some(i);
                 self.resp_tab = 0;
-                self.main_tab = MainTab::Overview;
                 self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
@@ -672,5 +694,66 @@ mod tests {
         assert!(events.contains(&ContractsEvent::Status(format!("saved {}", path.display()))));
         assert!(!state.editing);
         assert!(state.original_model.is_none());
+    }
+
+    /// A state with `sample.json` loaded.
+    fn loaded() -> (ContractsState, ContractsPaths) {
+        let paths = project();
+        let mut state = ContractsState::default();
+        state.reload(&paths);
+        let i = entry(&state, "sample.json");
+        state.handle(ContractsAction::Load(i), Some(&paths));
+        (state, paths)
+    }
+
+    #[test]
+    fn new_example_adds_and_selects_it() {
+        let (mut state, paths) = loaded();
+        state.handle(ContractsAction::OpenNewExample, Some(&paths));
+        state.new_example = Some(("404".to_string(), "Not found".to_string()));
+
+        state.handle(ContractsAction::CreateExample, Some(&paths));
+
+        let model = state.model.as_ref().expect("contract is open");
+        let last = model.responses.last().expect("a response was added");
+        assert_eq!(last.code, "404");
+        assert_eq!(last.description, "Not found");
+        assert_eq!(state.resp_tab, model.responses.len() - 1);
+        assert!(state.new_example.is_none());
+    }
+
+    #[test]
+    fn new_example_with_a_bad_code_changes_nothing() {
+        let (mut state, paths) = loaded();
+        let before = state
+            .model
+            .as_ref()
+            .expect("contract is open")
+            .responses
+            .len();
+        state.handle(ContractsAction::OpenNewExample, Some(&paths));
+        state.new_example = Some(("40".to_string(), "Short".to_string()));
+
+        state.handle(ContractsAction::CreateExample, Some(&paths));
+
+        let after = state
+            .model
+            .as_ref()
+            .expect("contract is open")
+            .responses
+            .len();
+        assert_eq!(after, before);
+        assert!(state.new_example.is_some());
+    }
+
+    #[test]
+    fn cancel_dialog_closes_the_new_example_popup() {
+        let (mut state, paths) = loaded();
+        state.handle(ContractsAction::OpenNewExample, Some(&paths));
+        assert!(state.new_example.is_some());
+
+        state.handle(ContractsAction::CancelDialog, Some(&paths));
+
+        assert!(state.new_example.is_none());
     }
 }
