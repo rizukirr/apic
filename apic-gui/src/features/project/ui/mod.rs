@@ -1,5 +1,4 @@
-//! Project feature presentation: the view model in `state` and the rendering
-//! in `view`.
+//! Project feature presentation: the view model in `state`. The project
+//! menu itself is drawn by the app bar.
 
 pub(crate) mod state;
-pub(crate) mod view;

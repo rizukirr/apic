@@ -6,7 +6,7 @@
 //! - `domain`: what a picked folder means, as a pure decision. No
 //!   filesystem, process, thread or egui.
 //! - `data`: the native pickers and the project files on disk. No egui.
-//! - `ui`: the view model (`ui::state`) and the rendering (`ui::view`).
+//! - `ui`: the view model (`ui::state`). The app bar draws the project menu.
 //!
 //! No module here imports `crate::features::contracts`,
 //! `crate::features::git` or `crate::app` outside its tests. The

@@ -1,5 +1,5 @@
 //! State owned by the project feature: where the active project lives, the
-//! in-flight file dialog, and the folder that could not be opened.
+//! in-flight file dialog.
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
@@ -7,7 +7,7 @@ use std::sync::mpsc::Receiver;
 use eframe::egui;
 
 use crate::features::project::data::{self, PickKind};
-use crate::features::project::domain::{OpenDecision, open_decision};
+use crate::features::project::domain::open_refusal;
 
 /// Everything the project feature owns. `App` holds one of these; no other
 /// feature may read or write it.
@@ -27,13 +27,9 @@ pub(crate) struct ProjectState {
     /// In-flight native file dialog, run on a background thread so the portal
     /// call never blocks the UI, plus the action to perform on its result.
     pub(crate) pending: Option<(PickKind, Receiver<Option<PathBuf>>)>,
-
-    /// When `Some`, a modal listing contracts that must be fixed before the
-    /// picked non-project folder can be opened/initialized.
-    pub(crate) open_blocked: Option<Vec<(PathBuf, String)>>,
 }
 
-/// A one-shot action from the project menu or the blocked-folder dialog.
+/// A one-shot action from the project menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProjectAction {
     /// `[ Open ]`: launch the folder picker.
@@ -42,8 +38,6 @@ pub(crate) enum ProjectAction {
     New,
     /// `[ Import ]` → Postman: launch the file picker.
     ImportPostman,
-    /// Close the blocked-folder dialog.
-    CloseBlocked,
 }
 
 /// Something a project action asks the app shell to do.
@@ -58,7 +52,7 @@ pub(crate) enum ProjectEvent {
 }
 
 impl ProjectState {
-    /// Applies one action from the project menu or the blocked dialog.
+    /// Applies one action from the project menu.
     ///
     /// # Arguments
     ///
@@ -81,10 +75,6 @@ impl ProjectState {
                     return vec![ProjectEvent::Status("no project to import into".into())];
                 }
                 self.start_pick(PickKind::ImportPostman, ctx)
-            }
-            ProjectAction::CloseBlocked => {
-                self.open_blocked = None;
-                Vec::new()
             }
         }
     }
@@ -129,25 +119,13 @@ impl ProjectState {
         }
     }
 
-    /// Verify a chosen folder, then open / auto-init / block.
+    /// Opens a chosen folder when it is already a project, otherwise
+    /// refuses with a status message and leaves the open project as it is.
     pub(crate) fn finish_open(&mut self, folder: PathBuf) -> Vec<ProjectEvent> {
-        let has_config = data::has_config(&folder);
-        // No project: validate the folder's contracts before auto-initializing.
-        let failures = if has_config {
-            Vec::new()
-        } else {
-            data::validate(&folder)
-        };
-        match open_decision(has_config, failures) {
-            OpenDecision::Open => self.activate(folder),
-            OpenDecision::Init => match data::init(&folder) {
-                Ok(()) => self.activate(folder),
-                Err(e) => vec![ProjectEvent::Status(format!("init error: {e}"))],
-            },
-            OpenDecision::Blocked(failures) => {
-                self.open_blocked = Some(failures);
-                Vec::new()
-            }
+        let location = apic_core::file::home_relative(&apic_core::file::to_slash(&folder));
+        match open_refusal(data::has_config(&folder), &location) {
+            Some(refusal) => vec![ProjectEvent::Status(refusal)],
+            None => self.activate(folder),
         }
     }
 
@@ -220,28 +198,25 @@ mod tests {
     use crate::app::test_support::{git_available, project_fixture, tempdir};
 
     #[test]
-    fn opening_an_invalid_folder_blocks_it() {
+    fn opening_a_folder_without_apic_is_refused() {
         let folder = tempdir();
-        std::fs::write(folder.join("broken.json"), "{ not json").unwrap();
-        let mut state = ProjectState::default();
+        std::fs::write(folder.join("contract.json"), "{}").unwrap();
+        let open = PathBuf::from("/already/open");
+        let mut state = ProjectState {
+            project_root: Some(open.clone()),
+            ..ProjectState::default()
+        };
 
         let events = state.finish_open(folder.clone());
 
         assert!(
-            events.is_empty(),
-            "a blocked folder reports nothing: {events:?}"
+            matches!(events.as_slice(), [ProjectEvent::Status(s)] if s.starts_with("Not an apic project")),
+            "a non-project folder is refused with a status: {events:?}"
         );
-        assert!(
-            state.project_root.is_none(),
-            "a blocked folder is not opened"
-        );
-        assert!(
-            state.open_blocked.as_ref().is_some_and(|f| !f.is_empty()),
-            "the invalid contract must be listed"
-        );
+        assert_eq!(state.project_root, Some(open), "the open project stays");
         assert!(
             !folder.join(".apic").exists(),
-            "a blocked folder must not be initialized"
+            "Open must never initialize a folder"
         );
     }
 
@@ -257,6 +232,5 @@ mod tests {
 
         assert_eq!(events, vec![ProjectEvent::Opened(root.clone())]);
         assert_eq!(state.project_root, Some(root));
-        assert!(state.open_blocked.is_none());
     }
 }

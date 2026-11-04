@@ -62,12 +62,6 @@ pub(crate) fn has_config(folder: &Path) -> bool {
     folder.join(".apic").join("config.toml").is_file()
 }
 
-/// Validates every contract under `folder`, returning each invalid file with
-/// its error. Empty when all are valid.
-pub(crate) fn validate(folder: &Path) -> Vec<(PathBuf, String)> {
-    apic_core::validate_dir(folder)
-}
-
 /// Initializes a project in `folder`.
 ///
 /// # Errors

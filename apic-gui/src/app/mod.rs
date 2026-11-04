@@ -24,7 +24,6 @@ use crate::features::contracts::ui::view::{
 use crate::features::git::ui::state::{GitAction, GitEvent, GitState};
 use crate::features::git::ui::view;
 use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
-use crate::features::project::ui::view::blocked_dialog;
 use crate::settings::Settings;
 use crate::ui::components::{icon_button, section_header};
 use crate::ui::theme::*;
@@ -536,9 +535,6 @@ impl eframe::App for App {
         }
         if let Some(a) = crate::features::contracts::ui::view::dialogs(&ctx, &mut self.contracts) {
             self.handle_contracts(a, &ctx);
-        }
-        if let Some(a) = blocked_dialog(&ctx, &self.project) {
-            self.apply(Action::Project(a), &ctx);
         }
     }
 }
