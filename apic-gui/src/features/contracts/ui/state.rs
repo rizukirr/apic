@@ -22,17 +22,6 @@ pub(crate) struct Repair {
     pub(crate) error: String,
 }
 
-/// The active tab in the left pane. Response lives permanently in the right
-/// pane, so it is not a variant here.
-#[derive(Clone, Copy, PartialEq, Default)]
-pub(crate) enum MainTab {
-    #[default]
-    Overview,
-    Headers,
-    Query,
-    Request,
-}
-
 /// The active sub-tab inside the Response tab.
 #[derive(Clone, Copy, PartialEq, Default)]
 pub(crate) enum RespTab {
@@ -45,8 +34,8 @@ pub(crate) enum RespTab {
 /// feature may read or write it.
 ///
 /// Deriving `Default` is correct here: every field's initial value is its
-/// type's default, and `MainTab`/`RespTab` carry `#[default]` on the variants
-/// the app starts on (`Overview` and `Body`).
+/// type's default, and `RespTab` carries `#[default]` on the variant the app
+/// starts on (`Body`).
 #[derive(Default)]
 pub(crate) struct ContractsState {
     pub(crate) entries: Vec<Entry>,
@@ -59,9 +48,6 @@ pub(crate) struct ContractsState {
     /// Whether the contract filter field is shown. Hiding it clears `search`, so no rows stay filtered without a visible field.
     pub(crate) search_open: bool,
     pub(crate) resp_tab: usize,
-
-    /// The active top-level editor tab; reset to [`MainTab::Overview`] on load.
-    pub(crate) main_tab: MainTab,
 
     /// The active sub-tab inside the Response tab; reset to [`RespTab::Body`].
     pub(crate) resp_tab_view: RespTab,
@@ -378,7 +364,6 @@ impl ContractsState {
                 self.selected = Some(i);
                 self.selected_template = None;
                 self.resp_tab = 0;
-                self.main_tab = MainTab::Overview;
                 self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
@@ -409,7 +394,6 @@ impl ContractsState {
                 self.selected = None;
                 self.selected_template = Some(i);
                 self.resp_tab = 0;
-                self.main_tab = MainTab::Overview;
                 self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;

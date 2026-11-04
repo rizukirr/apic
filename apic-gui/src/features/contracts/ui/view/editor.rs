@@ -72,40 +72,57 @@ pub(super) fn url_layout_job(url: &str, p: &Palette, font: egui::FontId) -> egui
 const FOCUS_QUERY: &str = "apic.focus.query";
 const FOCUS_HEADER: &str = "apic.focus.header";
 
-/// The endpoint name, rendered inline on the toolbar row (left of EDIT/SAVE).
-/// Editable frameless heading in edit mode; a heading label otherwise.
-pub(super) fn endpoint_name(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+/// The endpoint title on the toolbar row: the name in bold, then `: ` and the
+/// description when it is not blank, both at body size and truncated to the
+/// available width. In edit mode the name and description are two frameless
+/// single-line fields separated by a `:` label.
+pub(super) fn endpoint_title(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     let p = palette(ui.ctx());
     if editing {
-        ui.add(
-            egui::TextEdit::singleline(&mut model.name)
-                .frame(egui::Frame::NONE)
-                .hint_text("endpoint name")
-                .font(egui::TextStyle::Heading)
-                .text_color(p.on_surface)
-                .desired_width(f32::INFINITY),
-        );
-    } else {
-        ui.label(RichText::new(&model.name).color(p.on_surface).heading());
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut model.name)
+                    .frame(egui::Frame::NONE)
+                    .hint_text("endpoint name")
+                    .font(font)
+                    .text_color(p.on_surface)
+                    .desired_width(120.0)
+                    .clip_text(false),
+            );
+            ui.label(RichText::new(":").color(p.on_surface));
+            ui.add(
+                egui::TextEdit::singleline(&mut model.description)
+                    .frame(egui::Frame::NONE)
+                    .hint_text("description")
+                    .text_color(p.on_surface)
+                    .desired_width(f32::INFINITY),
+            );
+        });
+        return;
     }
-}
-
-/// The endpoint description, shown under the name/url row. Frameless multiline in
-/// edit mode; dim text otherwise (hidden when empty in view mode).
-pub(super) fn endpoint_description(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
-    let p = palette(ui.ctx());
-    if editing {
-        ui.add(
-            egui::TextEdit::multiline(&mut model.description)
-                .frame(egui::Frame::NONE)
-                .hint_text("description")
-                .text_color(p.on_surface_variant)
-                .desired_rows(2)
-                .desired_width(f32::INFINITY),
+    let style = ui.style().clone();
+    let mut job = egui::text::LayoutJob::default();
+    RichText::new(&model.name)
+        .strong()
+        .color(p.on_surface)
+        .append_to(
+            &mut job,
+            &style,
+            egui::FontSelection::Default,
+            egui::Align::Center,
         );
-    } else if !model.description.is_empty() {
-        ui.label(RichText::new(&model.description).color(p.on_surface_variant));
+    if !model.description.trim().is_empty() {
+        RichText::new(format!(": {}", model.description))
+            .color(p.on_surface)
+            .append_to(
+                &mut job,
+                &style,
+                egui::FontSelection::Default,
+                egui::Align::Center,
+            );
     }
+    ui.add(egui::Label::new(job).truncate());
 }
 
 /// The `[ METHOD ] [ url................ ]` top row.
@@ -695,8 +712,8 @@ mod tests {
                 .unwrap();
                 let mut m = EditModel::from_contract(c);
                 let mut resp = 0usize;
-                endpoint_name(ui, &mut m, true);
-                endpoint_description(ui, &mut m, true);
+                endpoint_title(ui, &mut m, true);
+                endpoint_title(ui, &mut m, false);
                 method_url_row(ui, &mut m, true);
                 headers(ui, &mut m, true);
                 headers(ui, &mut m, false);

@@ -5,10 +5,10 @@ use eframe::egui;
 use egui::RichText;
 
 use super::editor::{
-    endpoint_description, endpoint_name, headers, method_url_row, query_section, request_body,
-    response_body, response_fields, response_headers, response_picker,
+    endpoint_title, headers, method_url_row, query_section, request_body, response_body,
+    response_fields, response_headers, response_picker,
 };
-use crate::features::contracts::ui::state::{ContractsAction, ContractsState, MainTab, RespTab};
+use crate::features::contracts::ui::state::{ContractsAction, ContractsState, RespTab};
 use crate::ui::components::{Tab, empty_state, icon_button, tab_strip, text_button};
 use crate::ui::theme::*;
 
@@ -40,7 +40,6 @@ pub(crate) fn central_body(
         model,
         editing,
         resp_tab,
-        main_tab,
         resp_tab_view,
         repair,
         entries,
@@ -122,7 +121,7 @@ pub(crate) fn central_body(
             // The name fills the space to the left of the buttons.
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.add_space(SPACE_SMALL); // start padding, left of the name
-                endpoint_name(ui, model, *editing);
+                endpoint_title(ui, model, *editing);
             });
         });
     });
@@ -132,9 +131,6 @@ pub(crate) fn central_body(
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
-            method_url_row(ui, model, *editing);
-            ui.add_space(12.0);
-
             // Request tabs in a resizable left pane, Response in the rest.
             // The panel paints its divider with the parent's noninteractive
             // stroke, so that stroke is swapped only around the panel.
@@ -152,29 +148,22 @@ pub(crate) fn central_body(
                 }))
                 .show(ui, |left| {
                     left.visuals_mut().widgets.noninteractive.bg_stroke = saved_stroke;
-                    let mut idx = main_tab_index(*main_tab);
-                    tab_strip(
-                        left,
-                        &mut idx,
-                        &[
-                            Tab::new("Overview"),
-                            Tab::new("Headers").count(model.headers.len()),
-                            Tab::new("Query").count(model.query.len()),
-                            Tab::new("Request"),
-                        ],
-                    );
-                    *main_tab = main_tab_at(idx);
-                    left.add_space(8.0);
+                    method_url_row(left, model, *editing);
+                    left.add_space(12.0);
                     // One scroll per pane (distinct id) so the left
                     // and right panes scroll independently.
                     egui::ScrollArea::vertical()
                         .id_salt("left_pane_scroll")
                         .auto_shrink([false, false])
-                        .show(left, |ui| match *main_tab {
-                            MainTab::Overview => endpoint_description(ui, model, *editing),
-                            MainTab::Headers => headers(ui, model, *editing),
-                            MainTab::Query => query_section(ui, model, *editing),
-                            MainTab::Request => request_body(ui, model, *editing),
+                        .show(left, |ui| {
+                            section_heading(ui, "Headers", model.headers.len());
+                            headers(ui, model, *editing);
+                            ui.add_space(16.0);
+                            section_heading(ui, "Query", model.query.len());
+                            query_section(ui, model, *editing);
+                            ui.add_space(16.0);
+                            section_heading(ui, "Request", 0);
+                            request_body(ui, model, *editing);
                         });
                 });
             ui.visuals_mut().widgets.noninteractive.bg_stroke = saved_stroke;
@@ -259,24 +248,22 @@ fn response_pane(
     action
 }
 
-/// The [`tab_strip`] index of a left-pane tab.
-fn main_tab_index(tab: MainTab) -> usize {
-    match tab {
-        MainTab::Overview => 0,
-        MainTab::Headers => 1,
-        MainTab::Query => 2,
-        MainTab::Request => 3,
-    }
-}
-
-/// The left-pane tab at a [`tab_strip`] index.
-fn main_tab_at(idx: usize) -> MainTab {
-    match idx {
-        1 => MainTab::Headers,
-        2 => MainTab::Query,
-        3 => MainTab::Request,
-        _ => MainTab::Overview,
-    }
+/// A left-pane section heading: `label` in bold, then `count` in a smaller
+/// size when it is not zero, both in `on_surface_variant`.
+fn section_heading(ui: &mut egui::Ui, label: &str, count: usize) {
+    let p = palette(ui.ctx());
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(label).strong().color(p.on_surface_variant));
+        if count > 0 {
+            let size = egui::TextStyle::Body.resolve(ui.style()).size * 0.75;
+            ui.label(
+                RichText::new(count.to_string())
+                    .size(size)
+                    .color(p.on_surface_variant),
+            );
+        }
+    });
+    ui.add_space(6.0);
 }
 
 /// The [`tab_strip`] index of a response sub-tab.
@@ -330,6 +317,23 @@ mod tests {
                 state.model = Some(sample_model());
                 state.original_model = state.model.clone();
                 central_body(ui, &mut state, true);
+
+                let mut described = ContractsState {
+                    model: Some(model_from(
+                        r#"{ "name": "Login", "description": "Authenticate the user", "method": "POST",
+                            "url": "{{baseUrl}}/auth/login", "headers": [], "responses": [] }"#,
+                    )),
+                    ..Default::default()
+                };
+                central_body(ui, &mut described, true);
+                let mut undescribed = ContractsState {
+                    model: Some(model_from(
+                        r#"{ "name": "Login", "description": "", "method": "POST",
+                            "url": "{{baseUrl}}/auth/login", "headers": [], "responses": [] }"#,
+                    )),
+                    ..Default::default()
+                };
+                central_body(ui, &mut undescribed, true);
 
                 state.editing = true;
                 if let Some(model) = state.model.as_mut() {
