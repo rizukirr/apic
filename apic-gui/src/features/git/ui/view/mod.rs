@@ -21,7 +21,7 @@ use crate::features::git::domain::diff as domain_diff;
 use crate::features::git::domain::status::{Status, split_conflicts};
 use crate::features::git::ui::state::GitAction;
 use crate::features::git::ui::state::GitState;
-use crate::ui::components::{empty_state, text_button};
+use crate::ui::components::{ButtonKind, DialogButton, dialog, empty_state, text_button};
 use crate::ui::theme::*;
 
 /// What the Git section header should render, decided purely from a `Status`: the label
@@ -214,44 +214,30 @@ fn amend_pushed_dialog(ctx: &egui::Context, state: &GitState) -> Option<GitActio
     }
     let p = palette(ctx);
     let upstream = state.amend_pushed_to.as_deref().unwrap_or("the remote");
-    let mut action = None;
-    let modal = egui::Modal::new(egui::Id::new("amend_pushed_modal"))
-        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
-        .show(ctx, |ui| {
-            ui.set_min_width(320.0);
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("Amend pushed commit")
-                        .color(p.warning)
-                        .strong()
-                        .size(16.0),
-                );
-            });
-            ui.add_space(SPACE_MEDIUM);
+    let outcome = dialog(
+        ctx,
+        "amend_pushed_modal",
+        "Amend pushed commit",
+        |ui| {
             ui.label(
                 RichText::new(format!(
                     "This commit is already on {upstream}. Amending it rewrites history, so you will need to force push."
                 ))
                 .color(p.on_surface_variant),
             );
-            ui.add_space(SPACE_LARGE);
-            ui.columns(2, |cols| {
-                cols[0].vertical_centered(|ui| {
-                    if text_button(ui, "Amend", p.warning) {
-                        action = Some(GitAction::ConfirmAmend);
-                    }
-                });
-                cols[1].vertical_centered(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        action = Some(GitAction::CancelAmend);
-                    }
-                });
-            });
-        });
-    if action.is_none() && modal.should_close() {
-        action = Some(GitAction::CancelAmend);
+        },
+        &[
+            DialogButton::new("Cancel", ButtonKind::Secondary),
+            DialogButton::new("Amend", ButtonKind::Danger),
+        ],
+    );
+    if outcome.clicked == Some(1) {
+        Some(GitAction::ConfirmAmend)
+    } else if outcome.clicked == Some(0) || outcome.closed {
+        Some(GitAction::CancelAmend)
+    } else {
+        None
     }
-    action
 }
 
 /// The central body for the Git section: the diff view once selected, an empty

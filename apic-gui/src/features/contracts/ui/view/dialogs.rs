@@ -6,7 +6,7 @@ use egui::RichText;
 
 use crate::features::contracts::domain::entry::DeleteTarget;
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState};
-use crate::ui::components::{bordered_input, text_button};
+use crate::ui::components::{ButtonKind, DialogButton, bordered_input, detail_box, dialog};
 use crate::ui::focus::take_pending_focus;
 use crate::ui::theme::*;
 
@@ -37,49 +37,29 @@ pub(crate) fn dialogs(ctx: &egui::Context, state: &mut ContractsState) -> Option
 /// Renders the "new template" dialog when open, and returns what was chosen.
 fn new_template_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<ContractsAction> {
     let p = palette(ctx);
-    state.new_template.as_ref()?;
-    let mut create = false;
-    let mut cancel = false;
-    let modal = egui::Modal::new(egui::Id::new("new_template_modal"))
-        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
-        .show(ctx, |ui| {
-            ui.set_min_width(320.0);
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("NEW TEMPLATE")
-                        .color(p.primary)
-                        .strong()
-                        .size(16.0),
-                );
-            });
-            ui.add_space(SPACE_SMALL);
+    let buf = state.new_template.as_mut()?;
+    let mut enter = false;
+    let outcome = dialog(
+        ctx,
+        "new_template_modal",
+        "New template",
+        |ui| {
             ui.label(RichText::new("template name").color(p.on_surface_variant));
-            ui.add_space(SPACE_MEDIUM);
-            let buf = state.new_template.as_mut().expect("dialog open");
+            ui.add_space(SPACE_SMALL);
             let resp = bordered_input(ui, buf, f32::INFINITY, "");
             // Drop the caret into the input the frame the dialog opens.
             take_pending_focus(ui, FOCUS_NEW_TEMPLATE, "open", &resp);
             // Submit on Enter, same as clicking Create.
-            if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                create = true;
-            }
-            ui.add_space(SPACE_LARGE);
-            ui.columns(2, |cols| {
-                cols[0].vertical_centered(|ui| {
-                    if text_button(ui, "Create", p.primary) {
-                        create = true;
-                    }
-                });
-                cols[1].vertical_centered(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            });
-        });
-    if create {
+            enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        },
+        &[
+            DialogButton::new("Cancel", ButtonKind::Secondary),
+            DialogButton::new("Create", ButtonKind::Primary),
+        ],
+    );
+    if enter || outcome.clicked == Some(1) {
         Some(ContractsAction::CreateTemplate)
-    } else if cancel || modal.should_close() {
+    } else if outcome.clicked == Some(0) || outcome.closed {
         Some(ContractsAction::CancelDialog)
     } else {
         None
@@ -90,33 +70,22 @@ fn new_template_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Optio
 fn new_request_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<ContractsAction> {
     let p = palette(ctx);
     state.new_request.as_ref()?;
-    let mut create = false;
-    let mut cancel = false;
-    let modal = egui::Modal::new(egui::Id::new("new_request_modal"))
-        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
-        .show(ctx, |ui| {
-            ui.set_min_width(320.0);
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("New request")
-                        .color(p.primary)
-                        .strong()
-                        .size(16.0),
-                );
-            });
-            ui.add_space(SPACE_SMALL);
+    let mut enter = false;
+    let outcome = dialog(
+        ctx,
+        "new_request_modal",
+        "New request",
+        |ui| {
             ui.label(
                 RichText::new("path under the contracts directory").color(p.on_surface_variant),
             );
-            ui.add_space(SPACE_MEDIUM);
+            ui.add_space(SPACE_SMALL);
             let buf = state.new_request.as_mut().expect("dialog open");
             let resp = bordered_input(ui, buf, f32::INFINITY, "");
             // Drop the caret into the input the frame the dialog opens.
             take_pending_focus(ui, FOCUS_NEW_REQUEST, "open", &resp);
             // Submit on Enter, same as clicking Create.
-            if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                create = true;
-            }
+            enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.add_space(SPACE_EXTRA_SMALL);
             ui.label(
                 RichText::new(
@@ -147,24 +116,15 @@ fn new_request_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option
                         });
                 });
             }
-
-            ui.add_space(SPACE_LARGE);
-            ui.columns(2, |cols| {
-                cols[0].vertical_centered(|ui| {
-                    if text_button(ui, "Create", p.primary) {
-                        create = true;
-                    }
-                });
-                cols[1].vertical_centered(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            });
-        });
-    if create {
+        },
+        &[
+            DialogButton::new("Cancel", ButtonKind::Secondary),
+            DialogButton::new("Create", ButtonKind::Primary),
+        ],
+    );
+    if enter || outcome.clicked == Some(1) {
         Some(ContractsAction::CreateRequest)
-    } else if cancel || modal.should_close() {
+    } else if outcome.clicked == Some(0) || outcome.closed {
         Some(ContractsAction::CancelDialog)
     } else {
         None
@@ -179,21 +139,15 @@ fn new_example_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option
         return None;
     };
     let p = palette(ctx);
-    let mut create = false;
-    let mut cancel = false;
-    let modal = egui::Modal::new(egui::Id::new("new_example_modal"))
-        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
-        .show(ctx, |ui| {
-            ui.set_min_width(320.0);
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("New example")
-                        .color(p.primary)
-                        .strong()
-                        .size(16.0),
-                );
-            });
-            ui.add_space(SPACE_MEDIUM);
+    // The footer is built before the body edits the code, so Add's enabled
+    // state follows the code as it stood at the start of this frame.
+    let add_enabled = code.len() == 3;
+    let mut enter = false;
+    let outcome = dialog(
+        ctx,
+        "new_example_modal",
+        "New example",
+        |ui| {
             let code_resp = ui
                 .horizontal(|ui| {
                     ui.label(RichText::new("Code").color(p.on_surface_variant));
@@ -214,31 +168,26 @@ fn new_example_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option
                 code_resp.request_focus();
                 ui.data_mut(|d| d.insert_temp(focused_id, true));
             }
-            let valid = code.len() == 3;
-            // Submit on Enter in either field, same as clicking OK.
-            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if valid && enter && (code_resp.lost_focus() || name_resp.lost_focus()) {
-                create = true;
-            }
-            ui.add_space(SPACE_LARGE);
-            ui.columns(2, |cols| {
-                cols[0].vertical_centered(|ui| {
-                    ui.add_enabled_ui(valid, |ui| {
-                        if text_button(ui, "OK", p.primary) {
-                            create = true;
-                        }
-                    });
-                });
-                cols[1].vertical_centered(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            });
-        });
-    if create {
+            // Submit on Enter in either field, same as clicking Add.
+            enter = ui.input(|i| i.key_pressed(egui::Key::Enter))
+                && (code_resp.lost_focus() || name_resp.lost_focus());
+        },
+        &[
+            DialogButton::new("Cancel", ButtonKind::Secondary),
+            DialogButton {
+                label: "Add",
+                kind: ButtonKind::Primary,
+                enabled: add_enabled,
+            },
+        ],
+    );
+    let valid = state
+        .new_example
+        .as_ref()
+        .is_some_and(|(code, _)| code.len() == 3);
+    if valid && (enter || outcome.clicked == Some(1)) {
         Some(ContractsAction::CreateExample)
-    } else if cancel || modal.should_close() {
+    } else if outcome.clicked == Some(0) || outcome.closed {
         Some(ContractsAction::CancelDialog)
     } else {
         None
@@ -258,18 +207,19 @@ fn delete_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<Cont
         ),
         DeleteTarget::Template { name, .. } => ("template", name.clone(), false),
     };
-    let mut confirm = false;
-    let mut cancel = false;
-    let modal = egui::Modal::new(egui::Id::new("delete_modal"))
-        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
-        .show(ctx, |ui| {
-            ui.set_min_width(320.0);
-            ui.vertical_centered(|ui| {
-                ui.label(RichText::new("DELETE").color(p.error).strong().size(16.0));
+    let outcome = dialog(
+        ctx,
+        "delete_modal",
+        &format!("Delete {what}"),
+        |ui| {
+            ui.label(
+                RichText::new(format!("Are you sure you want to delete this {what}?"))
+                    .color(p.on_surface),
+            );
+            ui.add_space(SPACE_SMALL);
+            detail_box(ui, |ui| {
+                ui.label(RichText::new(&name).color(p.on_surface).strong());
             });
-            ui.add_space(SPACE_MEDIUM);
-            ui.label(RichText::new(format!("Delete {what}")).color(p.on_surface_variant));
-            ui.label(RichText::new(&name).color(p.on_surface).strong());
             if folder_warn {
                 ui.add_space(SPACE_EXTRA_SMALL);
                 ui.label(
@@ -278,23 +228,15 @@ fn delete_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<Cont
                         .size(10.0),
                 );
             }
-            ui.add_space(SPACE_LARGE);
-            ui.columns(2, |cols| {
-                cols[0].vertical_centered(|ui| {
-                    if text_button(ui, "Delete", p.error) {
-                        confirm = true;
-                    }
-                });
-                cols[1].vertical_centered(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            });
-        });
-    if confirm {
+        },
+        &[
+            DialogButton::new("Cancel", ButtonKind::Secondary),
+            DialogButton::new("Delete", ButtonKind::Danger),
+        ],
+    );
+    if outcome.clicked == Some(1) {
         Some(ContractsAction::ConfirmDelete)
-    } else if cancel || modal.should_close() {
+    } else if outcome.clicked == Some(0) || outcome.closed {
         Some(ContractsAction::CancelDialog)
     } else {
         None
@@ -312,44 +254,26 @@ fn unsaved_dialog(ctx: &egui::Context, state: &ContractsState) -> Option<Contrac
         .map(|m| m.name.trim())
         .filter(|n| !n.is_empty())
         .unwrap_or("This contract");
-    let mut chosen = None;
-    let modal = egui::Modal::new(egui::Id::new("unsaved_modal"))
-        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
-        .show(ctx, |ui| {
-            ui.set_min_width(320.0);
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("Unsaved changes")
-                        .color(p.primary)
-                        .strong()
-                        .size(16.0),
-                );
-            });
-            ui.add_space(SPACE_MEDIUM);
+    let outcome = dialog(
+        ctx,
+        "unsaved_modal",
+        "Unsaved changes",
+        |ui| {
             ui.label(RichText::new(format!("{name} has unsaved changes.")).color(p.on_surface));
-            ui.add_space(SPACE_LARGE);
-            ui.columns(3, |cols| {
-                cols[0].vertical_centered(|ui| {
-                    if text_button(ui, "Save", p.primary) {
-                        chosen = Some(ContractsAction::SaveAndContinue);
-                    }
-                });
-                cols[1].vertical_centered(|ui| {
-                    if text_button(ui, "Discard", p.error) {
-                        chosen = Some(ContractsAction::DiscardAndContinue);
-                    }
-                });
-                cols[2].vertical_centered(|ui| {
-                    if ui.button("Keep editing").clicked() {
-                        chosen = Some(ContractsAction::KeepEditing);
-                    }
-                });
-            });
-        });
-    if chosen.is_none() && modal.should_close() {
-        chosen = Some(ContractsAction::KeepEditing);
+        },
+        &[
+            DialogButton::new("Keep editing", ButtonKind::Secondary),
+            DialogButton::new("Discard", ButtonKind::SecondaryDanger),
+            DialogButton::new("Save", ButtonKind::Primary),
+        ],
+    );
+    match outcome.clicked {
+        Some(1) => Some(ContractsAction::DiscardAndContinue),
+        Some(2) => Some(ContractsAction::SaveAndContinue),
+        Some(_) => Some(ContractsAction::KeepEditing),
+        None if outcome.closed => Some(ContractsAction::KeepEditing),
+        None => None,
     }
-    chosen
 }
 
 #[cfg(test)]
