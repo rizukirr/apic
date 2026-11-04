@@ -5,7 +5,7 @@
 //! reaching into another feature's state.
 
 use crate::app::state::SidebarView;
-use crate::features::contracts::state::DeleteTarget;
+use crate::features::contracts::domain::entry::DeleteTarget;
 use crate::features::git::ui::state::GitAction;
 
 /// A one-shot action requested by the header or sidebar this frame.

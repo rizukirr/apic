@@ -5,15 +5,7 @@ use std::path::PathBuf;
 
 use apic_core::edit::EditModel;
 
-/// A discovered contract plus the lightweight summary shown in the sidebar.
-pub(crate) struct Entry {
-    pub(crate) path: PathBuf,
-    pub(crate) rel: String,
-    pub(crate) method: String,
-
-    /// Validation error when this contract is invalid; `None` when it is valid.
-    pub(crate) error: Option<String>,
-}
+use crate::features::contracts::domain::entry::{DeleteTarget, Entry};
 
 /// In-progress raw-JSON repair of an invalid contract.
 pub(crate) struct Repair {
@@ -25,16 +17,6 @@ pub(crate) struct Repair {
 
     /// Current validation error for `buffer` (empty once valid).
     pub(crate) error: String,
-}
-
-/// A thing the user asked to delete (pending confirmation).
-#[derive(Clone)]
-pub(crate) enum DeleteTarget {
-    /// A contract or folder, by path relative to the contracts root.
-    Contract { rel: String, is_dir: bool },
-
-    /// A template file in `.apic/template/`, by display name and absolute path.
-    Template { name: String, path: PathBuf },
 }
 
 /// The active tab in the left pane. Response lives permanently in the right

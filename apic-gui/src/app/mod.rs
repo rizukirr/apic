@@ -18,6 +18,7 @@ use egui::RichText;
 
 use crate::app::actions::{Action, SidebarAction};
 use crate::app::state::{CentralView, DialogKind, ShellState, SidebarView};
+use crate::features::contracts::data::files;
 use crate::features::contracts::state::ContractsState;
 use crate::features::contracts::view::{
     CentralOutcome, FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, header_actions,
@@ -340,7 +341,7 @@ impl App {
             }
         }
         if let Some((path, buffer)) = out.promote
-            && std::fs::write(&path, &buffer).is_ok()
+            && files::write(&path, &buffer).is_ok()
         {
             self.contracts.repair = None;
             self.reload_project();

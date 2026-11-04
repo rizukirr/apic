@@ -4,23 +4,17 @@
 //! spans both `shell` and `contracts`; keeping them here is what lets the two
 //! state structs stay unaware of each other.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use apic_core::edit::EditModel;
-use apic_core::json::method_str;
 use eframe::egui;
 
 use crate::app::App;
 use crate::app::state::{CentralView, DialogKind};
-use crate::features::contracts::state::{DeleteTarget, Entry, MainTab, Repair, RespTab};
+use crate::features::contracts::data::files;
+use crate::features::contracts::domain::entry::{DeleteTarget, display_location};
+use crate::features::contracts::domain::names::{request_target, template_file_name};
+use crate::features::contracts::state::{MainTab, Repair, RespTab};
 use crate::settings::Settings;
-
-/// Renders `path` with the home directory collapsed to `~` (forward-slashed),
-/// reusing `apic_core::file::{to_slash, home_relative}` so the footer matches the
-/// CLI and no logic is duplicated.
-fn display_location(path: &Path) -> String {
-    apic_core::file::home_relative(&apic_core::file::to_slash(path))
-}
 
 impl App {
     /// Reconciles the open contract with the freshly checked-out branch.
@@ -76,18 +70,7 @@ impl App {
             .shell
             .apic_dir
             .as_deref()
-            .map(|dir| {
-                apic_core::template::list_templates(dir)
-                    .into_iter()
-                    .map(|p| {
-                        let name = p
-                            .file_stem()
-                            .map(|s| s.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        (name, p)
-                    })
-                    .collect()
-            })
+            .map(files::templates)
             .unwrap_or_default();
 
         match apic_core::config::read_config_in(&root).and_then(|c| c.root_dir_in(&root)) {
@@ -95,32 +78,7 @@ impl App {
                 // `self.shell.root` is the contracts working dir consumed by import /
                 // new-request / delete; keep it in sync with the active project.
                 self.shell.root = Some(contracts_root.clone());
-                let failures = apic_core::validate_dir(&contracts_root);
-                let mut paths =
-                    apic_core::json::scan_json_file(&contracts_root, true).unwrap_or_default();
-                paths.sort();
-                self.contracts.entries = paths
-                    .into_iter()
-                    .filter(|p| !p.components().any(|c| c.as_os_str() == ".apic"))
-                    .map(|path| {
-                        let rel = apic_core::file::relative_slash(&path, &contracts_root);
-                        let method = apic_core::file::read_file(&path)
-                            .ok()
-                            .and_then(|t| apic_core::json::json_get(&t, None).ok())
-                            .map(|c| method_str(&c.method))
-                            .unwrap_or_else(|| "?".to_string());
-                        let error = failures
-                            .iter()
-                            .find(|(p, _)| *p == path)
-                            .map(|(_, e)| e.clone());
-                        Entry {
-                            path,
-                            rel,
-                            method,
-                            error,
-                        }
-                    })
-                    .collect();
+                self.contracts.entries = files::scan(&contracts_root);
                 self.shell.status = display_location(&contracts_root);
             }
             Err(err) => {
@@ -137,7 +95,7 @@ impl App {
         let Some(entry) = self.contracts.entries.get(i) else {
             return;
         };
-        let buffer = apic_core::file::read_file(&entry.path).unwrap_or_default();
+        let buffer = files::read_text(&entry.path).unwrap_or_default();
         let error = entry.error.clone().unwrap_or_default();
         self.contracts.model = None;
         self.contracts.original_model = None;
@@ -156,11 +114,7 @@ impl App {
             return;
         };
         let path = entry.path.clone();
-        let loaded = apic_core::file::read_file(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|t| apic_core::json::load_for_edit(&t))
-            .map(EditModel::from_contract);
-        match loaded {
+        match files::load_contract(&path) {
             Ok(model) => {
                 self.contracts.model = Some(model);
                 self.contracts.path = Some(path);
@@ -191,11 +145,9 @@ impl App {
         let Some((name, path)) = self.contracts.templates.get(i).cloned() else {
             return;
         };
-        match apic_core::template::resolve_contract_from(&path)
-            .and_then(|(c, _w)| apic_core::json::json_get(&c, None).map_err(|e| e.to_string()))
-        {
-            Ok(contract) => {
-                self.contracts.model = Some(EditModel::from_contract(contract));
+        match files::load_template(&path) {
+            Ok(model) => {
+                self.contracts.model = Some(model);
                 self.contracts.path = Some(path);
                 self.contracts.selected = None;
                 self.contracts.selected_template = Some(i);
@@ -354,37 +306,19 @@ impl App {
     /// existing template is never overwritten.
     pub(crate) fn create_template(&mut self, name: &str) {
         let name = name.trim();
-        if name.is_empty() {
-            self.shell.status = "template name required".into();
-            return;
-        }
-        let Some(apic_dir) = self.shell.apic_dir.clone() else {
-            self.shell.status = "no project".into();
-            return;
-        };
-        let dir = apic_core::template::dir(&apic_dir);
-        let file_name = if name.ends_with(".json") {
-            name.to_string()
-        } else {
-            format!("{name}.json")
-        };
-        let dest = match apic_core::file::confine_to_dir(&dir, Path::new(&file_name)) {
-            Ok(p) => p,
+        let file_name = match template_file_name(name) {
+            Ok(f) => f,
             Err(e) => {
                 self.shell.status = e;
                 return;
             }
         };
-        if dest.exists() {
-            self.shell.status = format!("template '{name}' already exists");
+        let Some(apic_dir) = self.shell.apic_dir.clone() else {
+            self.shell.status = "no project".into();
             return;
-        }
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.shell.status = format!("create dir error: {e}");
-            return;
-        }
-        match std::fs::write(&dest, apic_core::template::DEFAULT) {
-            Ok(()) => {
+        };
+        match files::create_template(&apic_dir, &file_name, name) {
+            Ok(dest) => {
                 self.reload_project();
                 // Open the freshly created template in the central view, the same
                 // way create_request opens a new contract.
@@ -399,7 +333,7 @@ impl App {
                 }
                 self.shell.status = format!("created template '{name}'");
             }
-            Err(e) => self.shell.status = format!("write error: {e}"),
+            Err(e) => self.shell.status = e,
         }
     }
 
@@ -412,124 +346,44 @@ impl App {
     /// Safety: the path is confined to the working dir (rejecting `..`/symlink
     /// escapes) and an existing file is never overwritten.
     pub(crate) fn create_request(&mut self, input: &str, template: Option<PathBuf>) {
-        let input = input.trim();
-        if input.is_empty() {
-            self.shell.status = "name required".into();
-            return;
-        }
-        let Some(root) = self.shell.root.clone() else {
-            self.shell.status = "no project".into();
-            return;
-        };
-        let is_folder = input.ends_with('/');
-        let rel = if is_folder {
-            input.trim_end_matches('/').to_string()
-        } else if input.ends_with(".json") {
-            input.to_string()
-        } else {
-            format!("{input}.json")
-        };
-        if rel.is_empty() {
-            self.shell.status = "name required".into();
-            return;
-        }
-        let dest = match apic_core::file::confine_to_dir(&root, Path::new(&rel)) {
-            Ok(p) => p,
+        let target = match request_target(input) {
+            Ok(t) => t,
             Err(e) => {
                 self.shell.status = e;
                 return;
             }
         };
-
-        if !is_folder {
-            if dest.exists() {
-                self.shell.status = format!("{rel} already exists, not overwriting");
-                return;
+        let Some(root) = self.shell.root.clone() else {
+            self.shell.status = "no project".into();
+            return;
+        };
+        let rel = &target.rel;
+        match files::create_request(&root, &target, template.as_deref()) {
+            Ok(_) if target.is_folder => {
+                self.reload_project();
+                self.shell.status = format!("created folder {rel}/");
             }
-            // Seed from the chosen template (merged onto the built-in default),
-            // or the built-in default itself when there is no template.
-            let contract = match &template {
-                Some(path) => match apic_core::template::resolve_contract_from(path) {
-                    Ok((c, _warnings)) => c,
-                    Err(e) => {
-                        self.shell.status = format!("template error: {e}");
-                        return;
-                    }
-                },
-                None => apic_core::template::DEFAULT.to_string(),
-            };
-            if let Some(parent) = dest.parent()
-                && let Err(e) = std::fs::create_dir_all(parent)
-            {
-                self.shell.status = format!("create dir error: {e}");
-                return;
-            }
-            match std::fs::write(&dest, contract) {
-                Ok(()) => {
-                    self.reload_project();
-                    if let Some(i) = self.contracts.entries.iter().position(|e| e.path == dest) {
-                        self.load(i);
-                        self.shell.central = CentralView::Contracts;
-                    }
-                    self.shell.status = format!("created {rel}");
+            Ok(dest) => {
+                self.reload_project();
+                if let Some(i) = self.contracts.entries.iter().position(|e| e.path == dest) {
+                    self.load(i);
+                    self.shell.central = CentralView::Contracts;
                 }
-                Err(e) => self.shell.status = format!("write error: {e}"),
+                self.shell.status = format!("created {rel}");
             }
-        } else {
-            match std::fs::create_dir_all(&dest) {
-                Ok(()) => {
-                    self.reload_project();
-                    self.shell.status = format!("created folder {rel}/");
-                }
-                Err(e) => self.shell.status = format!("create dir error: {e}"),
-            }
+            Err(e) => self.shell.status = e,
         }
     }
 
     /// Removes the target (confined to its directory), then reloads. If the open
     /// contract/template was deleted, the editor is cleared.
     pub(crate) fn perform_delete(&mut self, target: &DeleteTarget) {
-        let (removed_path, result, label) = match target {
-            DeleteTarget::Contract { rel, is_dir } => {
-                let Some(root) = self.shell.root.clone() else {
-                    self.shell.status = "no project".into();
-                    return;
-                };
-                let dest = match apic_core::file::confine_to_dir(&root, Path::new(rel)) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        self.shell.status = e;
-                        return;
-                    }
-                };
-                let r = if *is_dir {
-                    std::fs::remove_dir_all(&dest)
-                } else {
-                    std::fs::remove_file(&dest)
-                };
-                (dest, r, rel.clone())
-            }
-            DeleteTarget::Template { name, path } => {
-                // Confine to the template dir so only a real template is removed.
-                let Some(apic_dir) = self.shell.apic_dir.clone() else {
-                    self.shell.status = "no project".into();
-                    return;
-                };
-                let dir = apic_core::template::dir(&apic_dir);
-                let filename = path.file_name().map(Path::new).unwrap_or(Path::new(""));
-                let dest = match apic_core::file::confine_to_dir(&dir, filename) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        self.shell.status = e;
-                        return;
-                    }
-                };
-                let r = std::fs::remove_file(&dest);
-                (dest, r, format!("template {name}"))
-            }
-        };
-        match result {
-            Ok(()) => {
+        match files::delete(
+            target,
+            self.shell.root.as_deref(),
+            self.shell.apic_dir.as_deref(),
+        ) {
+            Ok((removed_path, label)) => {
                 // Clear the editor if the deleted path was (or contained) what is open.
                 if self
                     .contracts
@@ -545,7 +399,7 @@ impl App {
                 self.reload_project();
                 self.shell.status = format!("deleted {label}");
             }
-            Err(e) => self.shell.status = format!("delete error: {e}"),
+            Err(e) => self.shell.status = e,
         }
     }
 }

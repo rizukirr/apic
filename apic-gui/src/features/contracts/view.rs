@@ -5,7 +5,6 @@
 //! [`apic_core::edit`]; these functions only translate clicks into
 //! [`EditAction`]s.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use eframe::egui;
@@ -17,7 +16,9 @@ use apic_core::json::method_str;
 use crate::app::App;
 use crate::app::actions::SidebarAction;
 use crate::app::state::ShellState;
-use crate::features::contracts::state::{ContractsState, DeleteTarget, Entry, MainTab, RespTab};
+use crate::features::contracts::domain::entry::DeleteTarget;
+use crate::features::contracts::domain::tree::{TreeNode, build_tree};
+use crate::features::contracts::state::{ContractsState, MainTab, RespTab};
 use crate::ui::components::{
     add_button, bordered_input, delete_button, fill_column, header_label, icon_button, json_editor,
     metadata_table, required_chip, row_menu_button, section_label, table_frame, tcell_edit,
@@ -614,15 +615,6 @@ mod tests {
         )));
     }
 
-    fn entry(rel: &str) -> Entry {
-        Entry {
-            path: std::path::PathBuf::from(rel),
-            rel: rel.to_string(),
-            method: "GET".to_string(),
-            error: None,
-        }
-    }
-
     #[test]
     fn toggle_search_clears_the_filter_when_hidden() {
         let mut state = ContractsState::default();
@@ -632,16 +624,6 @@ mod tests {
         state.toggle_search();
         assert!(!state.search_open);
         assert!(state.search.is_empty());
-    }
-
-    #[test]
-    fn build_tree_keeps_only_matching_contracts() {
-        let entries = [entry("auth/login.json"), entry("profile/get.json")];
-        let tree = build_tree(&entries, "LOGIN");
-        assert!(tree.dirs.contains_key("auth"));
-        assert!(!tree.dirs.contains_key("profile"));
-        let all = build_tree(&entries, "");
-        assert!(all.dirs.contains_key("auth") && all.dirs.contains_key("profile"));
     }
 
     #[test]
@@ -1099,7 +1081,7 @@ pub(crate) fn sidebar_body(ui: &mut egui::Ui, state: &mut ContractsState) -> Opt
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            tree.show(ui, "", selected, &mut action);
+            show_tree(&tree, ui, "", selected, &mut action);
         });
     action
 }
@@ -1403,123 +1385,86 @@ fn menu_items_ui(
     }
 }
 
-/// The contract tree for `entries`, keeping only those whose relative path
-/// contains `query` (case-insensitive; an empty query keeps every entry).
-fn build_tree(entries: &[Entry], query: &str) -> TreeNode {
-    let q = query.to_lowercase();
-    let mut tree = TreeNode::default();
-    for (i, e) in entries.iter().enumerate() {
-        if q.is_empty() || e.rel.to_lowercase().contains(&q) {
-            tree.insert(&e.rel, i, &e.method, e.error.is_some());
-        }
-    }
-    tree
-}
-
-/// A folder tree of contracts built from their `/`-separated relative paths.
-/// Leaves carry the index into `App::entries` and the method for the badge.
-#[derive(Default)]
-struct TreeNode {
-    dirs: BTreeMap<String, TreeNode>,
-    files: Vec<(String, usize, String, bool)>, // (leaf label, entry index, method, invalid)
-}
-
-impl TreeNode {
-    fn insert(&mut self, rel: &str, idx: usize, method: &str, invalid: bool) {
-        match rel.split_once('/') {
-            Some((dir, rest)) => self
-                .dirs
-                .entry(dir.to_string())
-                .or_default()
-                .insert(rest, idx, method, invalid),
-            None => self
-                .files
-                .push((rel.to_string(), idx, method.to_string(), invalid)),
-        }
-    }
-
-    /// Renders the tree. `prefix` is the path accumulated so far (for folder
-    /// ids); a click or menu choice is recorded in `action`.
-    fn show(
-        &self,
-        ui: &mut egui::Ui,
-        prefix: &str,
-        selected: Option<usize>,
-        action: &mut Option<SidebarAction>,
-    ) {
-        let p = palette(ui.ctx());
-        for (name, child) in &self.dirs {
-            let folder_path = if prefix.is_empty() {
-                name.clone()
-            } else {
-                format!("{prefix}/{name}")
-            };
-            let id = ui.make_persistent_id(("tree", &folder_path));
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-                .show_header(ui, |ui| {
-                    let hovered = ui.rect_contains_pointer(ui.max_rect());
-                    // The menu button is reserved first (right-to-left) so the
-                    // folder name truncates to the remaining width rather than
-                    // forcing the side panel wider than its dragged width.
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        row_menu_button(ui, hovered, |ui| {
-                            menu_items_ui(ui, folder_menu_items(&folder_path), action)
-                        });
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.add(
-                                egui::Label::new(RichText::new(name).color(p.on_surface_variant))
-                                    .truncate()
-                                    .sense(egui::Sense::click()),
-                            )
-                            .context_menu(|ui| {
-                                menu_items_ui(ui, folder_menu_items(&folder_path), action)
-                            });
-                        });
-                    });
-                })
-                .body(|ui| child.show(ui, &folder_path, selected, action));
-        }
-        for (label, idx, method, invalid) in &self.files {
-            let rel = if prefix.is_empty() {
-                label.clone()
-            } else {
-                format!("{prefix}/{label}")
-            };
-            ui.horizontal(|ui| {
+/// Renders the tree. `prefix` is the path accumulated so far (for folder
+/// ids); a click or menu choice is recorded in `action`.
+fn show_tree(
+    node: &TreeNode,
+    ui: &mut egui::Ui,
+    prefix: &str,
+    selected: Option<usize>,
+    action: &mut Option<SidebarAction>,
+) {
+    let p = palette(ui.ctx());
+    for (name, child) in &node.dirs {
+        let folder_path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let id = ui.make_persistent_id(("tree", &folder_path));
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+            .show_header(ui, |ui| {
                 let hovered = ui.rect_contains_pointer(ui.max_rect());
-                // Reserve the menu button on the right, then let the file name
-                // truncate into whatever width is left. Without truncation a long
-                // name measures wider than the panel, and egui stores that as the
-                // panel width every frame, blocking resize below the longest name.
+                // The menu button is reserved first (right-to-left) so the
+                // folder name truncates to the remaining width rather than
+                // forcing the side panel wider than its dragged width.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     row_menu_button(ui, hovered, |ui| {
-                        menu_items_ui(ui, contract_menu_items(&rel), action)
+                        menu_items_ui(ui, folder_menu_items(&folder_path), action)
                     });
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        if *invalid {
-                            ui.label(RichText::new("●").color(p.error))
-                                .on_hover_text("Invalid contract, click to repair");
-                        }
-                        ui.label(
-                            RichText::new(method)
-                                .color(method_color(method, p))
-                                .size(11.0),
-                        );
-                        let file = egui::Button::selectable(
-                            selected == Some(*idx),
-                            RichText::new(label).color(p.on_surface),
+                        ui.add(
+                            egui::Label::new(RichText::new(name).color(p.on_surface_variant))
+                                .truncate()
+                                .sense(egui::Sense::click()),
                         )
-                        .truncate();
-                        let response = ui.add(file);
-                        if response.clicked() {
-                            *action = Some(SidebarAction::LoadContract(*idx));
-                        }
-                        response.context_menu(|ui| {
-                            menu_items_ui(ui, contract_menu_items(&rel), action)
+                        .context_menu(|ui| {
+                            menu_items_ui(ui, folder_menu_items(&folder_path), action)
                         });
                     });
                 });
+            })
+            .body(|ui| show_tree(child, ui, &folder_path, selected, action));
+    }
+    for (label, idx, method, invalid) in &node.files {
+        let rel = if prefix.is_empty() {
+            label.clone()
+        } else {
+            format!("{prefix}/{label}")
+        };
+        ui.horizontal(|ui| {
+            let hovered = ui.rect_contains_pointer(ui.max_rect());
+            // Reserve the menu button on the right, then let the file name
+            // truncate into whatever width is left. Without truncation a long
+            // name measures wider than the panel, and egui stores that as the
+            // panel width every frame, blocking resize below the longest name.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                row_menu_button(ui, hovered, |ui| {
+                    menu_items_ui(ui, contract_menu_items(&rel), action)
+                });
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    if *invalid {
+                        ui.label(RichText::new("●").color(p.error))
+                            .on_hover_text("Invalid contract, click to repair");
+                    }
+                    ui.label(
+                        RichText::new(method)
+                            .color(method_color(method, p))
+                            .size(11.0),
+                    );
+                    let file = egui::Button::selectable(
+                        selected == Some(*idx),
+                        RichText::new(label).color(p.on_surface),
+                    )
+                    .truncate();
+                    let response = ui.add(file);
+                    if response.clicked() {
+                        *action = Some(SidebarAction::LoadContract(*idx));
+                    }
+                    response
+                        .context_menu(|ui| menu_items_ui(ui, contract_menu_items(&rel), action));
+                });
             });
-        }
+        });
     }
 }
