@@ -1,5 +1,5 @@
-//! The contracts modals: new template, new request, new example and delete
-//! confirmation.
+//! The contracts modals: new template, new request, new example, delete
+//! confirmation and unsaved changes.
 
 use eframe::egui;
 use egui::RichText;
@@ -19,8 +19,8 @@ pub(crate) const FOCUS_NEW_TEMPLATE: &str = "apic.focus.new_template";
 // field, so the focus lands only on the frame the popup opens.
 const NEW_EXAMPLE_FOCUSED: &str = "apic.new_example.focused";
 
-/// Renders whichever of the new-template, new-request, new-example and delete
-/// dialogs is open.
+/// Renders whichever of the new-template, new-request, new-example, delete and
+/// unsaved-changes dialogs is open.
 ///
 /// # Returns
 ///
@@ -30,7 +30,8 @@ pub(crate) fn dialogs(ctx: &egui::Context, state: &mut ContractsState) -> Option
     let request = new_request_dialog(ctx, state);
     let example = new_example_dialog(ctx, state);
     let delete = delete_dialog(ctx, state);
-    template.or(request).or(example).or(delete)
+    let unsaved = unsaved_dialog(ctx, state);
+    template.or(request).or(example).or(delete).or(unsaved)
 }
 
 /// Renders the "new template" dialog when open, and returns what was chosen.
@@ -300,9 +301,61 @@ fn delete_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<Cont
     }
 }
 
+/// Renders the unsaved-changes popup while an action is held, and returns
+/// what was chosen.
+fn unsaved_dialog(ctx: &egui::Context, state: &ContractsState) -> Option<ContractsAction> {
+    state.pending_discard?;
+    let p = palette(ctx);
+    let name = state
+        .model
+        .as_ref()
+        .map(|m| m.name.trim())
+        .filter(|n| !n.is_empty())
+        .unwrap_or("This contract");
+    let mut chosen = None;
+    let modal = egui::Modal::new(egui::Id::new("unsaved_modal"))
+        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
+        .show(ctx, |ui| {
+            ui.set_min_width(320.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("Unsaved changes")
+                        .color(p.primary)
+                        .strong()
+                        .size(16.0),
+                );
+            });
+            ui.add_space(SPACE_MEDIUM);
+            ui.label(RichText::new(format!("{name} has unsaved changes.")).color(p.on_surface));
+            ui.add_space(SPACE_LARGE);
+            ui.columns(3, |cols| {
+                cols[0].vertical_centered(|ui| {
+                    if text_button(ui, "Save", p.primary) {
+                        chosen = Some(ContractsAction::SaveAndContinue);
+                    }
+                });
+                cols[1].vertical_centered(|ui| {
+                    if text_button(ui, "Discard", p.error) {
+                        chosen = Some(ContractsAction::DiscardAndContinue);
+                    }
+                });
+                cols[2].vertical_centered(|ui| {
+                    if ui.button("Keep editing").clicked() {
+                        chosen = Some(ContractsAction::KeepEditing);
+                    }
+                });
+            });
+        });
+    if chosen.is_none() && modal.should_close() {
+        chosen = Some(ContractsAction::KeepEditing);
+    }
+    chosen
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::contracts::ui::state::Guarded;
     use crate::ui::theme::{BOTH_THEMES, run_in_theme};
 
     #[test]
@@ -321,6 +374,21 @@ mod tests {
                     state.new_example.as_ref().map(|(code, _)| code.as_str()),
                     Some("4")
                 );
+            });
+        }
+    }
+
+    #[test]
+    fn unsaved_popup_renders_in_both_themes() {
+        for preference in BOTH_THEMES {
+            run_in_theme(preference, |ui| {
+                let ctx = ui.ctx().clone();
+                let mut state = ContractsState {
+                    pending_discard: Some(Guarded::CloseWindow),
+                    ..Default::default()
+                };
+                assert!(dialogs(&ctx, &mut state).is_none());
+                assert_eq!(state.pending_discard, Some(Guarded::CloseWindow));
             });
         }
     }

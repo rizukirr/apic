@@ -30,6 +30,24 @@ pub(crate) enum RespTab {
     Headers,
 }
 
+/// An action that would drop unsaved edits, held while the unsaved-changes
+/// popup asks what to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Guarded {
+    /// Open entry `i`.
+    Load(usize),
+    /// Open template `i`.
+    LoadTemplate(usize),
+    /// Leave edit mode, dropping the edits.
+    CancelEdit,
+    /// Start the Open project picker (run by the shell).
+    OpenProject,
+    /// Start the New project picker (run by the shell).
+    NewProject,
+    /// Close the window (run by the shell).
+    CloseWindow,
+}
+
 /// Everything the contracts feature owns. `App` holds one of these; no other
 /// feature may read or write it.
 ///
@@ -81,6 +99,9 @@ pub(crate) struct ContractsState {
     /// Snapshot of `model` taken when edit mode is entered, so [ CANCEL ] can
     /// restore the pre-edit state. `None` whenever not editing.
     pub(crate) original_model: Option<EditModel>,
+
+    /// The action the unsaved-changes popup is asking about, while it is open.
+    pub(crate) pending_discard: Option<Guarded>,
 }
 
 /// Where the contracts feature reads and writes, built by `App` from the
@@ -126,6 +147,12 @@ pub(crate) enum ContractsAction {
     PromoteRepair,
     /// Show or hide the filter field.
     ToggleSearch,
+    /// Save, then run the held action.
+    SaveAndContinue,
+    /// Drop the edits, then run the held action.
+    DiscardAndContinue,
+    /// Close the popup and keep editing.
+    KeepEditing,
 }
 
 /// Something a contracts action asks the app shell to do.
@@ -138,6 +165,8 @@ pub(crate) enum ContractsEvent {
     Saved,
     /// Show the contracts view in the central panel.
     ShowCentral,
+    /// Run this held action, which the shell owns.
+    Continue(Guarded),
 }
 
 impl ContractsState {
@@ -201,6 +230,62 @@ impl ContractsState {
         self.editing && self.model != self.original_model
     }
 
+    /// Holds `g` for the unsaved-changes popup when there are unsaved edits.
+    ///
+    /// # Arguments
+    ///
+    /// * `g` - the action that would drop the edits
+    ///
+    /// # Returns
+    ///
+    /// `true` when the action must wait for the popup, `false` when it can
+    /// run now. A popup already open keeps the action it is asking about.
+    pub(crate) fn guard(&mut self, g: Guarded) -> bool {
+        if !self.has_unsaved_edits() {
+            return false;
+        }
+        if self.pending_discard.is_none() {
+            self.pending_discard = Some(g);
+        }
+        true
+    }
+
+    /// Runs `g` now, or holds it for the popup when there are unsaved edits.
+    fn guarded(&mut self, g: Guarded, events: &mut Vec<ContractsEvent>) {
+        if !self.guard(g) {
+            self.run_guarded(g, events);
+        }
+    }
+
+    /// Runs a held action. The ones the shell owns become
+    /// [`ContractsEvent::Continue`].
+    fn run_guarded(&mut self, g: Guarded, events: &mut Vec<ContractsEvent>) {
+        match g {
+            Guarded::Load(i) => {
+                events.push(ContractsEvent::ShowCentral);
+                let invalid = self
+                    .entries
+                    .get(i)
+                    .map(|e| e.error.is_some())
+                    .unwrap_or(false);
+                if invalid {
+                    self.enter_repair(i);
+                } else {
+                    self.repair = None;
+                    self.load(i, events);
+                }
+            }
+            Guarded::LoadTemplate(i) => {
+                events.push(ContractsEvent::ShowCentral);
+                self.load_template(i, events);
+            }
+            Guarded::CancelEdit => self.cancel_edit(),
+            Guarded::OpenProject | Guarded::NewProject | Guarded::CloseWindow => {
+                events.push(ContractsEvent::Continue(g));
+            }
+        }
+    }
+
     /// Applies one action from a contracts view.
     ///
     /// # Arguments
@@ -220,23 +305,9 @@ impl ContractsState {
     ) -> Vec<ContractsEvent> {
         let mut events = Vec::new();
         match action {
-            ContractsAction::Load(i) => {
-                events.push(ContractsEvent::ShowCentral);
-                let invalid = self
-                    .entries
-                    .get(i)
-                    .map(|e| e.error.is_some())
-                    .unwrap_or(false);
-                if invalid {
-                    self.enter_repair(i);
-                } else {
-                    self.repair = None;
-                    self.load(i, &mut events);
-                }
-            }
+            ContractsAction::Load(i) => self.guarded(Guarded::Load(i), &mut events),
             ContractsAction::LoadTemplate(i) => {
-                events.push(ContractsEvent::ShowCentral);
-                self.load_template(i, &mut events);
+                self.guarded(Guarded::LoadTemplate(i), &mut events);
             }
             ContractsAction::OpenNewRequest(prefix) => {
                 self.new_request = Some(prefix);
@@ -279,14 +350,33 @@ impl ContractsState {
             }
             ContractsAction::ToggleEdit => {
                 if self.editing {
-                    self.cancel_edit();
+                    self.guarded(Guarded::CancelEdit, &mut events);
                 } else {
                     self.begin_edit();
                 }
             }
-            ContractsAction::Save => self.save(&mut events),
+            ContractsAction::Save => {
+                self.save(&mut events);
+            }
             ContractsAction::PromoteRepair => self.promote_repair(paths, &mut events),
             ContractsAction::ToggleSearch => self.toggle_search(),
+            ContractsAction::SaveAndContinue => {
+                // A failed save already reported why, so the held action is dropped.
+                let held = self.pending_discard.take();
+                if self.save(&mut events)
+                    && let Some(g) = held
+                {
+                    self.run_guarded(g, &mut events);
+                }
+            }
+            ContractsAction::DiscardAndContinue => {
+                let held = self.pending_discard.take();
+                self.cancel_edit();
+                if let Some(g) = held {
+                    self.run_guarded(g, &mut events);
+                }
+            }
+            ContractsAction::KeepEditing => self.pending_discard = None,
         }
         events
     }
@@ -530,9 +620,13 @@ impl ContractsState {
     }
 
     /// Writes the open contract to its path and leaves edit mode.
-    fn save(&mut self, events: &mut Vec<ContractsEvent>) {
+    ///
+    /// # Returns
+    ///
+    /// Whether the contract was written.
+    fn save(&mut self, events: &mut Vec<ContractsEvent>) -> bool {
         let Some(model) = self.model.as_mut() else {
-            return;
+            return false;
         };
         match self.path.as_deref() {
             Some(p) => match model.save(p) {
@@ -545,10 +639,17 @@ impl ContractsState {
                         e.method = method_str(&model.method);
                     }
                     events.push(ContractsEvent::Saved);
+                    true
                 }
-                Err(e) => events.push(ContractsEvent::Status(format!("save error: {e}"))),
+                Err(e) => {
+                    events.push(ContractsEvent::Status(format!("save error: {e}")));
+                    false
+                }
             },
-            None => events.push(ContractsEvent::Status("no path to save to".into())),
+            None => {
+                events.push(ContractsEvent::Status("no path to save to".into()));
+                false
+            }
         }
     }
 
@@ -755,5 +856,131 @@ mod tests {
         state.handle(ContractsAction::CancelDialog, Some(&paths));
 
         assert!(state.new_example.is_none());
+    }
+
+    /// A state with `sample.json` loaded and its name edited, and the index
+    /// of a second contract, `other.json`.
+    fn edited() -> (ContractsState, ContractsPaths, usize) {
+        let paths = project();
+        let contracts_root = paths.contracts_root.clone().expect("contracts root set");
+        std::fs::write(
+            contracts_root.join("other.json"),
+            apic_core::template::DEFAULT,
+        )
+        .expect("other writes");
+        let mut state = ContractsState::default();
+        state.reload(&paths);
+        let i = entry(&state, "sample.json");
+        state.handle(ContractsAction::Load(i), Some(&paths));
+        state.editing = true;
+        state.original_model = state.model.clone();
+        state.model.as_mut().expect("contract is open").name = "dirtied".to_string();
+        let other = entry(&state, "other.json");
+        (state, paths, other)
+    }
+
+    /// The name of the open model.
+    fn open_name(state: &ContractsState) -> &str {
+        &state.model.as_ref().expect("contract is open").name
+    }
+
+    #[test]
+    fn guarded_load_keeps_the_open_contract() {
+        let (mut state, paths, other) = edited();
+        let sample = state.path.clone();
+
+        let events = state.handle(ContractsAction::Load(other), Some(&paths));
+
+        assert!(events.is_empty());
+        assert_eq!(state.pending_discard, Some(Guarded::Load(other)));
+        assert_eq!(state.path, sample);
+        assert_eq!(open_name(&state), "dirtied");
+        assert!(state.editing);
+    }
+
+    #[test]
+    fn unguarded_load_loads() {
+        let (mut state, paths, other) = edited();
+        state.model = state.original_model.clone();
+
+        state.handle(ContractsAction::Load(other), Some(&paths));
+
+        assert!(state.pending_discard.is_none());
+        assert_eq!(state.selected, Some(other));
+        assert_eq!(state.path.as_ref(), Some(&state.entries[other].path));
+    }
+
+    #[test]
+    fn discard_and_continue_restores_and_loads() {
+        let (mut state, paths, other) = edited();
+        let sample = state.path.clone().expect("contract is open");
+        state.handle(ContractsAction::Load(other), Some(&paths));
+
+        let events = state.handle(ContractsAction::DiscardAndContinue, Some(&paths));
+
+        assert!(state.pending_discard.is_none());
+        assert!(!state.editing);
+        assert_eq!(state.selected, Some(other));
+        assert!(events.contains(&ContractsEvent::ShowCentral));
+        let on_disk = files::load_contract(&sample).expect("sample loads");
+        assert_ne!(on_disk.name, "dirtied");
+    }
+
+    #[test]
+    fn save_and_continue_writes_and_loads() {
+        let (mut state, paths, other) = edited();
+        let sample = state.path.clone().expect("contract is open");
+        state.handle(ContractsAction::Load(other), Some(&paths));
+
+        let events = state.handle(ContractsAction::SaveAndContinue, Some(&paths));
+
+        assert!(state.pending_discard.is_none());
+        assert!(events.contains(&ContractsEvent::Saved));
+        let on_disk = files::load_contract(&sample).expect("sample loads");
+        assert_eq!(on_disk.name, "dirtied");
+        assert_eq!(state.selected, Some(other));
+        assert_eq!(state.path.as_ref(), Some(&state.entries[other].path));
+    }
+
+    #[test]
+    fn keep_editing_keeps_the_edits() {
+        let (mut state, paths, other) = edited();
+        let sample = state.path.clone();
+        state.handle(ContractsAction::Load(other), Some(&paths));
+
+        state.handle(ContractsAction::KeepEditing, Some(&paths));
+
+        assert!(state.pending_discard.is_none());
+        assert!(state.editing);
+        assert_eq!(state.path, sample);
+        assert_eq!(open_name(&state), "dirtied");
+    }
+
+    #[test]
+    fn guarded_cancel_waits_for_the_popup() {
+        let (mut state, paths, _) = edited();
+
+        state.handle(ContractsAction::ToggleEdit, Some(&paths));
+
+        assert_eq!(state.pending_discard, Some(Guarded::CancelEdit));
+        assert!(state.editing);
+        assert_eq!(open_name(&state), "dirtied");
+
+        state.handle(ContractsAction::DiscardAndContinue, Some(&paths));
+
+        assert!(!state.editing);
+        assert_ne!(open_name(&state), "dirtied");
+    }
+
+    #[test]
+    fn guarded_open_project_continues_to_the_shell() {
+        let (mut state, paths, _) = edited();
+
+        assert!(state.guard(Guarded::OpenProject));
+        let events = state.handle(ContractsAction::DiscardAndContinue, Some(&paths));
+
+        assert_eq!(events, vec![ContractsEvent::Continue(Guarded::OpenProject)]);
+        assert!(!state.editing);
+        assert!(!state.guard(Guarded::OpenProject));
     }
 }

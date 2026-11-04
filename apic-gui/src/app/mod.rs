@@ -15,7 +15,7 @@ use egui::RichText;
 use crate::app::actions::{Action, ShellAction};
 use crate::app::state::{CentralView, ShellState, SidebarView};
 use crate::features::contracts::ui::state::{
-    ContractsAction, ContractsEvent, ContractsPaths, ContractsState,
+    ContractsAction, ContractsEvent, ContractsPaths, ContractsState, Guarded,
 };
 use crate::features::contracts::ui::view::{
     FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, header_actions, sidebar_body,
@@ -77,6 +77,10 @@ pub(crate) struct App {
 
     /// Everything the git feature owns.
     pub(crate) git: GitState,
+
+    /// Set once the window close was confirmed, so the close request that
+    /// follows is not guarded again.
+    pub(crate) closing: bool,
 }
 
 impl App {
@@ -86,6 +90,7 @@ impl App {
             project: ProjectState::default(),
             contracts: ContractsState::default(),
             git: GitState::default(),
+            closing: false,
         };
         let settings = Settings::load();
         if let Some(root) = settings.last_project
@@ -104,7 +109,7 @@ impl App {
             let paths = app.contracts_paths();
             for action in [ContractsAction::Load(i), ContractsAction::ToggleEdit] {
                 let events = app.contracts.handle(action, paths.as_ref());
-                app.apply_contracts_events(events);
+                app.apply_contracts_events(events, None);
             }
         }
         app
@@ -364,11 +369,22 @@ impl App {
         }
         let paths = self.contracts_paths();
         let events = self.contracts.handle(action, paths.as_ref());
-        self.apply_contracts_events(events);
+        self.apply_contracts_events(events, Some(ctx));
     }
 
     /// Applies what the contracts view model asked the shell to do.
-    pub(crate) fn apply_contracts_events(&mut self, events: Vec<ContractsEvent>) {
+    ///
+    /// # Arguments
+    ///
+    /// * `events` - what the contracts view model returned
+    /// * `ctx` - the egui context, `None` off the frame loop. Only the
+    ///   unsaved-changes popup yields [`ContractsEvent::Continue`], and its
+    ///   actions always arrive with a context.
+    pub(crate) fn apply_contracts_events(
+        &mut self,
+        events: Vec<ContractsEvent>,
+        ctx: Option<&egui::Context>,
+    ) {
         for event in events {
             match event {
                 ContractsEvent::Status(text) => self.shell.status = text,
@@ -377,7 +393,40 @@ impl App {
                 // filesystem watcher.
                 ContractsEvent::Saved => self.git.request_refresh(),
                 ContractsEvent::ShowCentral => self.shell.central = CentralView::Contracts,
+                ContractsEvent::Continue(g) => {
+                    if let Some(ctx) = ctx {
+                        self.continue_guarded(g, ctx);
+                    }
+                }
             }
+        }
+    }
+
+    /// Runs a held action the shell owns, once the unsaved-changes popup let
+    /// it through.
+    fn continue_guarded(&mut self, g: Guarded, ctx: &egui::Context) {
+        let action = match g {
+            Guarded::OpenProject => ProjectAction::Open,
+            Guarded::NewProject => ProjectAction::New,
+            Guarded::CloseWindow => {
+                self.closing = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+            Guarded::Load(_) | Guarded::LoadTemplate(_) | Guarded::CancelEdit => return,
+        };
+        let events = self.project.handle(action, ctx);
+        self.apply_project_events(events);
+    }
+
+    /// Holds a window close request for the unsaved-changes popup while the
+    /// open contract has unsaved edits, cancelling the close.
+    fn guard_close_request(&mut self, ctx: &egui::Context) {
+        if !self.closing
+            && ctx.input(|i| i.viewport().close_requested())
+            && self.contracts.guard(Guarded::CloseWindow)
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
     }
 
@@ -390,7 +439,7 @@ impl App {
         match self.read_project() {
             Some(paths) => {
                 let events = self.contracts.reconcile(&paths);
-                self.apply_contracts_events(events);
+                self.apply_contracts_events(events, None);
             }
             None => self.contracts.close(),
         }
@@ -403,7 +452,7 @@ impl App {
         match self.read_project() {
             Some(paths) => {
                 let events = self.contracts.reload(&paths);
-                self.apply_contracts_events(events);
+                self.apply_contracts_events(events, None);
             }
             None => self.contracts.close(),
         }
@@ -481,6 +530,14 @@ impl App {
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         match action {
             Action::Project(action) => {
+                let guarded = match action {
+                    ProjectAction::Open => Some(Guarded::OpenProject),
+                    ProjectAction::New => Some(Guarded::NewProject),
+                    ProjectAction::ImportPostman | ProjectAction::DismissRefusal => None,
+                };
+                if guarded.is_some_and(|g| self.contracts.guard(g)) {
+                    return;
+                }
                 let events = self.project.handle(action, ctx);
                 self.apply_project_events(events);
             }
@@ -529,6 +586,7 @@ impl eframe::App for App {
     // via `ui.ctx()`.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.guard_close_request(&ctx);
         let events = self.project.poll(&ctx);
         self.apply_project_events(events);
         self.poll_git(&ctx);
@@ -635,6 +693,12 @@ mod tests {
 
         app.apply(Action::Contracts(ContractsAction::ToggleEdit), &ctx);
         assert_eq!(
+            app.contracts.pending_discard,
+            Some(Guarded::CancelEdit),
+            "cancel with edits must ask first"
+        );
+        app.apply(Action::Contracts(ContractsAction::DiscardAndContinue), &ctx);
+        assert_eq!(
             app.contracts.model, original,
             "cancel must restore the pre-edit model"
         );
@@ -643,6 +707,52 @@ mod tests {
             app.contracts.original_model.is_none(),
             "snapshot must be cleared after cancel"
         );
+    }
+
+    /// An app with `sample_model` open and its name edited.
+    fn edited_app() -> App {
+        let mut app = app_at(tempdir());
+        app.contracts.model = Some(sample_model());
+        app.contracts.editing = true;
+        app.contracts.original_model = app.contracts.model.clone();
+        app.contracts.model.as_mut().expect("model is open").name = "dirtied".to_string();
+        app
+    }
+
+    #[test]
+    fn open_project_with_unsaved_edits_waits_for_the_popup() {
+        let mut app = edited_app();
+        let ctx = egui::Context::default();
+
+        app.apply(Action::Project(ProjectAction::Open), &ctx);
+
+        assert_eq!(app.contracts.pending_discard, Some(Guarded::OpenProject));
+        assert!(app.project.pending.is_none());
+    }
+
+    #[test]
+    fn close_request_with_unsaved_edits_waits_for_the_popup() {
+        let mut app = edited_app();
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput::default();
+        input.viewports.insert(
+            egui::ViewportId::ROOT,
+            egui::ViewportInfo {
+                events: vec![egui::ViewportEvent::Close],
+                ..Default::default()
+            },
+        );
+
+        let mut out = ctx.run_ui(input, |ui| app.guard_close_request(ui.ctx()));
+        out.textures_delta.clear();
+
+        assert_eq!(app.contracts.pending_discard, Some(Guarded::CloseWindow));
+        let commands = out
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .map(|v| v.commands.clone())
+            .unwrap_or_default();
+        assert!(commands.contains(&egui::ViewportCommand::CancelClose));
     }
 
     #[test]
