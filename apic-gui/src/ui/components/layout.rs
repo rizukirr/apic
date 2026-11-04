@@ -7,7 +7,6 @@ use crate::ui::theme::{SPACE_SMALL, palette};
 
 /// A rounded bar with an `outline_variant` border and a `surface_container`
 /// fill, laid out left to right, for a method and URL.
-#[cfg_attr(not(test), expect(dead_code, reason = "no view uses the url bar yet"))]
 pub(crate) fn url_bar<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let p = palette(ui.ctx());
     egui::Frame::NONE

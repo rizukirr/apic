@@ -13,7 +13,7 @@ use apic_core::json::method_str;
 
 use crate::ui::components::{
     add_button, delete_button, fill_column, header_label, json_editor, metadata_table,
-    required_chip, section_label, table_frame, tcell_edit, tcell_edit_code, text_button,
+    required_chip, section_label, table_frame, tcell_edit, tcell_edit_code, text_button, url_bar,
 };
 use crate::ui::focus::{request_new_row_focus, take_pending_focus};
 use crate::ui::theme::*;
@@ -86,50 +86,48 @@ pub(super) fn endpoint_description(ui: &mut egui::Ui, model: &mut EditModel, edi
 /// The `[ METHOD ] [ url................ ]` top row.
 pub(super) fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     let p = palette(ui.ctx());
-    table_frame(ui, |ui| {
-        ui.horizontal(|ui| {
-            let method = method_str(&model.method);
-            if editing {
-                // Pick the HTTP method from a dropdown of all the choices.
-                egui::ComboBox::from_id_salt("method")
-                    .width(90.0)
-                    .selected_text(
-                        RichText::new(&method)
-                            .color(method_color(&method, p))
-                            .strong(),
-                    )
-                    .show_ui(ui, |ui| {
-                        for m in apic_core::json::method_all() {
-                            let name = method_str(&m);
-                            let selected = name == method;
-                            if ui
-                                .selectable_label(
-                                    selected,
-                                    RichText::new(&name).color(method_color(&name, p)).strong(),
-                                )
-                                .clicked()
-                            {
-                                model.method = m;
-                            }
+    url_bar(ui, |ui| {
+        let method = method_str(&model.method);
+        if editing {
+            // Pick the HTTP method from a dropdown of all the choices.
+            egui::ComboBox::from_id_salt("method")
+                .width(90.0)
+                .selected_text(
+                    RichText::new(&method)
+                        .color(method_color(&method, p))
+                        .strong(),
+                )
+                .show_ui(ui, |ui| {
+                    for m in apic_core::json::method_all() {
+                        let name = method_str(&m);
+                        let selected = name == method;
+                        if ui
+                            .selectable_label(
+                                selected,
+                                RichText::new(&name).color(method_color(&name, p)).strong(),
+                            )
+                            .clicked()
+                        {
+                            model.method = m;
                         }
-                    });
-            } else {
-                method_badge(ui, &method);
-            }
-            ui.add_space(SPACE_MEDIUM);
-            if editing {
-                ui.add(
-                    egui::TextEdit::singleline(&mut model.url)
-                        .font(egui::TextStyle::Monospace)
-                        .frame(egui::Frame::NONE)
-                        .hint_text("https://host/path/{id}")
-                        .text_color(p.info)
-                        .desired_width(f32::INFINITY),
-                );
-            } else {
-                ui.label(RichText::new(&model.url).color(p.info).strong().monospace());
-            }
-        });
+                    }
+                });
+        } else {
+            method_badge(ui, &method);
+        }
+        ui.add_space(SPACE_MEDIUM);
+        if editing {
+            ui.add(
+                egui::TextEdit::singleline(&mut model.url)
+                    .font(egui::TextStyle::Monospace)
+                    .frame(egui::Frame::NONE)
+                    .hint_text("https://host/path/{id}")
+                    .text_color(p.info)
+                    .desired_width(f32::INFINITY),
+            );
+        } else {
+            ui.label(RichText::new(&model.url).color(p.info).strong().monospace());
+        }
     });
 }
 

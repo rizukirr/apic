@@ -10,10 +10,6 @@ pub(crate) mod input;
 pub(crate) mod layout;
 pub(crate) mod sidebar;
 pub(crate) mod table;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "no view uses the tab strip yet")
-)]
 pub(crate) mod tabs;
 pub(crate) mod text;
 
@@ -23,6 +19,5 @@ pub(crate) use input::*;
 pub(crate) use layout::*;
 pub(crate) use sidebar::*;
 pub(crate) use table::*;
-#[expect(unused_imports, reason = "no view uses the tab strip yet")]
 pub(crate) use tabs::*;
 pub(crate) use text::*;
