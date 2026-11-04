@@ -18,7 +18,7 @@ use self::diff::{raw_diff_view, semantic_diff_view};
 use self::files::{FileTree, RowMode, file_row};
 use self::resolver::conflict_resolver;
 use crate::features::git::domain::diff as domain_diff;
-use crate::features::git::domain::status::{Status, sections};
+use crate::features::git::domain::status::{Status, split_conflicts};
 use crate::features::git::ui::state::GitAction;
 use crate::features::git::ui::state::GitState;
 use crate::ui::components::text_button;
@@ -49,8 +49,9 @@ pub(crate) fn tab_label(name: &str, status: &Status, p: &Palette) -> (String, eg
 }
 
 /// The file list for the Git section: the error line when set, then the
-/// collapsible Conflicts, Staged changes and Changes groups with their counts
-/// and the changes outside the project.
+/// collapsible Conflicts and Changes groups with their counts and the changes
+/// outside the project. Every changed row carries a checkbox ticking it for
+/// the next commit.
 /// The refresh control and the dirty indicator live in the section header.
 pub(crate) fn changes_body(
     ui: &mut egui::Ui,
@@ -70,76 +71,59 @@ pub(crate) fn changes_body(
     }
 
     let selected = state.selected.clone();
-    let (conflicted, staged, unstaged) = sections(&state.status.inside);
+    let (conflicted, changed) = split_conflicts(&state.status.inside);
+    let conflict_tree = FileTree::from_files(&conflicted, |_| false);
+    let changed_tree = FileTree::from_files(&changed, |f| state.is_ticked(f));
+    let outside: Vec<_> = state
+        .status
+        .outside
+        .iter()
+        .map(|f| (f, state.is_ticked(f)))
+        .collect();
+    let mut show_outside = state.show_outside;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             if !conflicted.is_empty() {
                 change_group(ui, "git_conflicts", "Conflicts", conflicted.len(), |ui| {
-                    FileTree::from_files(&conflicted).show(
-                        ui,
-                        "",
-                        RowMode::Conflicted,
-                        selected.as_ref(),
-                        &mut action,
-                    );
+                    conflict_tree.show(ui, "", RowMode::Conflicted, selected.as_ref(), &mut action);
                 });
             }
-            if !staged.is_empty() {
-                change_group(ui, "git_staged", "Staged changes", staged.len(), |ui| {
-                    FileTree::from_files(&staged).show(
-                        ui,
-                        "",
-                        RowMode::Staged,
-                        selected.as_ref(),
-                        &mut action,
-                    );
+            if !changed.is_empty() {
+                change_group(ui, "git_changes", "Changes", changed.len(), |ui| {
+                    changed_tree.show(ui, "", RowMode::Changed, selected.as_ref(), &mut action);
                 });
             }
-            if !unstaged.is_empty() {
-                change_group(ui, "git_unstaged", "Changes", unstaged.len(), |ui| {
-                    FileTree::from_files(&unstaged).show(
-                        ui,
-                        "",
-                        RowMode::Unstaged,
-                        selected.as_ref(),
-                        &mut action,
-                    );
-                });
-            }
-            if conflicted.is_empty()
-                && staged.is_empty()
-                && unstaged.is_empty()
-                && state.status.outside.is_empty()
-            {
+            if conflicted.is_empty() && changed.is_empty() && outside.is_empty() {
                 ui.label(RichText::new("No changes").color(p.on_surface_variant));
             }
 
-            if !state.status.outside.is_empty() {
-                let title = format!("Outside this project  {}", state.status.outside.len());
+            if !outside.is_empty() {
+                let title = format!("Outside this project  {}", outside.len());
                 let header =
                     egui::CollapsingHeader::new(RichText::new(title).color(p.on_surface_variant))
                         .id_salt("git_outside")
-                        .open(Some(state.show_outside))
+                        .open(Some(show_outside))
                         .show(ui, |ui| {
-                            for file in &state.status.outside {
+                            for (file, ticked) in &outside {
                                 let mode = if file.conflicted {
                                     RowMode::Conflicted
-                                } else if file.has_staged_change() {
-                                    RowMode::Staged
                                 } else {
-                                    RowMode::Unstaged
+                                    RowMode::Changed
                                 };
-                                if let Some(a) = file_row(ui, file, mode, selected.as_ref()) {
+                                if let Some(a) =
+                                    file_row(ui, file, mode, *ticked, selected.as_ref())
+                                {
                                     action = Some(a);
                                 }
                             }
                         });
                 if header.header_response.clicked() {
-                    state.show_outside = !state.show_outside;
+                    show_outside = !show_outside;
                 }
             }
         });
+    state.show_outside = show_outside;
 
     action
 }
@@ -184,14 +168,8 @@ pub(crate) fn commit_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Git
                     action = Some(GitAction::ToggleAmend);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let has_staged = state
-                        .status
-                        .inside
-                        .iter()
-                        .chain(state.status.outside.iter())
-                        .any(|f| f.has_staged_change());
-                    let enabled =
-                        !state.commit_message.trim().is_empty() && (has_staged || state.amend);
+                    let enabled = !state.commit_message.trim().is_empty()
+                        && (state.any_ticked() || state.amend);
                     ui.add_enabled_ui(enabled, |ui| {
                         if text_button(ui, "Commit", p.primary) {
                             action = Some(GitAction::Commit);
@@ -791,22 +769,43 @@ mod tests {
     }
 
     #[test]
-    fn changes_body_renders_empty_mixed_and_conflicted_in_both_themes() {
-        let statuses = [
-            Status::default(),
-            Status {
-                inside: vec![file("a.json", false), untracked("b.json")],
-                outside: vec![file("c.json", false)],
-            },
-            Status {
-                inside: vec![file("d.json", true)],
-                outside: vec![],
-            },
+    fn changes_body_renders_each_tick_state_in_both_themes() {
+        let folder = Status {
+            inside: vec![untracked("dir/a.json"), untracked("dir/b.json")],
+            outside: vec![],
+        };
+        let all_ticked: std::collections::HashMap<String, bool> = [
+            ("dir/a.json".to_string(), true),
+            ("dir/b.json".to_string(), true),
+        ]
+        .into_iter()
+        .collect();
+        let one_ticked: std::collections::HashMap<String, bool> =
+            [("dir/a.json".to_string(), true)].into_iter().collect();
+        let cases = [
+            (Status::default(), Default::default()),
+            (
+                Status {
+                    inside: vec![file("a.json", false), untracked("b.json")],
+                    outside: vec![file("c.json", false)],
+                },
+                Default::default(),
+            ),
+            (
+                Status {
+                    inside: vec![file("d.json", true)],
+                    outside: vec![],
+                },
+                Default::default(),
+            ),
+            (folder.clone(), all_ticked),
+            (folder, one_ticked),
         ];
         for preference in BOTH_THEMES {
-            for status in &statuses {
+            for (status, ticks) in &cases {
                 let mut state = GitState {
                     status: status.clone(),
+                    ticks: ticks.clone(),
                     show_outside: true,
                     ..GitState::default()
                 };

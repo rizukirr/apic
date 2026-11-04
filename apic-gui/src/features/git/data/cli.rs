@@ -51,7 +51,13 @@ pub(crate) fn discover(project_root: &Path) -> Result<Option<PathBuf>, String> {
 pub(crate) fn status(root: &Path, scopes: &[&str]) -> Result<Status, String> {
     let out = run(
         root,
-        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        &[
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--untracked-files=all",
+            "--no-renames",
+        ],
     )?;
     Ok(parse_status(&out, scopes))
 }
@@ -91,6 +97,20 @@ pub(crate) fn stage(root: &Path, path: &str) -> Result<(), String> {
 /// Unstages one path, leaving the working tree untouched.
 pub(crate) fn unstage(root: &Path, path: &str) -> Result<(), String> {
     run(root, &["restore", "--staged", "--", path]).map(|_| ())
+}
+
+/// Stages every path in `paths`, including deletions and untracked files.
+pub(crate) fn stage_paths(root: &Path, paths: &[String]) -> Result<(), String> {
+    let mut args = vec!["add", "-A", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    run(root, &args).map(|_| ())
+}
+
+/// Unstages every path in `paths`, leaving the working tree untouched.
+pub(crate) fn unstage_paths(root: &Path, paths: &[String]) -> Result<(), String> {
+    let mut args = vec!["restore", "--staged", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    run(root, &args).map(|_| ())
 }
 
 /// Reverts one tracked path to its staged content. Untracked files are not

@@ -8,7 +8,7 @@ use crate::features::git::data::jobs::{
     self, DiffData, DiffRequest, JobResult, MutateKind, Mutation, RepoPaths,
 };
 use crate::features::git::domain::conflict::{self, Choice, ConflictFile, Segment};
-use crate::features::git::domain::status::{Branches, Status};
+use crate::features::git::domain::status::{Branches, FileStatus, Status};
 
 /// One completed diff fetch: the raw line diff plus each side's file content,
 /// A conflicted file parsed into its blocks, plus the choice made for each
@@ -56,8 +56,8 @@ pub(crate) enum GitAction {
     /// Show the diff for this repo-relative path, staged or unstaged.
     Select { path: String, staged: bool },
 
-    /// Stage this repo-relative path.
-    Stage { path: String },
+    /// Tick or untick these repo-relative file paths for the next commit.
+    SetTicked { paths: Vec<String>, ticked: bool },
 
     /// Unstage this repo-relative path, leaving the working tree untouched.
     Unstage { path: String },
@@ -69,7 +69,8 @@ pub(crate) enum GitAction {
     /// The pending discard was confirmed, revert it.
     ConfirmDiscard,
 
-    /// Commit the currently staged changes with `GitState::commit_message`.
+    /// Stage the ticked files, unstage the unticked ones, and commit with
+    /// `GitState::commit_message`.
     Commit,
 
     /// Re-read the branch list.
@@ -184,6 +185,10 @@ pub(crate) struct GitState {
 
     /// An amend read is owed, started by `poll` once nothing is pending.
     pub(crate) needs_amend_info: bool,
+
+    /// The user's tick or untick per path, overriding the index-derived
+    /// default until the path leaves the status.
+    pub(crate) ticks: std::collections::HashMap<String, bool>,
 }
 
 /// Something a finished git job asks the app shell to do, because it touches
@@ -212,6 +217,51 @@ impl GitState {
         self.needs_refresh = true;
     }
 
+    /// Whether `file` is ticked for the next commit: the user's choice when
+    /// one was made, otherwise whether it has a staged change. Never true
+    /// for a conflicted file.
+    pub(crate) fn is_ticked(&self, file: &FileStatus) -> bool {
+        !file.conflicted
+            && self
+                .ticks
+                .get(&file.path)
+                .copied()
+                .unwrap_or_else(|| file.has_staged_change())
+    }
+
+    /// The commit's two path lists: ticked files to stage, and staged files
+    /// the user unticked to unstage. Conflicted files are in neither.
+    fn commit_paths(&self) -> (Vec<String>, Vec<String>) {
+        let mut stage = Vec::new();
+        let mut unstage = Vec::new();
+        for f in self.status.inside.iter().chain(self.status.outside.iter()) {
+            if f.conflicted {
+                continue;
+            }
+            if self.is_ticked(f) {
+                stage.push(f.path.clone());
+            } else if f.has_staged_change() {
+                unstage.push(f.path.clone());
+            }
+        }
+        (stage, unstage)
+    }
+
+    /// Whether any file is ticked, which with a message enables Commit.
+    pub(crate) fn any_ticked(&self) -> bool {
+        self.status
+            .inside
+            .iter()
+            .chain(self.status.outside.iter())
+            .any(|f| self.is_ticked(f))
+    }
+
+    /// Stores a fresh status and forgets ticks for paths no longer in it.
+    fn set_status(&mut self, status: Status) {
+        self.ticks.retain(|path, _| status.find(path).is_some());
+        self.status = status;
+    }
+
     /// Applies one action from the git panel. `paths` is `None` when the
     /// project is not inside a repository, in which case nothing is started.
     pub(crate) fn handle(
@@ -229,8 +279,27 @@ impl GitState {
                     self.start_diff(paths, ctx, path, staged);
                 }
             }
-            GitAction::Stage { path } => self.start_mutation(paths, ctx, Mutation::Stage { path }),
+            GitAction::SetTicked {
+                paths: ticked_paths,
+                ticked,
+            } => {
+                for path in ticked_paths {
+                    self.ticks.insert(path, ticked);
+                }
+            }
             GitAction::Unstage { path } => {
+                let prefix = format!("{path}/");
+                let unticked: Vec<String> = self
+                    .status
+                    .inside
+                    .iter()
+                    .chain(self.status.outside.iter())
+                    .filter(|f| f.path == path || f.path.starts_with(&prefix))
+                    .map(|f| f.path.clone())
+                    .collect();
+                for p in unticked {
+                    self.ticks.insert(p, false);
+                }
                 self.start_mutation(paths, ctx, Mutation::Unstage { path })
             }
             GitAction::RequestDiscard { path } => self.pending_discard = Some(path),
@@ -241,12 +310,15 @@ impl GitState {
             }
             GitAction::Commit => {
                 let message = self.commit_message.clone();
+                let (stage, unstage) = self.commit_paths();
                 self.start_mutation(
                     paths,
                     ctx,
                     Mutation::Commit {
                         message,
                         amend: self.amend,
+                        stage,
+                        unstage,
                     },
                 );
             }
@@ -322,7 +394,7 @@ impl GitState {
     fn apply_result(&mut self, result: JobResult, events: &mut Vec<GitEvent>) {
         match result {
             JobResult::Status(Ok(status)) => {
-                self.status = status;
+                self.set_status(status);
                 self.error.clear();
             }
             JobResult::Diff(key, Ok(data)) => {
@@ -351,7 +423,7 @@ impl GitState {
                 self.error = e;
             }
             JobResult::Mutate(kind, message, Ok(status)) => {
-                self.status = status;
+                self.set_status(status);
                 self.error.clear();
                 events.push(GitEvent::Status(message));
                 if let Some((path, _)) = &self.selected
@@ -374,10 +446,7 @@ impl GitState {
                     MutateKind::CreateBranch | MutateKind::DeleteBranch => {
                         self.needs_branches = true;
                     }
-                    MutateKind::Stage
-                    | MutateKind::Unstage
-                    | MutateKind::Discard
-                    | MutateKind::Resolve => {}
+                    MutateKind::Unstage | MutateKind::Discard | MutateKind::Resolve => {}
                 }
             }
             JobResult::Mutate(_, _, Err(e)) => {
@@ -466,6 +535,8 @@ impl GitState {
 mod tests {
     use super::*;
 
+    use crate::features::git::domain::status::Change;
+
     use crate::app::test_support::{
         conflict_fixture, current_branch, dirty, git_at, git_available, git_output,
         project_fixture, settle_git, tempdir,
@@ -484,17 +555,84 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// Pins the second shipped defect: routing `GitAction::Stage` through
-    /// `apply` must actually stage the file in the repository. Read the
-    /// result from `git` directly rather than from `git.status`, so this
-    /// cannot pass on the app merely agreeing with itself.
+    /// A commit stages what is ticked and unstages what is not, read back
+    /// from `git` directly rather than from `git.status`, so this cannot
+    /// pass on the app merely agreeing with itself.
     #[test]
-    fn stage_action_stages_in_the_repository() {
+    fn commit_stages_ticked_and_leaves_out_unticked() {
         if !git_available() {
             return;
         }
         let root = project_fixture();
         dirty(&root.join("contracts").join("sample.json"));
+        std::fs::write(root.join("contracts").join("extra.json"), "{}\n")
+            .expect("extra file writes");
+        git_output(&root, &["add", "contracts/extra.json"]);
+
+        let (mut git, paths) = git_at(&root);
+        let ctx = egui::Context::default();
+        git.handle(GitAction::Refresh, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+
+        let sample = git
+            .status
+            .find("contracts/sample.json")
+            .expect("sample is changed")
+            .clone();
+        let extra = git
+            .status
+            .find("contracts/extra.json")
+            .expect("extra is changed")
+            .clone();
+        assert!(!git.is_ticked(&sample), "an unstaged file starts unticked");
+        assert!(git.is_ticked(&extra), "a staged file starts ticked");
+
+        git.handle(
+            GitAction::SetTicked {
+                paths: vec!["contracts/sample.json".to_string()],
+                ticked: true,
+            },
+            Some(&paths),
+            &ctx,
+        );
+        git.handle(
+            GitAction::SetTicked {
+                paths: vec!["contracts/extra.json".to_string()],
+                ticked: false,
+            },
+            Some(&paths),
+            &ctx,
+        );
+        git.commit_message = "commit the ticked file".to_string();
+        git.handle(GitAction::Commit, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+
+        let committed = git_output(&root, &["show", "--name-only", "--format=", "HEAD"]);
+        assert!(
+            committed.lines().any(|l| l == "contracts/sample.json"),
+            "the ticked file must be committed: {committed:?}"
+        );
+        assert!(
+            !committed.lines().any(|l| l == "contracts/extra.json"),
+            "the unticked file must be left out: {committed:?}"
+        );
+        let porcelain = git_output(&root, &["status", "--porcelain=v2"]);
+        assert!(
+            porcelain.lines().any(|l| l == "? contracts/extra.json"),
+            "the unticked file must be untracked again: {porcelain:?}"
+        );
+    }
+
+    /// A ticked deletion lands in the commit, which `git add -A` makes
+    /// possible for a path no longer on disk.
+    #[test]
+    fn commit_includes_a_ticked_deletion() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        std::fs::remove_file(root.join("contracts").join("sample.json"))
+            .expect("fixture file deletes");
 
         let (mut git, paths) = git_at(&root);
         let ctx = egui::Context::default();
@@ -502,25 +640,87 @@ mod tests {
         settle_git(&mut git, &paths, &ctx);
 
         git.handle(
-            GitAction::Stage {
-                path: "contracts/sample.json".to_string(),
+            GitAction::SetTicked {
+                paths: vec!["contracts/sample.json".to_string()],
+                ticked: true,
             },
             Some(&paths),
             &ctx,
         );
+        git.commit_message = "delete the sample".to_string();
+        git.handle(GitAction::Commit, Some(&paths), &ctx);
         settle_git(&mut git, &paths, &ctx);
 
-        let porcelain = git_output(&root, &["status", "--porcelain=v2"]);
-        let line = porcelain
-            .lines()
-            .find(|l| l.ends_with("contracts/sample.json"))
-            .unwrap_or_else(|| panic!("git must report the file: {porcelain:?}"));
-        let xy = line.split(' ').nth(1).expect("an XY field");
-        let index_char = xy.as_bytes()[0];
-        assert_ne!(
-            index_char, b'.',
-            "the index column must show a staged change, got {line:?}"
+        let committed = git_output(&root, &["show", "--name-status", "--format=", "HEAD"]);
+        assert!(
+            committed.lines().any(|l| l == "D\tcontracts/sample.json"),
+            "the deletion must be committed: {committed:?}"
         );
+    }
+
+    /// One changed file with the given sides, not conflicted.
+    fn changed(path: &str, index: Change, worktree: Change) -> FileStatus {
+        FileStatus {
+            path: path.to_string(),
+            index,
+            worktree,
+            conflicted: false,
+        }
+    }
+
+    #[test]
+    fn ticks_follow_the_index_until_the_user_changes_them() {
+        let staged = changed("staged.json", Change::Added, Change::Unmodified);
+        let unstaged = changed("unstaged.json", Change::Unmodified, Change::Modified);
+        let status = Status {
+            inside: vec![staged.clone(), unstaged.clone()],
+            ..Status::default()
+        };
+        let mut git = GitState::default();
+        git.set_status(status.clone());
+        assert!(git.is_ticked(&staged));
+        assert!(!git.is_ticked(&unstaged));
+
+        let ctx = egui::Context::default();
+        git.handle(
+            GitAction::SetTicked {
+                paths: vec!["unstaged.json".to_string()],
+                ticked: true,
+            },
+            None,
+            &ctx,
+        );
+        assert!(git.is_ticked(&unstaged));
+
+        git.set_status(status.clone());
+        assert!(git.is_ticked(&unstaged), "a tick survives a refresh");
+
+        git.set_status(Status::default());
+        assert!(
+            git.ticks.is_empty(),
+            "a tick is forgotten once the path leaves"
+        );
+    }
+
+    #[test]
+    fn unstage_unticks() {
+        let file = changed("dir/a.json", Change::Modified, Change::Unmodified);
+        let mut git = GitState::default();
+        git.set_status(Status {
+            inside: vec![file.clone()],
+            ..Status::default()
+        });
+        assert!(git.is_ticked(&file));
+
+        let ctx = egui::Context::default();
+        git.handle(
+            GitAction::Unstage {
+                path: "dir".to_string(),
+            },
+            None,
+            &ctx,
+        );
+        assert!(!git.is_ticked(&file));
     }
 
     #[test]
@@ -565,13 +765,13 @@ mod tests {
         settle_git(&mut git, &paths, &ctx);
 
         git.handle(
-            GitAction::Stage {
-                path: "contracts/sample.json".to_string(),
+            GitAction::SetTicked {
+                paths: vec!["contracts/sample.json".to_string()],
+                ticked: true,
             },
             Some(&paths),
             &ctx,
         );
-        settle_git(&mut git, &paths, &ctx);
 
         git.commit_message = "pin the stage wiring".to_string();
         git.handle(GitAction::Commit, Some(&paths), &ctx);

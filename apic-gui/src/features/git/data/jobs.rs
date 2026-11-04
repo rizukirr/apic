@@ -33,7 +33,6 @@ pub(crate) struct DiffData {
 /// alongside the result so the caller knows, for a successful commit, to
 /// clear `GitState::commit_message`.
 pub(crate) enum MutateKind {
-    Stage,
     Unstage,
     Discard,
     Commit,
@@ -52,7 +51,7 @@ pub(crate) enum JobResult {
     /// unselected, does not get filed under the wrong key.
     Diff((String, bool), Result<DiffData, String>),
 
-    /// A stage, unstage, discard, commit, or branch switch, create or
+    /// An unstage, discard, commit, or branch switch, create or
     /// delete, run then followed by a status refresh in the same background
     /// job. The refreshed status travels with the result so a successful
     /// mutation lands on screen in one poll. The message names what the
@@ -188,9 +187,6 @@ pub(crate) struct DiffRequest {
 /// One mutating git command. Each is followed by a status refresh in the same
 /// job, so a successful mutation lands on screen in one poll.
 pub(crate) enum Mutation {
-    Stage {
-        path: String,
-    },
     Unstage {
         path: String,
     },
@@ -202,6 +198,12 @@ pub(crate) enum Mutation {
     Commit {
         message: String,
         amend: bool,
+
+        /// Ticked paths, staged first.
+        stage: Vec<String>,
+
+        /// Staged paths the user unticked, unstaged before the commit.
+        unstage: Vec<String>,
     },
     SwitchBranch {
         name: String,
@@ -235,7 +237,6 @@ impl Mutation {
     /// Which kind of mutation this is, carried back with the result.
     fn kind(&self) -> MutateKind {
         match self {
-            Mutation::Stage { .. } => MutateKind::Stage,
             Mutation::Unstage { .. } => MutateKind::Unstage,
             Mutation::Discard { .. } => MutateKind::Discard,
             Mutation::Commit { .. } => MutateKind::Commit,
@@ -249,7 +250,6 @@ impl Mutation {
     /// The status line text shown when the mutation succeeds.
     fn success_message(&self) -> String {
         match self {
-            Mutation::Stage { path } => format!("staged {path}"),
             Mutation::Unstage { path } => format!("unstaged {path}"),
             Mutation::Discard { path } => format!("discarded {path}"),
             Mutation::Commit { amend: true, .. } => "amended the last commit".to_string(),
@@ -264,10 +264,22 @@ impl Mutation {
     /// Runs the git command against the repository at `root`.
     fn run(&self, root: &Path) -> Result<(), String> {
         match self {
-            Mutation::Stage { path } => cli::stage(root, path),
             Mutation::Unstage { path } => cli::unstage(root, path),
             Mutation::Discard { path } => cli::discard(root, path),
-            Mutation::Commit { message, amend } => cli::commit(root, message, *amend),
+            Mutation::Commit {
+                message,
+                amend,
+                stage,
+                unstage,
+            } => {
+                if !stage.is_empty() {
+                    cli::stage_paths(root, stage)?;
+                }
+                if !unstage.is_empty() {
+                    cli::unstage_paths(root, unstage)?;
+                }
+                cli::commit(root, message, *amend)
+            }
             Mutation::SwitchBranch { name } => cli::switch_branch(root, name),
             Mutation::CreateBranch { name } => cli::create_branch(root, name),
             Mutation::DeleteBranch { name } => cli::delete_branch(root, name),

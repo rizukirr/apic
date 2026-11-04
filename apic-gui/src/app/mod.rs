@@ -487,7 +487,7 @@ mod tests {
     use apic_core::edit::EditModel;
 
     use crate::app::test_support::{
-        app_at, current_branch, dirty, git_available, project_fixture, settle, tempdir,
+        app_at, current_branch, dirty, git_available, git_output, project_fixture, settle, tempdir,
     };
 
     /// A minimal but valid contract, loaded the same way `load()` does.
@@ -1024,25 +1024,26 @@ mod tests {
     /// A git mutation's success message must reach the status bar through
     /// `App::poll_git`, not only as a `GitEvent` from the view model.
     #[test]
-    fn stage_through_app_reports_in_shell_status() {
+    fn unstage_through_app_reports_in_shell_status() {
         if !git_available() {
             return;
         }
         let root = project_fixture();
         dirty(&root.join("contracts").join("sample.json"));
+        git_output(&root, &["add", "contracts/sample.json"]);
         let mut app = app_at(root);
         let ctx = egui::Context::default();
         app.reload_project();
         settle(&mut app, &ctx);
 
         app.apply(
-            Action::Git(GitAction::Stage {
+            Action::Git(GitAction::Unstage {
                 path: "contracts/sample.json".to_string(),
             }),
             &ctx,
         );
         settle(&mut app, &ctx);
 
-        assert_eq!(app.shell.status, "staged contracts/sample.json");
+        assert_eq!(app.shell.status, "unstaged contracts/sample.json");
     }
 }
