@@ -51,7 +51,13 @@ pub(crate) fn discover(project_root: &Path) -> Result<Option<PathBuf>, String> {
 pub(crate) fn status(root: &Path, scopes: &[&str]) -> Result<Status, String> {
     let out = run(
         root,
-        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        &[
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--untracked-files=all",
+            "--no-renames",
+        ],
     )?;
     Ok(parse_status(&out, scopes))
 }
@@ -93,15 +99,59 @@ pub(crate) fn unstage(root: &Path, path: &str) -> Result<(), String> {
     run(root, &["restore", "--staged", "--", path]).map(|_| ())
 }
 
+/// Stages every path in `paths`, including deletions and untracked files.
+pub(crate) fn stage_paths(root: &Path, paths: &[String]) -> Result<(), String> {
+    let mut args = vec!["add", "-A", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    run(root, &args).map(|_| ())
+}
+
+/// Unstages every path in `paths`, leaving the working tree untouched.
+pub(crate) fn unstage_paths(root: &Path, paths: &[String]) -> Result<(), String> {
+    let mut args = vec!["restore", "--staged", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    run(root, &args).map(|_| ())
+}
+
 /// Reverts one tracked path to its staged content. Untracked files are not
 /// offered, deleting bytes git has never seen has no recovery path.
 pub(crate) fn discard(root: &Path, path: &str) -> Result<(), String> {
     run(root, &["checkout", "--", path]).map(|_| ())
 }
 
-/// Commits the index with `message`.
-pub(crate) fn commit(root: &Path, message: &str) -> Result<(), String> {
-    run(root, &["commit", "-m", message]).map(|_| ())
+/// Commits the index with `message`, amending the last commit instead of
+/// adding one when `amend` is set.
+pub(crate) fn commit(root: &Path, message: &str, amend: bool) -> Result<(), String> {
+    let mut args = vec!["commit"];
+    if amend {
+        args.push("--amend");
+    }
+    args.extend(["-m", message]);
+    run(root, &args).map(|_| ())
+}
+
+/// The full message of the last commit, without its trailing newline.
+/// Fails in a repository with no commits.
+pub(crate) fn last_commit_message(root: &Path) -> Result<String, String> {
+    let out = run(root, &["log", "-1", "--format=%B"])?;
+    Ok(String::from_utf8_lossy(&out).trim_end().to_string())
+}
+
+/// The current branch's upstream, such as `origin/main`, or `None` when
+/// none is configured.
+pub(crate) fn upstream(root: &Path) -> Option<String> {
+    run(
+        root,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    .ok()
+    .map(|out| String::from_utf8_lossy(&out).trim().to_string())
+    .filter(|name| !name.is_empty())
+}
+
+/// Whether `HEAD` is already contained in the upstream branch.
+pub(crate) fn head_is_on_upstream(root: &Path) -> bool {
+    run(root, &["merge-base", "--is-ancestor", "HEAD", "@{u}"]).is_ok()
 }
 
 /// The local branches and the current one. `current` is `None` in detached
@@ -179,7 +229,7 @@ mod tests {
         assert!(run(dir, &["config", "user.name", "Test User"]).is_ok());
         fs::write(dir.join("file.txt"), "original\n").unwrap();
         assert!(run(dir, &["add", "--", "file.txt"]).is_ok());
-        assert!(commit(dir, "initial").is_ok());
+        assert!(commit(dir, "initial", false).is_ok());
     }
 
     #[test]
@@ -230,7 +280,7 @@ mod tests {
         assert_eq!(blob(&root, "HEAD", "never-existed.txt").unwrap(), None);
 
         stage(&root, "file.txt").unwrap();
-        commit(&root, "second").unwrap();
+        commit(&root, "second", false).unwrap();
 
         let st = status(&root, &[]).unwrap();
         assert!(st.inside.is_empty());
@@ -248,7 +298,7 @@ mod tests {
         let before: String = (0..40).map(|i| format!("line{i}\n")).collect();
         fs::write(dir.join("file.txt"), &before).unwrap();
         assert!(run(&dir, &["add", "--", "file.txt"]).is_ok());
-        assert!(commit(&dir, "initial").is_ok());
+        assert!(commit(&dir, "initial", false).is_ok());
 
         let after = before.replace("line20\n", "CHANGED\n");
         fs::write(dir.join("file.txt"), &after).unwrap();
@@ -367,12 +417,49 @@ mod tests {
         switch_branch(&dir, "feature").unwrap();
         fs::write(dir.join("file.txt"), "unmerged change\n").unwrap();
         assert!(run(&dir, &["add", "--", "file.txt"]).is_ok());
-        assert!(commit(&dir, "unmerged commit").is_ok());
+        assert!(commit(&dir, "unmerged commit", false).is_ok());
         switch_branch(&dir, &initial).unwrap();
 
         assert!(delete_branch(&dir, "feature").is_err());
 
         let b = branches(&dir).unwrap();
         assert!(b.all.contains(&"feature".to_string()));
+    }
+
+    #[test]
+    fn amend_replaces_the_last_commit_message_without_adding_a_commit() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        let count = |dir: &Path| {
+            String::from_utf8(run(dir, &["rev-list", "--count", "HEAD"]).unwrap()).unwrap()
+        };
+        let before = count(&dir);
+        commit(&dir, "reworded", true).unwrap();
+        assert_eq!(count(&dir), before);
+        assert_eq!(last_commit_message(&dir).unwrap(), "reworded");
+    }
+
+    #[test]
+    fn upstream_and_head_is_on_upstream_follow_a_bare_remote() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        assert_eq!(upstream(&dir), None);
+        let remote = tempdir();
+        assert!(run(&remote, &["init", "--bare"]).is_ok());
+        let remote_path = remote.to_string_lossy().into_owned();
+        assert!(run(&dir, &["remote", "add", "origin", &remote_path]).is_ok());
+        assert!(run(&dir, &["push", "-u", "origin", "HEAD"]).is_ok());
+        assert!(upstream(&dir).is_some_and(|u| u.starts_with("origin/")));
+        assert!(head_is_on_upstream(&dir));
+        fs::write(dir.join("file.txt"), "changed\n").unwrap();
+        assert!(run(&dir, &["add", "--", "file.txt"]).is_ok());
+        commit(&dir, "local only", false).unwrap();
+        assert!(!head_is_on_upstream(&dir));
     }
 }

@@ -220,26 +220,11 @@ fn in_scope(path: &str, scopes: &[&str]) -> bool {
             .any(|scope| Path::new(path).starts_with(scope))
 }
 
-/// Splits a section's files into the three sidebar groups: unresolved
-/// conflicts, staged, and unstaged. `unmerged` sets both
-/// `index` and `worktree` to `Modified` for a conflicted entry, which makes
-/// it satisfy `has_staged_change` and `has_worktree_change` at once; staged
-/// and unstaged are not meaningful for a file mid-merge, so a conflicted
-/// entry is excluded from both and only listed here, keeping every file in
-/// exactly one group.
-pub(crate) fn sections(
-    files: &[FileStatus],
-) -> (Vec<&FileStatus>, Vec<&FileStatus>, Vec<&FileStatus>) {
-    let conflicted: Vec<&FileStatus> = files.iter().filter(|f| f.conflicted).collect();
-    let staged: Vec<&FileStatus> = files
-        .iter()
-        .filter(|f| !f.conflicted && f.has_staged_change())
-        .collect();
-    let unstaged: Vec<&FileStatus> = files
-        .iter()
-        .filter(|f| !f.conflicted && f.has_worktree_change())
-        .collect();
-    (conflicted, staged, unstaged)
+/// Splits files into unresolved conflicts and everything else, each file in
+/// exactly one list. A conflicted entry reads `Modified` on both sides, so
+/// it must not also be offered a checkbox.
+pub(crate) fn split_conflicts(files: &[FileStatus]) -> (Vec<&FileStatus>, Vec<&FileStatus>) {
+    files.iter().partition(|f| f.conflicted)
 }
 
 #[cfg(test)]
@@ -269,7 +254,7 @@ pub(crate) mod fixtures {
 
 #[cfg(test)]
 mod tests {
-    use super::fixtures::file;
+    use super::fixtures::{file, untracked};
     use super::*;
 
     /// Joins porcelain v2 records with NUL, the way `-z` output is delimited.
@@ -422,21 +407,14 @@ mod tests {
     }
 
     #[test]
-    fn a_conflicted_entry_appears_once_in_the_conflicts_group_only() {
-        let files = [file("contracts/login.json", true)];
-        let (conflicted, staged, unstaged) = sections(&files);
+    fn split_conflicts_lists_each_file_once() {
+        let files = [file("a", true), file("b", false), untracked("c")];
+        let (conflicted, others) = split_conflicts(&files);
         assert_eq!(conflicted.len(), 1);
-        assert!(staged.is_empty());
-        assert!(unstaged.is_empty());
-    }
-
-    #[test]
-    fn a_file_modified_on_both_sides_without_conflict_still_lists_in_both_groups() {
-        let files = [file("src/both.rs", false)];
-        let (conflicted, staged, unstaged) = sections(&files);
-        assert!(conflicted.is_empty());
-        assert_eq!(staged.len(), 1);
-        assert_eq!(unstaged.len(), 1);
+        assert_eq!(conflicted[0].path, "a");
+        assert_eq!(others.len(), 2);
+        assert_eq!(others[0].path, "b");
+        assert_eq!(others[1].path, "c");
     }
 
     #[test]

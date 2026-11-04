@@ -12,18 +12,19 @@ use std::path::Path;
 use eframe::egui;
 use egui::RichText;
 
-use self::branches::{branch_row, create_branch_dialog, delete_branch_dialog, discard_dialog};
+pub(crate) use self::branches::branch_menu;
+use self::branches::{create_branch_dialog, delete_branch_dialog, discard_dialog};
 use self::diff::{raw_diff_view, semantic_diff_view};
 use self::files::{FileTree, RowMode, file_row};
 use self::resolver::conflict_resolver;
 use crate::features::git::domain::diff as domain_diff;
-use crate::features::git::domain::status::{Status, sections};
+use crate::features::git::domain::status::{Status, split_conflicts};
 use crate::features::git::ui::state::GitAction;
 use crate::features::git::ui::state::GitState;
 use crate::ui::components::text_button;
 use crate::ui::theme::*;
 
-/// What the Git tab should render, decided purely from a `Status`: the label
+/// What the Git section header should render, decided purely from a `Status`: the label
 /// text, `name` plus a ` [conflict]` suffix when any entry is conflicted, and
 /// the colour, `error` when anything has changed at all and `on_surface_variant` (the
 /// unchanged colour) otherwise. Selection is shown through the tab's filled
@@ -47,13 +48,12 @@ pub(crate) fn tab_label(name: &str, status: &Status, p: &Palette) -> (String, eg
     (label, color)
 }
 
-/// Left sidebar body for the Git tab: the error line when set, and the file
-/// list split into staged and unstaged sections. The refresh control and the
-/// tab's own dirty indicator live in the shell's tab row, not here.
-///
-/// The panel frame is owned by the app shell, not by this feature, so that a
-/// second sidebar tab can render into the same frame; this only fills it.
-pub(crate) fn sidebar_body(
+/// The file list for the Git section: the error line when set, then the
+/// collapsible Conflicts and Changes groups with their counts and the changes
+/// outside the project. Every changed row carries a checkbox ticking it for
+/// the next commit.
+/// The refresh control and the dirty indicator live in the section header.
+pub(crate) fn changes_body(
     ui: &mut egui::Ui,
     state: &mut GitState,
     repo_root: Option<&Path>,
@@ -70,148 +70,139 @@ pub(crate) fn sidebar_body(
         return action;
     }
 
-    // Populate the branch list once, and again after every branch mutation
-    // (handled in the app shell). `pending` guards against piling up a
-    // second git command while one is already in flight. `branches_loaded`
-    // guards against retrying forever: a repository with no commits has no
-    // branches, so an empty list after a completed fetch is not itself a
-    // reason to refetch. Set right here, the moment the request is made, so
-    // the condition cannot fire again regardless of how the fetch resolves.
-    if !state.branches_loaded && state.pending.is_none() {
-        state.branches_loaded = true;
-        action = Some(GitAction::RefreshBranches);
-    }
-    if let Some(a) = branch_row(ui, state) {
-        action = Some(a);
-    }
-    ui.separator();
-
-    egui::Panel::bottom("git_commit_bar")
-        .show_separator_line(false)
-        .show(ui, |ui| {
-            ui.add_space(SPACE_EXTRA_SMALL);
-            ui.add(
-                egui::TextEdit::multiline(&mut state.commit_message)
-                    .hint_text("commit message")
-                    .desired_rows(4)
-                    .desired_width(f32::INFINITY),
-            );
-            ui.add_space(SPACE_EXTRA_SMALL);
-            let has_staged = state
-                .status
-                .inside
-                .iter()
-                .chain(state.status.outside.iter())
-                .any(|f| f.has_staged_change());
-            let enabled = !state.commit_message.trim().is_empty() && has_staged;
-            ui.add_enabled_ui(enabled, |ui| {
-                if text_button(ui, "Commit", p.primary) {
-                    action = Some(GitAction::Commit);
-                }
-            });
-            ui.add_space(SPACE_EXTRA_SMALL);
-        });
-
     let selected = state.selected.clone();
-    let (conflicted, staged, unstaged) = sections(&state.status.inside);
+    let (conflicted, changed) = split_conflicts(&state.status.inside);
+    let conflict_tree = FileTree::from_files(&conflicted, |_| false);
+    let changed_tree = FileTree::from_files(&changed, |f| state.is_ticked(f));
+    let outside: Vec<_> = state
+        .status
+        .outside
+        .iter()
+        .map(|f| (f, state.is_ticked(f)))
+        .collect();
+    let mut show_outside = state.show_outside;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             if !conflicted.is_empty() {
-                ui.label(
-                    RichText::new("CONFLICTS")
-                        .color(p.on_surface_variant)
-                        .size(11.0),
-                );
-                FileTree::from_files(&conflicted).show(
-                    ui,
-                    "",
-                    RowMode::Conflicted,
-                    selected.as_ref(),
-                    &mut action,
-                );
-                ui.add_space(SPACE_SMALL);
+                change_group(ui, "git_conflicts", "Conflicts", conflicted.len(), |ui| {
+                    conflict_tree.show(ui, "", RowMode::Conflicted, selected.as_ref(), &mut action);
+                });
+            }
+            if !changed.is_empty() {
+                change_group(ui, "git_changes", "Changes", changed.len(), |ui| {
+                    changed_tree.show(ui, "", RowMode::Changed, selected.as_ref(), &mut action);
+                });
+            }
+            if conflicted.is_empty() && changed.is_empty() && outside.is_empty() {
+                ui.label(RichText::new("No changes").color(p.on_surface_variant));
             }
 
-            ui.label(
-                RichText::new("STAGED")
-                    .color(p.on_surface_variant)
-                    .size(11.0),
-            );
-            if staged.is_empty() {
-                ui.label(RichText::new("(none)").color(p.on_surface_variant));
-            }
-            FileTree::from_files(&staged).show(
-                ui,
-                "",
-                RowMode::Staged,
-                selected.as_ref(),
-                &mut action,
-            );
-
-            ui.add_space(SPACE_SMALL);
-            ui.label(
-                RichText::new("UNSTAGED")
-                    .color(p.on_surface_variant)
-                    .size(11.0),
-            );
-            if unstaged.is_empty() {
-                ui.label(RichText::new("(none)").color(p.on_surface_variant));
-            }
-            FileTree::from_files(&unstaged).show(
-                ui,
-                "",
-                RowMode::Unstaged,
-                selected.as_ref(),
-                &mut action,
-            );
-
-            if !state.status.outside.is_empty() {
-                ui.add_space(SPACE_SMALL);
-                ui.separator();
-                let arrow = if state.show_outside { "▼" } else { "▶" };
-                let label = format!(
-                    "{} {} change(s) outside this project",
-                    arrow,
-                    state.status.outside.len()
-                );
-                if ui
-                    .selectable_label(false, RichText::new(label).color(p.on_surface_variant))
-                    .clicked()
-                {
-                    state.show_outside = !state.show_outside;
-                }
-                if state.show_outside {
-                    for file in &state.status.outside {
-                        let mode = if file.conflicted {
-                            RowMode::Conflicted
-                        } else if file.has_staged_change() {
-                            RowMode::Staged
-                        } else {
-                            RowMode::Unstaged
-                        };
-                        if let Some(a) = file_row(ui, file, mode, selected.as_ref()) {
-                            action = Some(a);
-                        }
-                    }
+            if !outside.is_empty() {
+                let title = format!("Outside this project  {}", outside.len());
+                let header =
+                    egui::CollapsingHeader::new(RichText::new(title).color(p.on_surface_variant))
+                        .id_salt("git_outside")
+                        .open(Some(show_outside))
+                        .show(ui, |ui| {
+                            for (file, ticked) in &outside {
+                                let mode = if file.conflicted {
+                                    RowMode::Conflicted
+                                } else {
+                                    RowMode::Changed
+                                };
+                                if let Some(a) =
+                                    file_row(ui, file, mode, *ticked, selected.as_ref())
+                                {
+                                    action = Some(a);
+                                }
+                            }
+                        });
+                if header.header_response.clicked() {
+                    show_outside = !show_outside;
                 }
             }
         });
-
-    if let Some(a) = discard_dialog(ui.ctx(), state) {
-        action = Some(a);
-    }
-    if let Some(a) = create_branch_dialog(ui.ctx(), state) {
-        action = Some(a);
-    }
-    if let Some(a) = delete_branch_dialog(ui.ctx(), state) {
-        action = Some(a);
-    }
+    state.show_outside = show_outside;
 
     action
 }
 
-/// The central body for the Git tab: the diff view once selected, an empty
+/// One collapsible group of changed files with its count, open by default.
+fn change_group(
+    ui: &mut egui::Ui,
+    id: &str,
+    title: &str,
+    count: usize,
+    body: impl FnOnce(&mut egui::Ui),
+) {
+    let p = palette(ui.ctx());
+    egui::CollapsingHeader::new(
+        RichText::new(format!("{title}  {count}")).color(p.on_surface_variant),
+    )
+    .id_salt(id)
+    .default_open(true)
+    .show(ui, body);
+}
+
+/// The commit box for the Git section: the Amend toggle, the Commit button
+/// and the message editor, which fills the space the controls leave.
+pub(crate) fn commit_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
+    let p = palette(ui.ctx());
+    let mut action = None;
+    egui::Panel::bottom("git_commit_controls")
+        .show_separator_line(false)
+        .show(ui, |ui| {
+            ui.add_space(SPACE_EXTRA_SMALL);
+            if let Some(upstream) = &state.amend_pushed_to {
+                ui.label(
+                    RichText::new(format!(
+                        "This commit is already on {upstream}. Amending it will need a force push."
+                    ))
+                    .color(p.warning),
+                );
+            }
+            ui.horizontal(|ui| {
+                let mut amend = state.amend;
+                if ui.checkbox(&mut amend, "Amend").changed() {
+                    action = Some(GitAction::ToggleAmend);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let enabled = !state.commit_message.trim().is_empty()
+                        && (state.any_ticked() || state.amend);
+                    ui.add_enabled_ui(enabled, |ui| {
+                        if text_button(ui, "Commit", p.primary) {
+                            action = Some(GitAction::Commit);
+                        }
+                    });
+                });
+            });
+            ui.add_space(SPACE_EXTRA_SMALL);
+        });
+    ui.add_sized(
+        ui.available_size(),
+        egui::TextEdit::multiline(&mut state.commit_message).hint_text("commit message"),
+    );
+    action
+}
+
+/// The git modal dialogs (discard, create branch, delete branch). Returns the
+/// last action any of them produced.
+pub(crate) fn dialogs(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
+    let mut action = None;
+    if let Some(a) = discard_dialog(ctx, state) {
+        action = Some(a);
+    }
+    if let Some(a) = create_branch_dialog(ctx, state) {
+        action = Some(a);
+    }
+    if let Some(a) = delete_branch_dialog(ctx, state) {
+        action = Some(a);
+    }
+    action
+}
+
+/// The central body for the Git section: the diff view once selected, an empty
 /// state until then, or the conflict resolver for a conflicted file.
 ///
 /// The panel frame is owned by the app shell. This only sees the git slice.
@@ -292,7 +283,7 @@ mod tests {
     use super::*;
     use crate::features::git::data::jobs::DiffData;
     use crate::features::git::domain::conflict::{self, Choice};
-    use crate::features::git::domain::status::fixtures::file;
+    use crate::features::git::domain::status::fixtures::{file, untracked};
     use crate::features::git::domain::status::{Branches, Change, FileStatus};
 
     const CONTRACT_GET: &str =
@@ -358,7 +349,7 @@ mod tests {
         for preference in BOTH_THEMES {
             run_in_theme(preference, |ui| {
                 let mut state = GitState::default();
-                sidebar_body(ui, &mut state, None);
+                changes_body(ui, &mut state, None);
                 central_body(ui, &mut state);
             });
         }
@@ -407,7 +398,7 @@ mod tests {
                     show_outside: true,
                     ..GitState::default()
                 };
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                changes_body(ui, &mut state, Some(Path::new("/repo")));
                 central_body(ui, &mut state);
             });
         }
@@ -421,7 +412,7 @@ mod tests {
                 ..GitState::default()
             };
             run_in_theme(preference, |ui| {
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                dialogs(ui.ctx(), &mut state);
             });
             // The dialog stays open until the user confirms or cancels: a bare
             // render must not clear it.
@@ -437,7 +428,7 @@ mod tests {
                 ..GitState::default()
             };
             run_in_theme(preference, |ui| {
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                changes_body(ui, &mut state, Some(Path::new("/repo")));
             });
         }
     }
@@ -672,7 +663,7 @@ mod tests {
             let mut state = GitState::default();
             let mut first = None;
             run_in_theme(preference, |ui| {
-                first = sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                first = branch_menu(ui, &mut state);
             });
             assert!(matches!(first, Some(GitAction::RefreshBranches)));
 
@@ -681,7 +672,7 @@ mod tests {
             state.branches_loaded = true;
             let mut second = None;
             run_in_theme(preference, |ui| {
-                second = sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                second = branch_menu(ui, &mut state);
             });
             assert!(!matches!(second, Some(GitAction::RefreshBranches)));
         }
@@ -698,7 +689,7 @@ mod tests {
                 ..GitState::default()
             };
             run_in_theme(preference, |ui| {
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                branch_menu(ui, &mut state);
             });
         }
     }
@@ -714,7 +705,7 @@ mod tests {
                 ..GitState::default()
             };
             run_in_theme(preference, |ui| {
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                branch_menu(ui, &mut state);
             });
         }
     }
@@ -731,7 +722,8 @@ mod tests {
                 ..GitState::default()
             };
             run_in_theme(preference, |ui| {
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                branch_menu(ui, &mut state);
+                dialogs(ui.ctx(), &mut state);
             });
             // The dialog stays open until the user confirms or cancels: a bare
             // render must not clear it.
@@ -751,11 +743,76 @@ mod tests {
                 ..GitState::default()
             };
             run_in_theme(preference, |ui| {
-                sidebar_body(ui, &mut state, Some(Path::new("/repo")));
+                branch_menu(ui, &mut state);
+                dialogs(ui.ctx(), &mut state);
             });
             // The dialog stays open until the user confirms or cancels: a bare
             // render must not clear it.
             assert!(state.pending_branch_delete.is_some());
+        }
+    }
+
+    #[test]
+    fn commit_body_renders_in_every_amend_state() {
+        for preference in BOTH_THEMES {
+            for (amend, pushed) in [(false, None), (true, None), (true, Some("origin/main"))] {
+                let mut state = GitState {
+                    amend,
+                    amend_pushed_to: pushed.map(String::from),
+                    ..GitState::default()
+                };
+                run_in_theme(preference, |ui| {
+                    commit_body(ui, &mut state);
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn changes_body_renders_each_tick_state_in_both_themes() {
+        let folder = Status {
+            inside: vec![untracked("dir/a.json"), untracked("dir/b.json")],
+            outside: vec![],
+        };
+        let all_ticked: std::collections::HashMap<String, bool> = [
+            ("dir/a.json".to_string(), true),
+            ("dir/b.json".to_string(), true),
+        ]
+        .into_iter()
+        .collect();
+        let one_ticked: std::collections::HashMap<String, bool> =
+            [("dir/a.json".to_string(), true)].into_iter().collect();
+        let cases = [
+            (Status::default(), Default::default()),
+            (
+                Status {
+                    inside: vec![file("a.json", false), untracked("b.json")],
+                    outside: vec![file("c.json", false)],
+                },
+                Default::default(),
+            ),
+            (
+                Status {
+                    inside: vec![file("d.json", true)],
+                    outside: vec![],
+                },
+                Default::default(),
+            ),
+            (folder.clone(), all_ticked),
+            (folder, one_ticked),
+        ];
+        for preference in BOTH_THEMES {
+            for (status, ticks) in &cases {
+                let mut state = GitState {
+                    status: status.clone(),
+                    ticks: ticks.clone(),
+                    show_outside: true,
+                    ..GitState::default()
+                };
+                run_in_theme(preference, |ui| {
+                    let _ = changes_body(ui, &mut state, Some(std::path::Path::new("/repo")));
+                });
+            }
         }
     }
 }

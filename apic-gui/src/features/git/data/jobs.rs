@@ -33,7 +33,6 @@ pub(crate) struct DiffData {
 /// alongside the result so the caller knows, for a successful commit, to
 /// clear `GitState::commit_message`.
 pub(crate) enum MutateKind {
-    Stage,
     Unstage,
     Discard,
     Commit,
@@ -52,7 +51,7 @@ pub(crate) enum JobResult {
     /// unselected, does not get filed under the wrong key.
     Diff((String, bool), Result<DiffData, String>),
 
-    /// A stage, unstage, discard, commit, or branch switch, create or
+    /// An unstage, discard, commit, or branch switch, create or
     /// delete, run then followed by a status refresh in the same background
     /// job. The refreshed status travels with the result so a successful
     /// mutation lands on screen in one poll. The message names what the
@@ -62,6 +61,9 @@ pub(crate) enum JobResult {
 
     /// A branch listing.
     Branches(Result<Branches, String>),
+
+    /// What amending would rewrite, read when Amend is ticked.
+    Amend(Result<AmendInfo, String>),
 }
 
 /// Builds one `DiffData`: the line diff plus, for a `.json` path or a
@@ -185,9 +187,6 @@ pub(crate) struct DiffRequest {
 /// One mutating git command. Each is followed by a status refresh in the same
 /// job, so a successful mutation lands on screen in one poll.
 pub(crate) enum Mutation {
-    Stage {
-        path: String,
-    },
     Unstage {
         path: String,
     },
@@ -198,6 +197,13 @@ pub(crate) enum Mutation {
     },
     Commit {
         message: String,
+        amend: bool,
+
+        /// Ticked paths, staged first.
+        stage: Vec<String>,
+
+        /// Staged paths the user unticked, unstaged before the commit.
+        unstage: Vec<String>,
     },
     SwitchBranch {
         name: String,
@@ -231,7 +237,6 @@ impl Mutation {
     /// Which kind of mutation this is, carried back with the result.
     fn kind(&self) -> MutateKind {
         match self {
-            Mutation::Stage { .. } => MutateKind::Stage,
             Mutation::Unstage { .. } => MutateKind::Unstage,
             Mutation::Discard { .. } => MutateKind::Discard,
             Mutation::Commit { .. } => MutateKind::Commit,
@@ -245,10 +250,10 @@ impl Mutation {
     /// The status line text shown when the mutation succeeds.
     fn success_message(&self) -> String {
         match self {
-            Mutation::Stage { path } => format!("staged {path}"),
             Mutation::Unstage { path } => format!("unstaged {path}"),
             Mutation::Discard { path } => format!("discarded {path}"),
-            Mutation::Commit { .. } => "committed the staged changes".to_string(),
+            Mutation::Commit { amend: true, .. } => "amended the last commit".to_string(),
+            Mutation::Commit { amend: false, .. } => "committed the staged changes".to_string(),
             Mutation::SwitchBranch { name } => format!("switched to branch {name}"),
             Mutation::CreateBranch { name } => format!("created branch {name}"),
             Mutation::DeleteBranch { name } => format!("deleted branch {name}"),
@@ -259,10 +264,22 @@ impl Mutation {
     /// Runs the git command against the repository at `root`.
     fn run(&self, root: &Path) -> Result<(), String> {
         match self {
-            Mutation::Stage { path } => cli::stage(root, path),
             Mutation::Unstage { path } => cli::unstage(root, path),
             Mutation::Discard { path } => cli::discard(root, path),
-            Mutation::Commit { message } => cli::commit(root, message),
+            Mutation::Commit {
+                message,
+                amend,
+                stage,
+                unstage,
+            } => {
+                if !stage.is_empty() {
+                    cli::stage_paths(root, stage)?;
+                }
+                if !unstage.is_empty() {
+                    cli::unstage_paths(root, unstage)?;
+                }
+                cli::commit(root, message, *amend)
+            }
             Mutation::SwitchBranch { name } => cli::switch_branch(root, name),
             Mutation::CreateBranch { name } => cli::create_branch(root, name),
             Mutation::DeleteBranch { name } => cli::delete_branch(root, name),
@@ -272,6 +289,33 @@ impl Mutation {
             }
         }
     }
+}
+
+/// What amending would rewrite: the last commit's message, and the upstream
+/// that already holds that commit, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AmendInfo {
+    pub(crate) message: String,
+    pub(crate) pushed_to: Option<String>,
+}
+
+/// Starts reading what amending would rewrite.
+pub(crate) fn amend_info(
+    repo_root: PathBuf,
+    notify: impl Fn() + Send + 'static,
+) -> Receiver<JobResult> {
+    spawn(
+        move || {
+            JobResult::Amend(
+                cli::last_commit_message(&repo_root).map(|message| AmendInfo {
+                    message,
+                    pushed_to: cli::upstream(&repo_root)
+                        .filter(|_| cli::head_is_on_upstream(&repo_root)),
+                }),
+            )
+        },
+        notify,
+    )
 }
 
 /// Runs `job` on a new thread, sends its one result, then calls `notify` so

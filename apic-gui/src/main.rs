@@ -48,6 +48,7 @@ fn main() -> eframe::Result {
         "apic",
         options,
         Box::new(|cc| {
+            cc.egui_ctx.set_fonts(app::fonts_with_icons());
             install_themes(&cc.egui_ctx, Settings::load().theme);
             Ok(Box::new(App::new()))
         }),

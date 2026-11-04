@@ -11,7 +11,7 @@ use apic_core::json::method_str;
 use eframe::egui;
 
 use crate::app::App;
-use crate::app::state::DialogKind;
+use crate::app::state::{CentralView, DialogKind};
 use crate::features::contracts::state::{DeleteTarget, Entry, MainTab, Repair, RespTab};
 use crate::settings::Settings;
 
@@ -58,8 +58,8 @@ impl App {
         match crate::features::git::data::cli::discover(&root) {
             Ok(repo_root) => {
                 self.shell.repo_root = repo_root;
-                // The tab strip's dirty indicator must be correct before the
-                // Git tab is ever opened, so a project load fetches status
+                // The Git section header's dirty indicator must be correct before the
+                // Git section is ever opened, so a project load fetches status
                 // itself instead of waiting for tab activation.
                 if self.shell.repo_root.is_some() {
                     self.git.request_refresh();
@@ -395,6 +395,7 @@ impl App {
                     .position(|(_, p)| *p == dest)
                 {
                     self.load_template(i);
+                    self.shell.central = CentralView::Contracts;
                 }
                 self.shell.status = format!("created template '{name}'");
             }
@@ -468,6 +469,7 @@ impl App {
                     self.reload_project();
                     if let Some(i) = self.contracts.entries.iter().position(|e| e.path == dest) {
                         self.load(i);
+                        self.shell.central = CentralView::Contracts;
                     }
                     self.shell.status = format!("created {rel}");
                 }

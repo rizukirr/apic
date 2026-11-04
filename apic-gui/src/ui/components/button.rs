@@ -35,6 +35,18 @@ pub(crate) fn delete_button(ui: &mut egui::Ui) -> bool {
     resp.clicked()
 }
 
+/// A frameless icon button: `icon` (an `egui_phosphor::regular` constant) in
+/// the muted text colour, with egui's hover backdrop so it reads as
+/// clickable. Returns the response so callers can chain `.clicked()`.
+pub(crate) fn icon_button(ui: &mut egui::Ui, icon: &str, hover_text: &str) -> egui::Response {
+    let p = crate::ui::theme::palette(ui.ctx());
+    ui.add(
+        egui::Button::new(RichText::new(icon).color(p.on_surface_variant))
+            .frame_when_inactive(false),
+    )
+    .on_hover_text(hover_text)
+}
+
 /// The app's reusable flat text button: `label` in `color`, framed so egui
 /// gives it the standard hover/press feedback. The single place ordinary action
 /// buttons are built, so they share one look. Returns `true` on click.
