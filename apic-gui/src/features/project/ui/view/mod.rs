@@ -5,7 +5,7 @@ use eframe::egui;
 use egui::RichText;
 
 use crate::features::project::ui::state::{ProjectAction, ProjectState};
-use crate::ui::components::text_button;
+use crate::ui::components::{ButtonKind, DialogButton, dialog};
 use crate::ui::theme::*;
 
 /// Popup explaining why the folder picked with Open was refused, drawn while
@@ -18,29 +18,16 @@ use crate::ui::theme::*;
 pub(crate) fn refusal_dialog(ctx: &egui::Context, state: &ProjectState) -> Option<ProjectAction> {
     let p = palette(ctx);
     let refusal = state.refusal.as_ref()?;
-    let mut ok = false;
-    let modal = egui::Modal::new(egui::Id::new("open_refused_modal"))
-        .frame(egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::same(16)))
-        .show(ctx, |ui| {
-            ui.set_min_width(320.0);
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("Cannot open folder")
-                        .color(p.error)
-                        .strong()
-                        .size(16.0),
-                );
-            });
-            ui.add_space(SPACE_MEDIUM);
+    let outcome = dialog(
+        ctx,
+        "open_refused_modal",
+        "Cannot open folder",
+        |ui| {
             ui.label(RichText::new(refusal).color(p.on_surface));
-            ui.add_space(SPACE_LARGE);
-            ui.vertical_centered(|ui| {
-                if text_button(ui, "OK", p.primary) {
-                    ok = true;
-                }
-            });
-        });
-    (ok || modal.should_close()).then_some(ProjectAction::DismissRefusal)
+        },
+        &[DialogButton::new("OK", ButtonKind::Primary)],
+    );
+    (outcome.clicked.is_some() || outcome.closed).then_some(ProjectAction::DismissRefusal)
 }
 
 #[cfg(test)]

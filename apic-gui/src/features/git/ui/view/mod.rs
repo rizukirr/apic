@@ -21,7 +21,7 @@ use crate::features::git::domain::diff as domain_diff;
 use crate::features::git::domain::status::{Status, split_conflicts};
 use crate::features::git::ui::state::GitAction;
 use crate::features::git::ui::state::GitState;
-use crate::ui::components::{empty_state, text_button};
+use crate::ui::components::{ButtonKind, DialogButton, dialog, empty_state, text_button};
 use crate::ui::theme::*;
 
 /// What the Git section header should render, decided purely from a `Status`: the label
@@ -186,10 +186,13 @@ pub(crate) fn commit_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Git
     action
 }
 
-/// The git modal dialogs (discard, create branch, delete branch). Returns the
-/// last action any of them produced.
+/// The git modal dialogs (discard, create branch, delete branch, amend
+/// pushed). Returns the last action any of them produced.
 pub(crate) fn dialogs(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
     let mut action = None;
+    if let Some(a) = amend_pushed_dialog(ctx, state) {
+        action = Some(a);
+    }
     if let Some(a) = discard_dialog(ctx, state) {
         action = Some(a);
     }
@@ -200,6 +203,41 @@ pub(crate) fn dialogs(ctx: &egui::Context, state: &mut GitState) -> Option<GitAc
         action = Some(a);
     }
     action
+}
+
+/// Amend confirmation modal, shown while `confirm_amend` is set: the commit
+/// Amend would rewrite is already on an upstream, so amending it means a
+/// force push.
+fn amend_pushed_dialog(ctx: &egui::Context, state: &GitState) -> Option<GitAction> {
+    if !state.confirm_amend {
+        return None;
+    }
+    let p = palette(ctx);
+    let upstream = state.amend_pushed_to.as_deref().unwrap_or("the remote");
+    let outcome = dialog(
+        ctx,
+        "amend_pushed_modal",
+        "Amend pushed commit",
+        |ui| {
+            ui.label(
+                RichText::new(format!(
+                    "This commit is already on {upstream}. Amending it rewrites history, so you will need to force push."
+                ))
+                .color(p.on_surface_variant),
+            );
+        },
+        &[
+            DialogButton::new("Cancel", ButtonKind::Secondary),
+            DialogButton::new("Amend", ButtonKind::Danger),
+        ],
+    );
+    if outcome.clicked == Some(1) {
+        Some(GitAction::ConfirmAmend)
+    } else if outcome.clicked == Some(0) || outcome.closed {
+        Some(GitAction::CancelAmend)
+    } else {
+        None
+    }
 }
 
 /// The central body for the Git section: the diff view once selected, an empty
@@ -735,6 +773,24 @@ mod tests {
             // The dialog stays open until the user confirms or cancels: a bare
             // render must not clear it.
             assert!(state.pending_branch_delete.is_some());
+        }
+    }
+
+    #[test]
+    fn amend_popup_renders_in_both_themes() {
+        for preference in BOTH_THEMES {
+            let mut state = GitState {
+                amend: true,
+                amend_pushed_to: Some("origin/main".into()),
+                confirm_amend: true,
+                ..GitState::default()
+            };
+            run_in_theme(preference, |ui| {
+                assert!(dialogs(ui.ctx(), &mut state).is_none());
+            });
+            // The popup stays open until the user amends or cancels: a bare
+            // render must not clear it.
+            assert!(state.confirm_amend);
         }
     }
 

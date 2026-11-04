@@ -154,6 +154,7 @@ pub(crate) fn app_at(root: PathBuf) -> App {
         },
         contracts: ContractsState::default(),
         git: GitState::default(),
+        closing: false,
     }
 }
 
