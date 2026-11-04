@@ -145,6 +145,8 @@ pub(crate) fn conflict_fixture() -> PathBuf {
 /// Builds `App` with a struct literal rooted at `root`. Never calls
 /// `App::new()`: that loads `Settings::load()`, which reads the developer's
 /// real `~/.config/apic-gui/config.toml` and can open their last project.
+/// Its settings path is a fresh temp file, so no settings write reaches the
+/// real config either.
 pub(crate) fn app_at(root: PathBuf) -> App {
     App {
         shell: ShellState::default(),
@@ -155,6 +157,7 @@ pub(crate) fn app_at(root: PathBuf) -> App {
         contracts: ContractsState::default(),
         git: GitState::default(),
         closing: false,
+        settings_path: Some(tempdir().join("config.toml")),
     }
 }
 

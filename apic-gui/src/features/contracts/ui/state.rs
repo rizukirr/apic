@@ -167,6 +167,8 @@ pub(crate) enum ContractsEvent {
     ShowCentral,
     /// Run this held action, which the shell owns.
     Continue(Guarded),
+    /// This contract or template is now open.
+    Opened(PathBuf),
 }
 
 impl ContractsState {
@@ -450,19 +452,15 @@ impl ContractsState {
         match files::load_contract(&path) {
             Ok(model) => {
                 self.model = Some(model);
-                self.path = Some(path);
+                self.path = Some(path.clone());
                 self.selected = Some(i);
                 self.selected_template = None;
                 self.resp_tab = 0;
                 self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
-                events.push(ContractsEvent::Status(
-                    self.path
-                        .as_deref()
-                        .map(display_location)
-                        .unwrap_or_default(),
-                ));
+                events.push(ContractsEvent::Status(display_location(&path)));
+                events.push(ContractsEvent::Opened(path));
             }
             Err(err) => events.push(ContractsEvent::Status(format!("load error: {err}"))),
         }
@@ -480,7 +478,7 @@ impl ContractsState {
         match files::load_template(&path) {
             Ok(model) => {
                 self.model = Some(model);
-                self.path = Some(path);
+                self.path = Some(path.clone());
                 self.selected = None;
                 self.selected_template = Some(i);
                 self.resp_tab = 0;
@@ -488,6 +486,7 @@ impl ContractsState {
                 self.editing = false;
                 self.original_model = None;
                 events.push(ContractsEvent::Status(format!("template '{name}'")));
+                events.push(ContractsEvent::Opened(path));
             }
             Err(err) => events.push(ContractsEvent::Status(format!("template error: {err}"))),
         }
@@ -725,6 +724,28 @@ mod tests {
         assert!(events.contains(&ContractsEvent::Status(display_location(
             &state.entries[i].path
         ))));
+    }
+
+    #[test]
+    fn load_emits_opened() {
+        let paths = project();
+        let template_dir = paths.apic_dir.join("template");
+        std::fs::create_dir_all(&template_dir).expect("template dir creates");
+        std::fs::write(template_dir.join("base.json"), "{}").expect("template writes");
+        let mut state = ContractsState::default();
+        state.reload(&paths);
+        let i = entry(&state, "sample.json");
+
+        let events = state.handle(ContractsAction::Load(i), Some(&paths));
+        assert!(events.contains(&ContractsEvent::Opened(state.entries[i].path.clone())));
+
+        let t = state
+            .templates
+            .iter()
+            .position(|(name, _)| name == "base")
+            .expect("template is listed");
+        let events = state.handle(ContractsAction::LoadTemplate(t), Some(&paths));
+        assert!(events.contains(&ContractsEvent::Opened(state.templates[t].1.clone())));
     }
 
     #[test]
