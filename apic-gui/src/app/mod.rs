@@ -536,6 +536,9 @@ impl eframe::App for App {
         if let Some(a) = crate::features::contracts::ui::view::dialogs(&ctx, &mut self.contracts) {
             self.handle_contracts(a, &ctx);
         }
+        if let Some(a) = crate::features::project::ui::view::refusal_dialog(&ctx, &self.project) {
+            self.apply(Action::Project(a), &ctx);
+        }
     }
 }
 

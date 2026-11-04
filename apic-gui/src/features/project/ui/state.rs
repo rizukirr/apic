@@ -1,5 +1,5 @@
 //! State owned by the project feature: where the active project lives, the
-//! in-flight file dialog.
+//! in-flight file dialog, and why the last picked folder was refused.
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
@@ -27,6 +27,10 @@ pub(crate) struct ProjectState {
     /// In-flight native file dialog, run on a background thread so the portal
     /// call never blocks the UI, plus the action to perform on its result.
     pub(crate) pending: Option<(PickKind, Receiver<Option<PathBuf>>)>,
+
+    /// Why the folder picked with Open was refused, shown in a popup until
+    /// dismissed. `None` when there is nothing to show.
+    pub(crate) refusal: Option<String>,
 }
 
 /// A one-shot action from the project menu.
@@ -38,6 +42,8 @@ pub(crate) enum ProjectAction {
     New,
     /// `[ Import ]` → Postman: launch the file picker.
     ImportPostman,
+    /// Close the refused-folder popup.
+    DismissRefusal,
 }
 
 /// Something a project action asks the app shell to do.
@@ -76,6 +82,10 @@ impl ProjectState {
                 }
                 self.start_pick(PickKind::ImportPostman, ctx)
             }
+            ProjectAction::DismissRefusal => {
+                self.refusal = None;
+                Vec::new()
+            }
         }
     }
 
@@ -101,11 +111,18 @@ impl ProjectState {
             Ok(result) => {
                 let kind = *kind;
                 self.pending = None;
-                match (kind, result) {
+                let events = match (kind, result) {
                     (PickKind::OpenProject, Some(p)) => self.finish_open(p),
                     (PickKind::NewProject, Some(p)) => self.finish_new(p),
                     (PickKind::ImportPostman, Some(p)) => self.finish_import_postman(p),
                     (_, None) => Vec::new(),
+                };
+                if events.is_empty() {
+                    // Cancelled or refused: replace "Waiting for the file
+                    // dialog…" with what the footer showed before it.
+                    vec![ProjectEvent::Status(self.idle_status())]
+                } else {
+                    events
                 }
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -119,12 +136,24 @@ impl ProjectState {
         }
     }
 
+    /// The footer text when nothing is happening: the contracts folder of the
+    /// open project, or the hint to open one.
+    fn idle_status(&self) -> String {
+        match &self.root {
+            Some(root) => apic_core::file::home_relative(&apic_core::file::to_slash(root)),
+            None => "No project open. Use Open or New.".to_string(),
+        }
+    }
+
     /// Opens a chosen folder when it is already a project, otherwise
-    /// refuses with a status message and leaves the open project as it is.
+    /// refuses it in a popup and leaves the open project as it is.
     pub(crate) fn finish_open(&mut self, folder: PathBuf) -> Vec<ProjectEvent> {
         let location = apic_core::file::home_relative(&apic_core::file::to_slash(&folder));
         match open_refusal(data::has_config(&folder), &location) {
-            Some(refusal) => vec![ProjectEvent::Status(refusal)],
+            Some(refusal) => {
+                self.refusal = Some(refusal);
+                Vec::new()
+            }
             None => self.activate(folder),
         }
     }
@@ -209,10 +238,16 @@ mod tests {
 
         let events = state.finish_open(folder.clone());
 
+        assert!(events.is_empty(), "a refusal opens nothing: {events:?}");
         assert!(
-            matches!(events.as_slice(), [ProjectEvent::Status(s)] if s.starts_with("Not an apic project")),
-            "a non-project folder is refused with a status: {events:?}"
+            state
+                .refusal
+                .as_deref()
+                .is_some_and(|r| r.starts_with("Not an apic project")),
+            "the refusal must be shown in the popup"
         );
+        state.handle(ProjectAction::DismissRefusal, &egui::Context::default());
+        assert!(state.refusal.is_none(), "dismissing closes the popup");
         assert_eq!(state.project_root, Some(open), "the open project stays");
         assert!(
             !folder.join(".apic").exists(),
