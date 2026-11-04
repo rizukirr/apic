@@ -7,7 +7,8 @@ use egui::RichText;
 use crate::ui::theme::{Palette, SPACE_SMALL, palette};
 
 /// A rounded bar with an `outline_variant` border and a `surface_container`
-/// fill, laid out left to right, for a method and URL.
+/// fill, as wide as the space it sits in, laid out left to right, for a
+/// method and URL.
 pub(crate) fn url_bar<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let p = palette(ui.ctx());
     egui::Frame::NONE
@@ -16,6 +17,9 @@ pub(crate) fn url_bar<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R
         .corner_radius(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(8, 8))
         .show(ui, |ui| {
+            // Fill the pane's width like the tables below, rather than hugging
+            // the URL text.
+            ui.set_min_width(ui.available_width());
             ui.set_min_height(20.0);
             ui.horizontal(add).inner
         })
