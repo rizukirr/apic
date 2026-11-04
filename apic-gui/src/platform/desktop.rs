@@ -35,7 +35,7 @@ fn install_to(data_dir: &Path, exec: &str) -> Result<String, String> {
         .map_err(|e| format!("create {}: {e}", apps_dir.display()))?;
 
     let icon_path = icon_dir.join("apic-gui.png");
-    std::fs::write(&icon_path, include_bytes!("../assets/icon.png"))
+    std::fs::write(&icon_path, include_bytes!("../../assets/icon.png"))
         .map_err(|e| format!("write {}: {e}", icon_path.display()))?;
 
     let desktop_path = apps_dir.join("apic-gui.desktop");
