@@ -83,16 +83,20 @@ pub(crate) fn dialog(
             ui.set_min_width(DIALOG_WIDTH);
             ui.set_max_width(DIALOG_WIDTH);
             egui::Frame::new()
-                .inner_margin(egui::Margin::symmetric(16, 12))
+                .inner_margin(egui::Margin::symmetric(16, 8))
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(title).color(p.on_surface).size(15.0));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // `Sides` keeps the row as tall as its contents. A nested
+                    // right-to-left layout here would grow to the modal's
+                    // full available height and leave a gap under the title.
+                    egui::containers::Sides::new().show(
+                        ui,
+                        |ui| ui.label(RichText::new(title).color(p.on_surface).size(15.0)),
+                        |ui| {
                             if icon_button(ui, egui_phosphor::regular::X, "Close").clicked() {
                                 outcome.closed = true;
                             }
-                        });
-                    });
+                        },
+                    );
                 });
             ui.separator();
             egui::Frame::new().inner_margin(16).show(ui, |ui| {
