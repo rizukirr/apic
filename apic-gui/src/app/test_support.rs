@@ -12,10 +12,11 @@ use eframe::egui;
 
 use crate::app::App;
 use crate::app::state::ShellState;
-use crate::features::contracts::state::ContractsState;
+use crate::features::contracts::ui::state::ContractsState;
 use crate::features::git::data::cli;
 use crate::features::git::data::jobs::RepoPaths;
 use crate::features::git::ui::state::{GitEvent, GitState};
+use crate::features::project::ui::state::ProjectState;
 
 /// Fresh directory per test, made unique with the process id and a counter,
 /// mirroring `apic-core/src/config.rs:309-317`, so parallel test runs never
@@ -146,13 +147,13 @@ pub(crate) fn conflict_fixture() -> PathBuf {
 /// real `~/.config/apic-gui/config.toml` and can open their last project.
 pub(crate) fn app_at(root: PathBuf) -> App {
     App {
-        shell: ShellState {
+        shell: ShellState::default(),
+        project: ProjectState {
             project_root: Some(root),
             ..Default::default()
         },
         contracts: ContractsState::default(),
         git: GitState::default(),
-        pending_dialog: None,
     }
 }
 

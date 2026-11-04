@@ -1,27 +1,18 @@
-//! Application-level state: the active project location and window chrome.
+//! Application-level state: the window chrome and the repository location.
 //! Feature-specific state lives in that feature's own `state.rs`.
 
 use std::path::PathBuf;
 
 use crate::features::git::data::jobs::RepoPaths;
+use crate::features::project::ui::state::ProjectState;
 
-/// Application chrome and the active project location. Shared by every
+/// Application chrome and the repository location. Shared by every
 /// feature; no feature owns it.
 ///
 /// `Default` is written by hand rather than derived: `sidebar_open` starts
 /// `true`, and a derived `Default` would silently start the app with the
 /// sidebar collapsed.
 pub(crate) struct ShellState {
-    /// The directory whose contracts are listed in the sidebar.
-    pub(crate) root: Option<PathBuf>,
-
-    /// Absolute root of the active project (the dir containing `.apic/`). `None`
-    /// when no project is open. All discovery resolves against this, never cwd.
-    pub(crate) project_root: Option<PathBuf>,
-
-    /// The `.apic` directory, for locating templates.
-    pub(crate) apic_dir: Option<PathBuf>,
-
     /// The status line shown in the bottom bar.
     pub(crate) status: String,
 
@@ -49,11 +40,15 @@ pub(crate) struct ShellState {
 impl ShellState {
     /// The repository locations a git job runs against, or `None` when the
     /// project is not inside a repository.
-    pub(crate) fn repo_paths(&self) -> Option<RepoPaths> {
+    ///
+    /// # Arguments
+    ///
+    /// * `project` - where the active project and its contracts live
+    pub(crate) fn repo_paths(&self, project: &ProjectState) -> Option<RepoPaths> {
         let repo_root = self.repo_root.clone()?;
         Some(RepoPaths {
-            root: self.root.clone().unwrap_or_else(|| repo_root.clone()),
-            project_root: self.project_root.clone(),
+            root: project.root.clone().unwrap_or_else(|| repo_root.clone()),
+            project_root: project.project_root.clone(),
             repo_root,
         })
     }
@@ -62,9 +57,6 @@ impl ShellState {
 impl Default for ShellState {
     fn default() -> Self {
         Self {
-            root: None,
-            project_root: None,
-            apic_dir: None,
             status: String::new(),
             sidebar_open: true,
             central: CentralView::Contracts,
@@ -92,12 +84,4 @@ pub(crate) enum CentralView {
     Contracts,
     /// The selected git file's diff or conflict resolver.
     Git,
-}
-
-/// Which action consumes the path chosen by an in-flight file dialog.
-#[derive(Clone, Copy)]
-pub(crate) enum DialogKind {
-    OpenProject,
-    NewProject,
-    ImportPostman,
 }

@@ -56,7 +56,7 @@ pub(super) fn conflict_resolver(
 /// The preview is `conflict::render` called with the current choices, the
 /// same function Resolve calls with the same choices, so nothing shown here
 /// can drift from what actually reaches disk. Split shape matches
-/// `features::contracts::view`: `horizontal_top` with `allocate_ui_with_layout`
+/// `features::contracts::ui::view`: `horizontal_top` with `allocate_ui_with_layout`
 /// and a reserved divider width, rather than a second way to split a panel.
 ///
 /// The whole-file actions live in this header row rather than a pinned bar
@@ -69,7 +69,7 @@ pub(super) fn conflict_resolver(
 /// What remains is given to a left-aligned group holding the path then the
 /// side label, matching the non-conflicted header in `central_body`. The
 /// side label's width is measured first with `layout_no_wrap` (the same
-/// idiom `features::contracts::view` uses to size a field to its text) so
+/// idiom `features::contracts::ui::view` uses to size a field to its text) so
 /// the path's truncate width can be capped to leave room for it. Without
 /// that cap, a `.truncate()` label sizes itself against all remaining
 /// width, which is why the side label was pushed next to the buttons in an

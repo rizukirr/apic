@@ -8,3 +8,4 @@
 
 pub(crate) mod contracts;
 pub(crate) mod git;
+pub(crate) mod project;

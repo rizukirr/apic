@@ -81,6 +81,7 @@ mod layer_rules {
                 "git::ui",
                 "crate::app",
                 "features::contracts",
+                "features::project",
             ],
         );
     }
@@ -95,12 +96,16 @@ mod layer_rules {
                 "git::ui",
                 "crate::app",
                 "features::contracts",
+                "features::project",
             ],
         );
     }
 
     #[test]
     fn ui_does_not_reach_into_other_features_or_the_shell() {
-        assert_layer_avoids("ui", &["crate::app", "features::contracts"]);
+        assert_layer_avoids(
+            "ui",
+            &["crate::app", "features::contracts", "features::project"],
+        );
     }
 }

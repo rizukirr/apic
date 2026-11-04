@@ -5,26 +5,13 @@
 //! reaching into another feature's state.
 
 use crate::app::state::SidebarView;
-use crate::features::contracts::state::DeleteTarget;
+use crate::features::contracts::ui::state::ContractsAction;
 use crate::features::git::ui::state::GitAction;
+use crate::features::project::ui::state::ProjectAction;
 
-/// A one-shot action requested by the header or sidebar this frame.
-pub(crate) enum SidebarAction {
-    LoadContract(usize),
-    LoadTemplate(usize),
-    OpenProject,
-    NewProject,
-    ImportPostman,
-    NewTemplate,
-
-    /// Open the new-request dialog, pre-filled with this path prefix (e.g.
-    /// `auth/` when `+` is clicked on the `auth` folder, empty for the root
-    /// button).
-    NewRequest(String),
-
-    /// Ask to delete something; shows a confirmation before anything is removed.
-    RequestDelete(DeleteTarget),
-
+/// A one-shot action on the window chrome requested by the header or sidebar
+/// this frame.
+pub(crate) enum ShellAction {
     /// Toggle the left contracts sidebar between fully hidden and shown.
     ToggleSidebar,
 
@@ -38,9 +25,11 @@ pub(crate) enum SidebarAction {
     ToggleTemplatesSection,
 }
 
-/// Anything a view returned this frame: from the app bar, the sidebar, or the
-/// Git view in the central panel.
+/// Anything a view returned this frame: from the app bar, the sidebar, the
+/// contracts views, or the Git view in the central panel.
 pub(crate) enum Action {
-    Sidebar(SidebarAction),
+    Shell(ShellAction),
+    Project(ProjectAction),
+    Contracts(ContractsAction),
     Git(GitAction),
 }

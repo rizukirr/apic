@@ -1,30 +1,29 @@
 //! Application shell: the top-level state container, the eframe entry point,
 //! and the orchestration that spans features.
 //!
-//! `App` owns one state struct per feature plus the in-flight file dialog. A
-//! new feature adds a field here and a match arm in [`actions`]; it does not
+//! `App` owns one state struct per feature. A new feature adds a field here and a match arm in [`actions`]; it does not
 //! touch any other feature's state.
 
 pub(crate) mod actions;
-pub(crate) mod project;
 pub(crate) mod state;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-use std::path::PathBuf;
-
 use eframe::egui;
 use egui::RichText;
 
-use crate::app::actions::{Action, SidebarAction};
-use crate::app::state::{CentralView, DialogKind, ShellState, SidebarView};
-use crate::features::contracts::state::ContractsState;
-use crate::features::contracts::view::{
-    CentralOutcome, FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, header_actions,
-    sidebar_body, templates_body,
+use crate::app::actions::{Action, ShellAction};
+use crate::app::state::{CentralView, ShellState, SidebarView};
+use crate::features::contracts::ui::state::{
+    ContractsAction, ContractsEvent, ContractsPaths, ContractsState,
+};
+use crate::features::contracts::ui::view::{
+    FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, header_actions, sidebar_body,
+    templates_body,
 };
 use crate::features::git::ui::state::{GitAction, GitEvent, GitState};
 use crate::features::git::ui::view;
+use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
 use crate::settings::Settings;
 use crate::ui::components::{icon_button, section_header};
 use crate::ui::theme::*;
@@ -45,38 +44,36 @@ const TOOLBAR_ROW_H: f32 = 26.0;
 
 /// Whole-app state.
 ///
-/// One field per feature plus the in-flight file dialog. A new feature adds a
-/// field here and a match arm in the action dispatch; it does not touch any
+/// One field per feature. A new feature adds a field here and a match arm in the action dispatch; it does not touch any
 /// other feature's state.
 pub(crate) struct App {
     /// Application chrome and the active project location, shared by every
     /// feature.
     pub(crate) shell: ShellState,
 
+    /// Everything the project feature owns: where the active project lives.
+    pub(crate) project: ProjectState,
+
     /// Everything the contracts feature owns.
     pub(crate) contracts: ContractsState,
 
     /// Everything the git feature owns.
     pub(crate) git: GitState,
-
-    /// In-flight native file dialog, run on a background thread so the portal
-    /// call never blocks the UI, plus the action to perform on its result.
-    pub(crate) pending_dialog: Option<(DialogKind, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
 }
 
 impl App {
     pub(crate) fn new() -> Self {
         let mut app = App {
             shell: ShellState::default(),
+            project: ProjectState::default(),
             contracts: ContractsState::default(),
             git: GitState::default(),
-            pending_dialog: None,
         };
         let settings = Settings::load();
         if let Some(root) = settings.last_project
             && root.is_dir()
         {
-            app.shell.project_root = Some(root);
+            app.project.project_root = Some(root);
         }
         app.reload_project();
         if let Ok(sub) = std::env::var("APIC_AUTOEDIT")
@@ -86,8 +83,11 @@ impl App {
                 .iter()
                 .position(|e| e.error.is_none() && e.rel.contains(&sub))
         {
-            app.load(i);
-            app.begin_edit();
+            let paths = app.contracts_paths();
+            for action in [ContractsAction::Load(i), ContractsAction::ToggleEdit] {
+                let events = app.contracts.handle(action, paths.as_ref());
+                app.apply_contracts_events(events);
+            }
         }
         app
     }
@@ -99,7 +99,7 @@ impl App {
         let p = palette(ui.ctx());
         let mut action = None;
         let project = self
-            .shell
+            .project
             .project_root
             .as_deref()
             .and_then(|root| root.file_name())
@@ -110,7 +110,7 @@ impl App {
             ui.horizontal(|ui| {
                 ui.set_min_height(TOOLBAR_ROW_H);
                 if icon_button(ui, egui_phosphor::regular::SIDEBAR, "Toggle sidebar").clicked() {
-                    action = Some(Action::Sidebar(SidebarAction::ToggleSidebar));
+                    action = Some(Action::Shell(ShellAction::ToggleSidebar));
                 }
                 egui::MenuBar::new()
                     .style(|style: &mut egui::Style| {
@@ -121,15 +121,15 @@ impl App {
                         let title = format!("{project} {}", egui_phosphor::regular::CARET_DOWN);
                         ui.menu_button(RichText::new(title).color(p.on_surface).strong(), |ui| {
                             if ui.button("New project").clicked() {
-                                action = Some(Action::Sidebar(SidebarAction::NewProject));
+                                action = Some(Action::Project(ProjectAction::New));
                                 ui.close();
                             }
                             if ui.button("Open project").clicked() {
-                                action = Some(Action::Sidebar(SidebarAction::OpenProject));
+                                action = Some(Action::Project(ProjectAction::Open));
                                 ui.close();
                             }
                             if ui.button("Import Postman collection").clicked() {
-                                action = Some(Action::Sidebar(SidebarAction::ImportPostman));
+                                action = Some(Action::Project(ProjectAction::ImportPostman));
                                 ui.close();
                             }
                         });
@@ -197,16 +197,16 @@ impl App {
                             .color(p.on_surface);
                     let toggled = section_header(ui, self.shell.templates_open, label, |ui| {
                         if icon_button(ui, egui_phosphor::regular::PLUS, "New template").clicked() {
-                            action = Some(Action::Sidebar(SidebarAction::NewTemplate));
+                            action = Some(Action::Contracts(ContractsAction::OpenNewTemplate));
                         }
                     });
                     if toggled {
-                        action = Some(Action::Sidebar(SidebarAction::ToggleTemplatesSection));
+                        action = Some(Action::Shell(ShellAction::ToggleTemplatesSection));
                     }
                     if self.shell.templates_open
                         && let Some(a) = templates_body(ui, &mut self.contracts)
                     {
-                        action = Some(Action::Sidebar(a));
+                        action = Some(Action::Contracts(a));
                     }
                 });
                 let commit_title =
@@ -219,7 +219,7 @@ impl App {
                         .min_size(100.0)
                         .show(ui, |ui| {
                             if section_header(ui, true, commit_title, |_| {}) {
-                                action = Some(Action::Sidebar(SidebarAction::ToggleCommitSection));
+                                action = Some(Action::Shell(ShellAction::ToggleCommitSection));
                             }
                             if let Some(a) = view::commit_body(ui, &mut self.git) {
                                 action = Some(Action::Git(a));
@@ -228,7 +228,7 @@ impl App {
                 } else {
                     egui::Panel::bottom("commit_section_closed").show(ui, |ui| {
                         if section_header(ui, false, commit_title, |_| {}) {
-                            action = Some(Action::Sidebar(SidebarAction::ToggleCommitSection));
+                            action = Some(Action::Shell(ShellAction::ToggleCommitSection));
                         }
                     });
                 }
@@ -259,7 +259,7 @@ impl App {
                                 .button(RichText::new(contracts).color(p.on_surface))
                                 .clicked()
                             {
-                                action = Some(Action::Sidebar(SidebarAction::SwitchView(
+                                action = Some(Action::Shell(ShellAction::SwitchView(
                                     SidebarView::Contracts,
                                 )));
                                 ui.close();
@@ -268,7 +268,7 @@ impl App {
                                 .button(RichText::new(changes_title).color(changes_color))
                                 .clicked()
                             {
-                                action = Some(Action::Sidebar(SidebarAction::SwitchView(
+                                action = Some(Action::Shell(ShellAction::SwitchView(
                                     SidebarView::Changes,
                                 )));
                                 ui.close();
@@ -277,8 +277,8 @@ impl App {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             match self.shell.sidebar_view {
                                 SidebarView::Contracts => {
-                                    if let Some(a) = header_actions(ui, &mut self.contracts) {
-                                        action = Some(Action::Sidebar(a));
+                                    if let Some(a) = header_actions(ui) {
+                                        action = Some(Action::Contracts(a));
                                     }
                                 }
                                 SidebarView::Changes => {
@@ -300,7 +300,7 @@ impl App {
                 match self.shell.sidebar_view {
                     SidebarView::Contracts => {
                         if let Some(a) = sidebar_body(ui, &mut self.contracts) {
-                            action = Some(Action::Sidebar(a));
+                            action = Some(Action::Contracts(a));
                         }
                     }
                     SidebarView::Changes => {
@@ -315,50 +315,144 @@ impl App {
         action
     }
 
-    /// The central panel frame, plus the deferred work its body reported: both
-    /// need `&mut App`, which the body itself does not have.
+    /// The central panel frame, plus the action its body returned, applied
+    /// once the panel closure has released its borrow of the feature state.
     fn central(&mut self, ui: &mut egui::Ui) {
-        let mut out = CentralOutcome::default();
-        let mut git_action = None;
+        let mut action = None;
+        let has_project = self.project.project_root.is_some();
         egui::CentralPanel::default().show(ui, |ui| match self.shell.central {
             CentralView::Contracts => {
-                central_body(ui, &mut self.shell, &mut self.contracts, &mut out);
+                action = central_body(ui, &mut self.contracts, has_project).map(Action::Contracts);
             }
-            CentralView::Git => git_action = view::central_body(ui, &mut self.git),
+            CentralView::Git => action = view::central_body(ui, &mut self.git).map(Action::Git),
         });
         // Applied after the panel closure ends: `apply` needs `&mut self`,
-        // and the closure above is still holding a borrow of `self.git`.
-        if let Some(action) = git_action {
+        // and the closure above is still holding a borrow of the feature state.
+        if let Some(action) = action {
             let ctx = ui.ctx().clone();
-            self.apply(Action::Git(action), &ctx);
+            self.apply(action, &ctx);
         }
-        if out.toggle_edit {
-            if self.contracts.editing {
-                self.cancel_edit();
-            } else {
-                self.begin_edit();
+    }
+
+    /// Where the contracts feature reads and writes, or `None` when no
+    /// project is open.
+    pub(crate) fn contracts_paths(&self) -> Option<ContractsPaths> {
+        let apic_dir = self.project.apic_dir.clone()?;
+        Some(ContractsPaths {
+            contracts_root: self.project.root.clone(),
+            apic_dir,
+        })
+    }
+
+    /// Passes one contracts action to the contracts view model with the
+    /// current project paths, then applies the events it returns.
+    fn handle_contracts(&mut self, action: ContractsAction, ctx: &egui::Context) {
+        if matches!(action, ContractsAction::OpenNewRequest(_)) {
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new(FOCUS_NEW_REQUEST), "open".to_string()));
+        }
+        if matches!(action, ContractsAction::OpenNewTemplate) {
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new(FOCUS_NEW_TEMPLATE), "open".to_string()));
+        }
+        let paths = self.contracts_paths();
+        let events = self.contracts.handle(action, paths.as_ref());
+        self.apply_contracts_events(events);
+    }
+
+    /// Applies what the contracts view model asked the shell to do.
+    pub(crate) fn apply_contracts_events(&mut self, events: Vec<ContractsEvent>) {
+        for event in events {
+            match event {
+                ContractsEvent::Status(text) => self.shell.status = text,
+                // Writing a contract is the one moment the app itself dirties
+                // the tree and knows it, so keep the tab honest without a
+                // filesystem watcher.
+                ContractsEvent::Saved => self.git.request_refresh(),
+                ContractsEvent::ShowCentral => self.shell.central = CentralView::Contracts,
             }
         }
-        if let Some((path, buffer)) = out.promote
-            && std::fs::write(&path, &buffer).is_ok()
-        {
-            self.contracts.repair = None;
-            self.reload_project();
-            if let Some(i) = self.contracts.entries.iter().position(|e| e.path == path) {
-                self.load(i);
+    }
+
+    /// Reconciles the open contract with the freshly checked-out branch.
+    /// A checkout can change or remove the tree behind every piece of
+    /// derived contract state at once, and `reload_project` only rebuilds
+    /// `contracts.entries`. Does not touch `project.project_root` or persisted
+    /// settings, unlike opening a project: a checkout changes neither.
+    pub(crate) fn reconcile_after_checkout(&mut self) {
+        match self.read_project() {
+            Some(paths) => {
+                let events = self.contracts.reconcile(&paths);
+                self.apply_contracts_events(events);
+            }
+            None => self.contracts.close(),
+        }
+    }
+
+    /// Discovers contracts for the active project and reads each one's method for
+    /// the sidebar badge. Resolves everything against `self.project.project_root`;
+    /// never reads the process current directory.
+    pub(crate) fn reload_project(&mut self) {
+        match self.read_project() {
+            Some(paths) => {
+                let events = self.contracts.reload(&paths);
+                self.apply_contracts_events(events);
+            }
+            None => self.contracts.close(),
+        }
+    }
+
+    /// Discovers the repository and locates the config of the active project,
+    /// and returns where its contracts live. `None` when no project is open. A
+    /// config that does not read leaves `contracts_root` `None` and reports the
+    /// error on the status line.
+    fn read_project(&mut self) -> Option<ContractsPaths> {
+        let Some(root) = self.project.project_root.clone() else {
+            let _ = self.project.locate();
+            self.shell.repo_root = None;
+            self.shell.status = "No project open. Use Open or New.".into();
+            return None;
+        };
+
+        match crate::features::git::data::cli::discover(&root) {
+            Ok(repo_root) => {
+                self.shell.repo_root = repo_root;
+                // The Git section header's dirty indicator must be correct before the
+                // Git section is ever opened, so a project load fetches status
+                // itself instead of waiting for tab activation.
+                if self.shell.repo_root.is_some() {
+                    self.git.request_refresh();
+                }
+            }
+            Err(err) => {
+                self.shell.repo_root = None;
+                self.shell.status = err;
             }
         }
-        if out.saved {
-            // A save is the one moment the app itself dirties the tree and
-            // knows it, so keep the tab honest without a filesystem watcher.
-            self.git.request_refresh();
+
+        if let Err(err) = self.project.locate() {
+            self.shell.status = apic_core::file::home_relative(&format!("Project error: {err}"));
+        }
+        self.contracts_paths()
+    }
+
+    /// Applies what the project view model asked the shell to do.
+    fn apply_project_events(&mut self, events: Vec<ProjectEvent>) {
+        for event in events {
+            match event {
+                ProjectEvent::Opened(folder) => {
+                    self.contracts.close();
+                    self.reload_project();
+                    Settings::update(|s| s.last_project = Some(folder));
+                }
+                ProjectEvent::ContractsChanged => self.reload_project(),
+                ProjectEvent::Status(text) => self.shell.status = text,
+            }
         }
     }
 
     /// Polls the git view model and applies the events it returns. Called
     /// every frame from `App::ui`.
     pub(crate) fn poll_git(&mut self, ctx: &egui::Context) {
-        let paths = self.shell.repo_paths();
+        let paths = self.shell.repo_paths(&self.project);
         let events = self.git.poll(paths.as_ref(), ctx);
         for event in events {
             match event {
@@ -370,71 +464,35 @@ impl App {
 
     /// Passes one git action to the git view model with the current repo paths.
     fn handle_git(&mut self, action: GitAction, ctx: &egui::Context) {
-        let paths = self.shell.repo_paths();
+        let paths = self.shell.repo_paths(&self.project);
         self.git.handle(action, paths.as_ref(), ctx);
     }
 
     /// Apply an action returned by the top bar or the sidebar to app state.
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         match action {
-            Action::Sidebar(SidebarAction::LoadContract(i)) => {
-                self.shell.central = CentralView::Contracts;
-                let invalid = self
-                    .contracts
-                    .entries
-                    .get(i)
-                    .map(|e| e.error.is_some())
-                    .unwrap_or(false);
-                if invalid {
-                    self.enter_repair(i);
-                } else {
-                    self.contracts.repair = None;
-                    self.load(i);
-                }
+            Action::Project(action) => {
+                let events = self.project.handle(action, ctx);
+                self.apply_project_events(events);
             }
-            Action::Sidebar(SidebarAction::LoadTemplate(i)) => {
-                self.shell.central = CentralView::Contracts;
-                self.load_template(i);
-            }
-            Action::Sidebar(SidebarAction::OpenProject) => self.open_project(ctx),
-            Action::Sidebar(SidebarAction::NewProject) => self.new_project(ctx),
-            Action::Sidebar(SidebarAction::ImportPostman) => self.import_postman(ctx),
-            Action::Sidebar(SidebarAction::NewTemplate) => {
-                self.contracts.new_template = Some(String::new());
-                ctx.data_mut(|d| {
-                    d.insert_temp(egui::Id::new(FOCUS_NEW_TEMPLATE), "open".to_string())
-                });
-            }
-            Action::Sidebar(SidebarAction::NewRequest(prefix)) => {
-                self.contracts.new_request = Some(prefix);
-                self.contracts.new_request_seed = 0;
-                ctx.data_mut(|d| {
-                    d.insert_temp(egui::Id::new(FOCUS_NEW_REQUEST), "open".to_string())
-                });
-            }
-            Action::Sidebar(SidebarAction::RequestDelete(target)) => {
-                self.contracts.pending_delete = Some(target);
-            }
-            Action::Sidebar(SidebarAction::ToggleSidebar) => {
+            Action::Shell(ShellAction::ToggleSidebar) => {
                 self.shell.sidebar_open = !self.shell.sidebar_open;
             }
-            Action::Sidebar(SidebarAction::ToggleCommitSection) => {
+            Action::Shell(ShellAction::ToggleCommitSection) => {
                 self.shell.commit_open = !self.shell.commit_open;
             }
-            Action::Sidebar(SidebarAction::SwitchView(view)) => {
+            Action::Shell(ShellAction::SwitchView(view)) => {
                 let was = self.shell.sidebar_view;
                 self.shell.sidebar_view = view;
                 if view == SidebarView::Changes && was != SidebarView::Changes {
                     self.handle_git(GitAction::Refresh, ctx);
                 }
             }
-            Action::Sidebar(SidebarAction::ToggleTemplatesSection) => {
+            Action::Shell(ShellAction::ToggleTemplatesSection) => {
                 self.shell.templates_open = !self.shell.templates_open;
             }
-            Action::Git(GitAction::SwitchBranch { .. })
-                if self.contracts.editing
-                    && self.contracts.model != self.contracts.original_model =>
-            {
+            Action::Contracts(action) => self.handle_contracts(action, ctx),
+            Action::Git(GitAction::SwitchBranch { .. }) if self.contracts.has_unsaved_edits() => {
                 let open = self
                     .contracts
                     .path
@@ -462,7 +520,8 @@ impl eframe::App for App {
     // via `ui.ctx()`.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        self.poll_dialog(&ctx);
+        let events = self.project.poll(&ctx);
+        self.apply_project_events(events);
         self.poll_git(&ctx);
         let top = self.top_bar(ui);
         self.bottom_bar(ui);
@@ -474,10 +533,12 @@ impl eframe::App for App {
         if let Some(a) = view::dialogs(&ctx, &mut self.git) {
             self.apply(Action::Git(a), &ctx);
         }
-        self.new_template_dialog(&ctx);
-        self.new_request_dialog(&ctx);
-        self.delete_dialog(&ctx);
-        self.open_blocked_dialog(&ctx);
+        if let Some(a) = crate::features::contracts::ui::view::dialogs(&ctx, &mut self.contracts) {
+            self.handle_contracts(a, &ctx);
+        }
+        if let Some(a) = crate::features::project::ui::view::refusal_dialog(&ctx, &self.project) {
+            self.apply(Action::Project(a), &ctx);
+        }
     }
 }
 
@@ -541,10 +602,11 @@ mod tests {
     #[test]
     fn cancel_edit_restores_pre_edit_model() {
         let mut app = app_at(tempdir());
+        let ctx = egui::Context::default();
         app.contracts.model = Some(sample_model());
         let original = app.contracts.model.clone();
 
-        app.begin_edit();
+        app.apply(Action::Contracts(ContractsAction::ToggleEdit), &ctx);
         // Simulate the reported destructive edit: clear the response code 200.
         app.contracts.model.as_mut().unwrap().responses[0].code = String::new();
         assert_ne!(
@@ -552,7 +614,7 @@ mod tests {
             "the edit should change the model"
         );
 
-        app.cancel_edit();
+        app.apply(Action::Contracts(ContractsAction::ToggleEdit), &ctx);
         assert_eq!(
             app.contracts.model, original,
             "cancel must restore the pre-edit model"
@@ -578,9 +640,8 @@ mod tests {
         let contract = apic_core::json::json_get(json, None).expect("valid contract");
         let mut app = app_at(tempdir());
         app.contracts.model = Some(EditModel::from_contract(contract));
-        app.begin_edit();
-
         let ctx = egui::Context::default();
+        app.apply(Action::Contracts(ContractsAction::ToggleEdit), &ctx);
 
         let run_at = |app: &mut App, w: f32, h: f32, frames: usize| {
             let input = egui::RawInput {
@@ -694,7 +755,7 @@ mod tests {
         assert!(app.git.pending.is_none());
 
         app.apply(
-            Action::Sidebar(SidebarAction::SwitchView(SidebarView::Changes)),
+            Action::Shell(ShellAction::SwitchView(SidebarView::Changes)),
             &ctx,
         );
 
@@ -742,7 +803,7 @@ mod tests {
         let mut app = app_at(tempdir());
         let ctx = egui::Context::default();
         app.shell.central = CentralView::Git;
-        app.apply(Action::Sidebar(SidebarAction::LoadContract(0)), &ctx);
+        app.apply(Action::Contracts(ContractsAction::Load(0)), &ctx);
         assert_eq!(app.shell.central, CentralView::Contracts);
     }
 
@@ -856,9 +917,9 @@ mod tests {
             .iter()
             .position(|e| e.rel == "sample.json")
             .expect("sample.json is in the fixture");
-        app.load(i);
+        app.apply(Action::Contracts(ContractsAction::Load(i)), &ctx);
 
-        app.begin_edit();
+        app.apply(Action::Contracts(ContractsAction::ToggleEdit), &ctx);
         app.contracts.model.as_mut().unwrap().name = "dirtied".to_string();
 
         app.apply(
@@ -905,6 +966,7 @@ mod tests {
         .expect("fixture file writes");
 
         let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
         app.reload_project();
         let i = app
             .contracts
@@ -912,7 +974,11 @@ mod tests {
             .iter()
             .position(|e| e.rel == "twobodies.json")
             .expect("twobodies.json is listed");
-        app.load(i);
+        // The scan flags this file invalid, which would send `Load` to the
+        // repair editor. Clearing the flag reaches `load` itself, the path a
+        // branch-switch reconcile takes without consulting the flag.
+        app.contracts.entries[i].error = None;
+        app.apply(Action::Contracts(ContractsAction::Load(i)), &ctx);
 
         // The status assertion is what proves the Err arm ran. `model` starts
         // as `None`, so on its own it would also pass if `load` did nothing.
@@ -944,7 +1010,7 @@ mod tests {
             .iter()
             .position(|e| e.rel == "sample.json")
             .expect("sample.json is in the fixture");
-        app.load(i);
+        app.apply(Action::Contracts(ContractsAction::Load(i)), &ctx);
         let path_before = app.contracts.path.clone();
 
         app.apply(
@@ -1001,7 +1067,7 @@ mod tests {
             .iter()
             .position(|e| e.rel == "other.json")
             .expect("other.json only exists on apic-second");
-        app.load(i);
+        app.apply(Action::Contracts(ContractsAction::Load(i)), &ctx);
         assert!(app.contracts.model.is_some());
 
         app.apply(
