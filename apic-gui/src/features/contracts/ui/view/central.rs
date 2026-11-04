@@ -156,13 +156,13 @@ pub(crate) fn central_body(
                         .id_salt("left_pane_scroll")
                         .auto_shrink([false, false])
                         .show(left, |ui| {
-                            section_heading(ui, "Headers", model.headers.len());
+                            section_heading(ui, "Headers");
                             headers(ui, model, *editing);
                             ui.add_space(16.0);
-                            section_heading(ui, "Query", model.query.len());
+                            section_heading(ui, "Query");
                             query_section(ui, model, *editing);
                             ui.add_space(16.0);
-                            section_heading(ui, "Request", 0);
+                            section_heading(ui, "Request");
                             request_body(ui, model, *editing);
                         });
                 });
@@ -248,21 +248,10 @@ fn response_pane(
     action
 }
 
-/// A left-pane section heading: `label` in bold, then `count` in a smaller
-/// size when it is not zero, both in `on_surface_variant`.
-fn section_heading(ui: &mut egui::Ui, label: &str, count: usize) {
+/// A left-pane section heading: `label` in bold, in `on_surface_variant`.
+fn section_heading(ui: &mut egui::Ui, label: &str) {
     let p = palette(ui.ctx());
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(label).strong().color(p.on_surface_variant));
-        if count > 0 {
-            let size = egui::TextStyle::Body.resolve(ui.style()).size * 0.75;
-            ui.label(
-                RichText::new(count.to_string())
-                    .size(size)
-                    .color(p.on_surface_variant),
-            );
-        }
-    });
+    ui.label(RichText::new(label).strong().color(p.on_surface_variant));
     ui.add_space(6.0);
 }
 
