@@ -169,16 +169,18 @@ pub(crate) fn central_body(
                 });
 
             // An endpoint is expected to document a response, so default to
-            // a 200 in edit mode (its editor shows without "+ new response").
+            // a 200 in edit mode (its editor shows without "+ New example").
             if *editing && model.responses.is_empty() {
                 model.responses.push(apic_core::edit::EditResponse::blank());
             }
             if *resp_tab >= model.responses.len() {
                 *resp_tab = 0;
             }
-            // Per-response status strip; its `code - title` tabs select the
+            // Response-example dropdown; its `code - title` entries select the
             // response whose body/headers the tab bar below shows.
-            response_code_selector(ui, model, resp_tab, *editing);
+            if let Some(a) = response_code_selector(ui, model, resp_tab, *editing) {
+                action = Some(a);
+            }
             let resp_headers = model
                 .responses
                 .get(*resp_tab)
@@ -295,6 +297,19 @@ mod tests {
                     ..Default::default()
                 };
                 central_body(ui, &mut empty, true);
+
+                let mut classes = ContractsState {
+                    model: Some(model_from(
+                        r#"{ "name": "classes", "method": "GET", "url": "https://example.com", "headers": [],
+                            "responses": [ { "code": 200, "description": "ok" }, { "code": 301, "description": "moved" },
+                                           { "code": 404, "description": "not found" }, { "code": 500, "description": "boom" } ] }"#,
+                    )),
+                    ..Default::default()
+                };
+                central_body(ui, &mut classes, true);
+                classes.editing = true;
+                classes.resp_tab = 2;
+                central_body(ui, &mut classes, true);
             });
         }
     }

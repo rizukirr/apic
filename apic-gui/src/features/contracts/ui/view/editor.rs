@@ -11,6 +11,7 @@ use egui::{Color32, RichText};
 use apic_core::edit::{EditAction, EditBody, EditModel, Field, apply};
 use apic_core::json::method_str;
 
+use crate::features::contracts::ui::state::ContractsAction;
 use crate::ui::components::{
     add_button, delete_button, fill_column, header_label, json_editor, metadata_table,
     required_chip, section_label, table_frame, tcell_edit, tcell_edit_code, text_button, url_bar,
@@ -422,136 +423,150 @@ pub(super) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bo
     ui.add_space(SPACE_MEDIUM);
 }
 
-/// The response-code tab strip: one selectable tab per response code plus a
-/// `+ new response` button. In edit mode the active tab's code is edited inline
-/// (frameless) and carries an `x` to delete that response. Selecting a tab sets
-/// `resp_tab`, so both `responses()` and the RespHeader tab share it.
+/// Color for an HTTP status code by its class: 2xx success, 3xx info, 4xx
+/// warning, 5xx and anything that is not a three-digit code error.
+pub(super) fn status_color(code: &str, p: &Palette) -> Color32 {
+    if code.len() != 3 || !code.bytes().all(|b| b.is_ascii_digit()) {
+        return p.error;
+    }
+    match code.as_bytes()[0] {
+        b'2' => p.success,
+        b'3' => p.info,
+        b'4' => p.warning,
+        _ => p.error,
+    }
+}
+
+/// The response-example dropdown: one entry per response, each labelled
+/// `code - title` in its status color. In edit mode the list ends with a
+/// "+ New example" entry, and the selected response's code and title are edited
+/// inline next to the dropdown with an `x` to delete it. Selecting an entry sets
+/// `resp_tab`, so the body and headers tabs below show that response.
+///
+/// # Returns
+///
+/// [`ContractsAction::OpenNewExample`] when "+ New example" was clicked.
 pub(super) fn response_code_selector(
     ui: &mut egui::Ui,
     model: &mut EditModel,
     resp_tab: &mut usize,
     editing: bool,
-) {
+) -> Option<ContractsAction> {
     let p = palette(ui.ctx());
     let mut actions: Vec<EditAction> = Vec::new();
-    // The active tab's code editor carries a stable id so we can move the caret
-    // to it the instant a tab is selected or a new response is added.
+    let mut action = None;
+    // The selected response's code editor carries a stable id so the caret can
+    // move to it the instant another response is selected.
     let code_edit_id = ui.make_persistent_id("resp_code_edit");
-    // Set when the active response changes this frame so the code field takes
-    // focus on the next frame (when it renders as the editable, active tab).
     let mut focus_code = false;
-    // The strip scrolls horizontally rather than wrapping, so many response
-    // codes stay on one line with the tabs' `code - title` labels intact.
-    egui::ScrollArea::horizontal()
-        .id_salt("resp_code_strip")
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                for i in 0..model.responses.len() {
-                    let selected = i == *resp_tab;
-                    let code_ok = model.responses[i].code.trim().parse::<u16>().is_ok();
-                    let color = if !code_ok {
-                        p.error
-                    } else if selected {
-                        p.success
-                    } else {
-                        p.on_surface_variant
-                    };
-                    if editing && selected {
-                        // The active tab is edited in place, no bordered box:
-                        // `[code] - [title] x`, code first so focus lands there.
-                        // Tight spacing so the fields read as one label, not a row.
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        // Size the code field to its text (min 3 digits) so the
-                        // `-` hugs the code instead of sitting past a fixed width.
-                        let code_w = {
-                            let code = &model.responses[i].code;
-                            let shown: String = if code.chars().count() < 3 {
-                                "000".to_string()
-                            } else {
-                                code.chars().take(6).collect()
-                            };
-                            let font = egui::TextStyle::Body.resolve(ui.style());
-                            ui.painter()
-                                .layout_no_wrap(shown, font, egui::Color32::PLACEHOLDER)
-                                .size()
-                                .x
-                        };
-                        ui.add(
-                            egui::TextEdit::singleline(&mut model.responses[i].code)
-                                .id(code_edit_id)
-                                .frame(egui::Frame::NONE)
-                                .desired_width(code_w + 10.0)
-                                .text_color(color),
-                        );
-                        // A status code is exactly 3 digits: drop anything else
-                        // and cap the length as the user types.
-                        let code = &mut model.responses[i].code;
-                        if code.len() > 3 || !code.bytes().all(|b| b.is_ascii_digit()) {
-                            *code = code
-                                .chars()
-                                .filter(|c| c.is_ascii_digit())
-                                .take(3)
-                                .collect();
-                        }
-                        ui.label(RichText::new("-").color(p.on_surface_variant));
-                        // Size the title field to its text (30-char cap) so the
-                        // `x` sits right after the title instead of a fixed gap.
-                        let title_w = {
-                            let title = &model.responses[i].description;
-                            let shown: String = if title.is_empty() {
-                                "title".to_string()
-                            } else {
-                                title.chars().take(30).collect()
-                            };
-                            let font = egui::TextStyle::Body.resolve(ui.style());
-                            ui.painter()
-                                .layout_no_wrap(shown, font, egui::Color32::PLACEHOLDER)
-                                .size()
-                                .x
-                        };
-                        ui.add(
-                            egui::TextEdit::singleline(&mut model.responses[i].description)
-                                .frame(egui::Frame::NONE)
-                                .desired_width(title_w + 18.0)
-                                .hint_text("title")
-                                .text_color(p.on_surface_variant),
-                        );
-                        if delete_button(ui) {
-                            actions.push(EditAction::Delete {
-                                field: Field::ResponseCode(i),
-                            });
-                        }
-                    } else {
-                        let label = status_tab_label(
-                            &model.responses[i].code,
-                            &model.responses[i].description,
-                        );
-                        if ui
-                            .selectable_label(selected, RichText::new(label).color(color).strong())
-                            .clicked()
-                        {
-                            *resp_tab = i;
-                            focus_code = true;
-                        }
+    ui.horizontal(|ui| {
+        let selected_text = model
+            .responses
+            .get(*resp_tab)
+            .map(|r| {
+                RichText::new(status_tab_label(&r.code, &r.description))
+                    .color(status_color(r.code.trim(), p))
+                    .strong()
+            })
+            .unwrap_or_else(|| RichText::new("?").color(p.on_surface_variant));
+        egui::ComboBox::from_id_salt("resp_example")
+            .selected_text(selected_text)
+            .show_ui(ui, |ui| {
+                for (i, r) in model.responses.iter().enumerate() {
+                    let label = RichText::new(status_tab_label(&r.code, &r.description))
+                        .color(status_color(r.code.trim(), p));
+                    if ui.selectable_label(i == *resp_tab, label).clicked() {
+                        *resp_tab = i;
+                        focus_code = true;
                     }
                 }
-                if editing && add_button(ui, "+ new response") {
-                    // Focus the new tab's code so the user can type it straight away.
-                    *resp_tab = model.responses.len();
-                    focus_code = true;
-                    actions.push(EditAction::Add {
-                        field: Field::ResponseAdd,
-                    });
+                if editing {
+                    ui.separator();
+                    if ui.button("+ New example").clicked() {
+                        action = Some(ContractsAction::OpenNewExample);
+                        ui.close();
+                    }
                 }
             });
-        });
+        if !editing {
+            return;
+        }
+        let i = *resp_tab;
+        if i >= model.responses.len() {
+            return;
+        }
+        // The selected response is edited in place, no bordered box:
+        // `[code] - [title] x`. Tight spacing so the fields read as one label.
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let color = status_color(model.responses[i].code.trim(), p);
+        // Size the code field to its text (min 3 digits) so the `-` hugs the
+        // code instead of sitting past a fixed width.
+        let code_w = {
+            let code = &model.responses[i].code;
+            let shown: String = if code.chars().count() < 3 {
+                "000".to_string()
+            } else {
+                code.chars().take(6).collect()
+            };
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            ui.painter()
+                .layout_no_wrap(shown, font, egui::Color32::PLACEHOLDER)
+                .size()
+                .x
+        };
+        ui.add(
+            egui::TextEdit::singleline(&mut model.responses[i].code)
+                .id(code_edit_id)
+                .frame(egui::Frame::NONE)
+                .desired_width(code_w + 10.0)
+                .text_color(color),
+        );
+        // A status code is exactly 3 digits: drop anything else and cap the
+        // length as the user types.
+        let code = &mut model.responses[i].code;
+        if code.len() > 3 || !code.bytes().all(|b| b.is_ascii_digit()) {
+            *code = code
+                .chars()
+                .filter(|c| c.is_ascii_digit())
+                .take(3)
+                .collect();
+        }
+        ui.label(RichText::new("-").color(p.on_surface_variant));
+        // Size the title field to its text (30-char cap) so the `x` sits right
+        // after the title instead of a fixed gap.
+        let title_w = {
+            let title = &model.responses[i].description;
+            let shown: String = if title.is_empty() {
+                "title".to_string()
+            } else {
+                title.chars().take(30).collect()
+            };
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            ui.painter()
+                .layout_no_wrap(shown, font, egui::Color32::PLACEHOLDER)
+                .size()
+                .x
+        };
+        ui.add(
+            egui::TextEdit::singleline(&mut model.responses[i].description)
+                .frame(egui::Frame::NONE)
+                .desired_width(title_w + 18.0)
+                .hint_text("title")
+                .text_color(p.on_surface_variant),
+        );
+        if delete_button(ui) {
+            actions.push(EditAction::Delete {
+                field: Field::ResponseCode(i),
+            });
+        }
+    });
     if editing && focus_code {
         ui.ctx().memory_mut(|m| m.request_focus(code_edit_id));
     }
     for a in &actions {
         apply(model, a);
     }
+    action
 }
 
 /// The status-tab label: `code - title`, or just `code` when the response has no
@@ -628,6 +643,17 @@ mod tests {
                 response_headers(ui, &mut m, 0, true);
             });
         }
+    }
+
+    #[test]
+    fn status_color_follows_the_code_class() {
+        let p = &crate::ui::theme::TOKYO_NIGHT_STORM;
+        assert_eq!(status_color("200", p), p.success);
+        assert_eq!(status_color("301", p), p.info);
+        assert_eq!(status_color("404", p), p.warning);
+        assert_eq!(status_color("500", p), p.error);
+        assert_eq!(status_color("abc", p), p.error);
+        assert_eq!(status_color("20", p), p.error);
     }
 
     #[test]
