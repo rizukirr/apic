@@ -467,38 +467,53 @@ pub(super) fn status_color(code: &str, p: &Palette) -> Color32 {
     }
 }
 
-/// The response-example dropdown: one entry per response, each labelled
-/// `code - title` in its status color. In edit mode the list ends with a
-/// "+ New example" entry, and the selected response's code and title are edited
-/// inline next to the dropdown with an `x` to delete it. Selecting an entry sets
-/// `resp_tab`, so the body and headers tabs below show that response.
+/// The stable id of the selected response's code field, so picking another
+/// response in [`response_picker`] can move the caret to it in
+/// [`response_fields`].
+fn resp_code_edit_id() -> egui::Id {
+    egui::Id::new("resp_code_edit")
+}
+
+/// The response-example picker: a frameless dropdown whose selected text is
+/// `code title` in its status color, with one `code - title` entry per
+/// response. In edit mode the list ends with a "+ New example" entry. Picking an
+/// entry sets `resp_tab`, so the body and headers tabs show that response, and
+/// while editing moves the caret to its code field.
 ///
 /// # Returns
 ///
 /// [`ContractsAction::OpenNewExample`] when "+ New example" was clicked.
-pub(super) fn response_code_selector(
+pub(super) fn response_picker(
     ui: &mut egui::Ui,
-    model: &mut EditModel,
+    model: &EditModel,
     resp_tab: &mut usize,
     editing: bool,
 ) -> Option<ContractsAction> {
     let p = palette(ui.ctx());
-    let mut actions: Vec<EditAction> = Vec::new();
     let mut action = None;
-    // The selected response's code editor carries a stable id so the caret can
-    // move to it the instant another response is selected.
-    let code_edit_id = ui.make_persistent_id("resp_code_edit");
     let mut focus_code = false;
-    ui.horizontal(|ui| {
-        let selected_text = model
-            .responses
-            .get(*resp_tab)
-            .map(|r| {
-                RichText::new(status_tab_label(&r.code, &r.description))
-                    .color(status_color(r.code.trim(), p))
-                    .strong()
-            })
-            .unwrap_or_else(|| RichText::new("?").color(p.on_surface_variant));
+    let selected_text = model
+        .responses
+        .get(*resp_tab)
+        .map(|r| {
+            RichText::new(status_picker_label(&r.code, &r.description))
+                .color(status_color(r.code.trim(), p))
+                .strong()
+        })
+        .unwrap_or_else(|| RichText::new("?").color(p.on_surface_variant));
+    ui.scope(|ui| {
+        // No box around the closed dropdown, only the colored status text.
+        let widgets = &mut ui.visuals_mut().widgets;
+        for w in [
+            &mut widgets.inactive,
+            &mut widgets.hovered,
+            &mut widgets.active,
+            &mut widgets.open,
+        ] {
+            w.bg_fill = Color32::TRANSPARENT;
+            w.weak_bg_fill = Color32::TRANSPARENT;
+            w.bg_stroke = egui::Stroke::NONE;
+        }
         egui::ComboBox::from_id_salt("resp_example")
             .selected_text(selected_text)
             .show_ui(ui, |ui| {
@@ -518,15 +533,26 @@ pub(super) fn response_code_selector(
                     }
                 }
             });
-        if !editing {
-            return;
-        }
-        let i = *resp_tab;
-        if i >= model.responses.len() {
-            return;
-        }
-        // The selected response is edited in place, no bordered box:
-        // `[code] - [title] x`. Tight spacing so the fields read as one label.
+    });
+    if editing && focus_code {
+        ui.ctx()
+            .memory_mut(|m| m.request_focus(resp_code_edit_id()));
+    }
+    action
+}
+
+/// The selected response's code and title, edited in place with no bordered
+/// box as `[code] - [title] x`, where `x` deletes the response. Only drawn in
+/// edit mode. The code field keeps at most three digits.
+pub(super) fn response_fields(ui: &mut egui::Ui, model: &mut EditModel, resp_tab: usize) {
+    let p = palette(ui.ctx());
+    let i = resp_tab;
+    if i >= model.responses.len() {
+        return;
+    }
+    let mut actions: Vec<EditAction> = Vec::new();
+    ui.horizontal(|ui| {
+        // Tight spacing so the fields read as one label.
         ui.spacing_mut().item_spacing.x = 4.0;
         let color = status_color(model.responses[i].code.trim(), p);
         // Size the code field to its text (min 3 digits) so the `-` hugs the
@@ -546,7 +572,7 @@ pub(super) fn response_code_selector(
         };
         ui.add(
             egui::TextEdit::singleline(&mut model.responses[i].code)
-                .id(code_edit_id)
+                .id(resp_code_edit_id())
                 .frame(egui::Frame::NONE)
                 .desired_width(code_w + 10.0)
                 .text_color(color),
@@ -590,24 +616,32 @@ pub(super) fn response_code_selector(
             });
         }
     });
-    if editing && focus_code {
-        ui.ctx().memory_mut(|m| m.request_focus(code_edit_id));
-    }
     for a in &actions {
         apply(model, a);
     }
-    action
 }
 
 /// The status-tab label: `code - title`, or just `code` when the response has no
 /// title, truncated to 30 characters (with an ellipsis) so long titles never
 /// stretch a tab off the strip.
 fn status_tab_label(code: &str, title: &str) -> String {
+    status_label(code, title, " - ")
+}
+
+/// The picker's selected text: `code title`, or just `code` when the response
+/// has no title, truncated like [`status_tab_label`].
+fn status_picker_label(code: &str, title: &str) -> String {
+    status_label(code, title, " ")
+}
+
+/// `code`, `sep` and `title` joined, or just `code` without a title, cut to 30
+/// characters with an ellipsis.
+fn status_label(code: &str, title: &str, sep: &str) -> String {
     let code = if code.trim().is_empty() { "?" } else { code };
     let full = if title.trim().is_empty() {
         code.to_string()
     } else {
-        format!("{code} - {title}")
+        format!("{code}{sep}{title}")
     };
     if full.chars().count() > 30 {
         let head: String = full.chars().take(29).collect();
@@ -668,7 +702,8 @@ mod tests {
                 headers(ui, &mut m, false);
                 query_section(ui, &mut m, true);
                 request_body(ui, &mut m, true);
-                response_code_selector(ui, &mut m, &mut resp, true);
+                response_picker(ui, &m, &mut resp, true);
+                response_fields(ui, &mut m, resp);
                 response_body(ui, &mut m, 0, true);
                 response_headers(ui, &mut m, 0, true);
             });

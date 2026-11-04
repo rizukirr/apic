@@ -6,7 +6,7 @@ use egui::RichText;
 
 use super::editor::{
     endpoint_description, endpoint_name, headers, method_url_row, query_section, request_body,
-    response_body, response_code_selector, response_headers,
+    response_body, response_fields, response_headers, response_picker,
 };
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState, MainTab, RespTab};
 use crate::ui::components::{Tab, empty_state, icon_button, tab_strip, text_button};
@@ -129,19 +129,29 @@ pub(crate) fn central_body(
     ui.add_space(SPACE_SMALL);
 
     egui::Frame::NONE
-        .inner_margin(egui::Margin::same(10))
+        .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
             method_url_row(ui, model, *editing);
-            ui.add_space(SPACE_SMALL);
+            ui.add_space(12.0);
 
             // Request tabs in a resizable left pane, Response in the rest.
+            // The panel paints its divider with the parent's noninteractive
+            // stroke, so that stroke is swapped only around the panel.
             let half = (ui.available_width() / 2.0).max(240.0);
+            let saved_stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+            ui.visuals_mut().widgets.noninteractive.bg_stroke =
+                egui::Stroke::new(1.0, p.outline_variant);
             egui::Panel::left("contract_request_pane")
                 .resizable(true)
                 .default_size(half)
                 .min_size(240.0)
+                .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                    right: 16,
+                    ..Default::default()
+                }))
                 .show(ui, |left| {
+                    left.visuals_mut().widgets.noninteractive.bg_stroke = saved_stroke;
                     let mut idx = main_tab_index(*main_tab);
                     tab_strip(
                         left,
@@ -154,7 +164,7 @@ pub(crate) fn central_body(
                         ],
                     );
                     *main_tab = main_tab_at(idx);
-                    left.separator();
+                    left.add_space(8.0);
                     // One scroll per pane (distinct id) so the left
                     // and right panes scroll independently.
                     egui::ScrollArea::vertical()
@@ -167,46 +177,84 @@ pub(crate) fn central_body(
                             MainTab::Request => request_body(ui, model, *editing),
                         });
                 });
+            ui.visuals_mut().widgets.noninteractive.bg_stroke = saved_stroke;
 
-            // An endpoint is expected to document a response, so default to
-            // a 200 in edit mode (its editor shows without "+ New example").
-            if *editing && model.responses.is_empty() {
-                model.responses.push(apic_core::edit::EditResponse::blank());
-            }
-            if *resp_tab >= model.responses.len() {
-                *resp_tab = 0;
-            }
-            // Response-example dropdown; its `code - title` entries select the
-            // response whose body/headers the tab bar below shows.
-            if let Some(a) = response_code_selector(ui, model, resp_tab, *editing) {
-                action = Some(a);
-            }
-            let resp_headers = model
-                .responses
-                .get(*resp_tab)
-                .map_or(0, |r| r.headers.len());
-            let mut idx = resp_tab_index(*resp_tab_view);
-            tab_strip(
-                ui,
-                &mut idx,
-                &[Tab::new("Body"), Tab::new("Headers").count(resp_headers)],
-            );
-            *resp_tab_view = resp_tab_at(idx);
-            ui.separator();
-            egui::ScrollArea::vertical()
-                .id_salt("right_pane_scroll")
-                .auto_shrink([false, false])
+            egui::Frame::NONE
+                .inner_margin(egui::Margin {
+                    left: 16,
+                    ..Default::default()
+                })
                 .show(ui, |ui| {
-                    if model.responses.is_empty() {
-                        empty_state(ui, "No responses", "");
-                        return;
-                    }
-                    let idx = *resp_tab;
-                    match *resp_tab_view {
-                        RespTab::Body => response_body(ui, model, idx, *editing),
-                        RespTab::Headers => response_headers(ui, model, idx, *editing),
+                    if let Some(a) = response_pane(ui, model, resp_tab, resp_tab_view, *editing) {
+                        action = Some(a);
                     }
                 });
+        });
+    action
+}
+
+/// The right pane: one header row with the `Response` and `Headers` tabs on
+/// the left and the response picker on the right, the selected response's
+/// code and title fields while editing, then the selected tab's body.
+///
+/// # Returns
+///
+/// The action the response picker asks for this frame.
+fn response_pane(
+    ui: &mut egui::Ui,
+    model: &mut apic_core::edit::EditModel,
+    resp_tab: &mut usize,
+    resp_tab_view: &mut RespTab,
+    editing: bool,
+) -> Option<ContractsAction> {
+    let mut action = None;
+    // An endpoint is expected to document a response, so default to a 200 in
+    // edit mode (its editor shows without "+ New example").
+    if editing && model.responses.is_empty() {
+        model.responses.push(apic_core::edit::EditResponse::blank());
+    }
+    if *resp_tab >= model.responses.len() {
+        *resp_tab = 0;
+    }
+    let resp_headers = model
+        .responses
+        .get(*resp_tab)
+        .map_or(0, |r| r.headers.len());
+    ui.horizontal(|ui| {
+        let mut idx = resp_tab_index(*resp_tab_view);
+        tab_strip(
+            ui,
+            &mut idx,
+            &[
+                Tab::new("Response"),
+                Tab::new("Headers").count(resp_headers),
+            ],
+        );
+        *resp_tab_view = resp_tab_at(idx);
+        if model.responses.is_empty() {
+            return;
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            action = response_picker(ui, model, resp_tab, editing);
+        });
+    });
+    if editing && !model.responses.is_empty() {
+        response_fields(ui, model, *resp_tab);
+    }
+    ui.add_space(8.0);
+    egui::ScrollArea::vertical()
+        .id_salt("right_pane_scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            if model.responses.is_empty() {
+                empty_state(ui, "No responses", "");
+                return;
+            }
+            let idx = *resp_tab;
+            match *resp_tab_view {
+                RespTab::Body => response_body(ui, model, idx, editing),
+                RespTab::Headers => response_headers(ui, model, idx, editing),
+            }
         });
     action
 }
