@@ -264,13 +264,26 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
 
     let conflicted = state.status.find(&path).is_some_and(|f| f.conflicted);
 
+    // The field list, when this change has one. Worked out before the
+    // header so the raw-diff toggle can be disabled when there is nothing
+    // for it to switch away from.
+    let field_changes = if conflicted {
+        None
+    } else {
+        domain_diff::semantic_changes(data.old_blob.as_deref(), data.new_blob.as_deref())
+    };
+
     ui.add_space(SPACE_SMALL);
     if !conflicted {
         ui.horizontal(|ui| {
             ui.label(RichText::new(&path).color(p.on_surface).strong());
             let side = if staged { "staged" } else { "unstaged" };
             ui.label(RichText::new(side).color(p.on_surface_variant));
-            ui.checkbox(&mut state.show_raw_diff, "Show raw diff");
+            ui.add_enabled_ui(field_changes.is_some(), |ui| {
+                ui.checkbox(&mut state.show_raw_diff, "Show raw diff")
+            })
+            .response
+            .on_disabled_hover_text("No field-level view for this change");
         });
         ui.separator();
     }
@@ -290,9 +303,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
     // that is formatting only, falls through to the diff, so no selection
     // ever renders an empty pane and there is nothing to instruct the user
     // out of.
-    let semantic = (!state.show_raw_diff)
-        .then(|| domain_diff::semantic_changes(data.old_blob.as_deref(), data.new_blob.as_deref()))
-        .flatten();
+    let semantic = field_changes.filter(|_| !state.show_raw_diff);
 
     match semantic {
         Some(changes) => semantic_diff_view(ui, &changes),

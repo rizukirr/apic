@@ -239,12 +239,35 @@ fn format_headers(headers: &[EditHeader]) -> String {
         .join("\n")
 }
 
+/// Keys each response by its code and its position among the responses
+/// sharing that code (0 for the first), so a contract with two `200`
+/// examples keeps both instead of the second replacing the first.
+fn keyed_responses(responses: &[EditResponse]) -> BTreeMap<(String, usize), &EditResponse> {
+    let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
+    responses
+        .iter()
+        .map(|r| {
+            let n = seen.entry(r.code.as_str()).or_insert(0);
+            let key = (r.code.clone(), *n);
+            *n += 1;
+            (key, r)
+        })
+        .collect()
+}
+
 /// One leaf change per response field: description, headers, body. A
 /// response present on only one side compares against empty defaults, so an
 /// added or removed response code reports the same way a modification does.
+///
+/// Responses are matched by code and by position among those sharing the
+/// code. When a code repeats on either side, the label carries the 1-based
+/// position (`response 200 (2) body`); a unique code keeps `response 200 body`.
 fn diff_responses(out: &mut Vec<FieldChange>, old: &[EditResponse], new: &[EditResponse]) {
-    let old: BTreeMap<String, &EditResponse> = old.iter().map(|r| (r.code.clone(), r)).collect();
-    let new: BTreeMap<String, &EditResponse> = new.iter().map(|r| (r.code.clone(), r)).collect();
+    let old: BTreeMap<(String, usize), &EditResponse> = keyed_responses(old);
+    let new: BTreeMap<(String, usize), &EditResponse> = keyed_responses(new);
+    let repeats = |code: &str| {
+        old.contains_key(&(code.to_string(), 1)) || new.contains_key(&(code.to_string(), 1))
+    };
     let empty = EditResponse {
         code: String::new(),
         description: String::new(),
@@ -252,9 +275,15 @@ fn diff_responses(out: &mut Vec<FieldChange>, old: &[EditResponse], new: &[EditR
         example: String::new(),
         multipart: Vec::new(),
     };
-    for code in union_keys(&old, &new) {
-        let o = old.get(code).copied().unwrap_or(&empty);
-        let n = new.get(code).copied().unwrap_or(&empty);
+    let keys: std::collections::BTreeSet<&(String, usize)> = old.keys().chain(new.keys()).collect();
+    for key in keys {
+        let o = old.get(key).copied().unwrap_or(&empty);
+        let n = new.get(key).copied().unwrap_or(&empty);
+        let code = if repeats(&key.0) {
+            format!("{} ({})", key.0, key.1 + 1)
+        } else {
+            key.0.clone()
+        };
         scalar(
             out,
             &format!("response {code} description"),
@@ -459,6 +488,30 @@ mod tests {
         let new = model(new_text);
         let changes = diff_models(&old, &new);
         assert!(changes.iter().any(|c| c.what == "response 404 description"));
+    }
+
+    /// Pins the bug where two responses sharing a code collapsed into one,
+    /// hiding every change to the first: the edit must be reported, and the
+    /// label must say which of the two `200`s changed.
+    #[test]
+    fn an_edit_in_the_first_of_two_same_code_responses_is_reported() {
+        let old_text = r#"{
+            "name": "login",
+            "method": "POST",
+            "url": "https://api.example.com/auth",
+            "headers": [],
+            "responses": [
+                { "code": 200, "description": "OK", "schema": { "message": "Login berhasil" } },
+                { "code": 200, "description": "OK", "schema": { "message": "First login" } },
+                { "code": 401, "description": "Unauthorized" }
+            ]
+        }"#;
+        let new_text = old_text.replace("Login berhasil", "Berhasil");
+        let changes = diff_models(&model(old_text), &model(&new_text));
+        assert_eq!(changes.len(), 1, "exactly the one body changed");
+        assert_eq!(changes[0].what, "response 200 (1) body");
+        assert!(changes[0].from.contains("Login berhasil"));
+        assert!(changes[0].to.contains("Berhasil"));
     }
 
     #[test]
