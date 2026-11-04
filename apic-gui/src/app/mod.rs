@@ -700,7 +700,9 @@ mod tests {
                     field: apic_core::edit::Field::QueryAdd,
                 },
             );
-            ctx.data_mut(|d| d.insert_temp(egui::Id::new("apic.focus.query"), new_idx.to_string()));
+            ctx.data_mut(|d| {
+                d.insert_temp(egui::Id::new("apic.focus.query"), format!("{new_idx}:Key"))
+            });
         }
         let delays = run_at(&mut app, 1280.0, 800.0, 16);
         let tail_zero = delays[8..].iter().all(|d| *d == std::time::Duration::ZERO);
