@@ -192,6 +192,7 @@ pub(super) fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: b
         };
         let stretch = fill_column(ui, &fixed);
         let mut t = metadata_table(ui)
+            .id_salt("query_table")
             .column(Column::exact(120.0)) // key
             .column(Column::exact(88.0)) // requirement
             .column(Column::exact(120.0)) // value
@@ -286,6 +287,7 @@ pub(super) fn response_headers(
         };
         let stretch = fill_column(ui, &fixed);
         let mut t = metadata_table(ui)
+            .id_salt("response_headers_table")
             .column(Column::exact(150.0)) // header
             .column(Column::exact(88.0)) // requirement
             .column(stretch); // value
@@ -364,6 +366,7 @@ pub(super) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
         };
         let stretch = fill_column(ui, &fixed);
         let mut t = metadata_table(ui)
+            .id_salt("request_headers_table")
             .column(Column::exact(150.0)) // header
             .column(Column::exact(88.0)) // requirement
             .column(stretch); // value
