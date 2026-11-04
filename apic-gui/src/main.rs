@@ -11,18 +11,17 @@
 use eframe::egui;
 
 mod app;
-mod desktop;
 mod features;
-mod settings;
+mod platform;
 mod ui;
 
 use app::App;
-use settings::Settings;
+use platform::settings::Settings;
 use ui::theme::install_themes;
 
 fn main() -> eframe::Result {
     if std::env::args().skip(1).any(|a| a == "--desktop-entry") {
-        match desktop::install_desktop_entry() {
+        match platform::desktop::install_desktop_entry() {
             Ok(msg) => {
                 println!("{msg}");
                 std::process::exit(0);
