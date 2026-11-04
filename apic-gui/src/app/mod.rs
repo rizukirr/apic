@@ -27,6 +27,7 @@ use crate::features::git::ui::state::{GitAction, GitEvent, GitState};
 use crate::features::git::ui::view;
 use crate::features::project::data::project_root_of;
 use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
+use crate::features::project::ui::view::welcome;
 use crate::platform::settings::Settings;
 use crate::ui::components::{icon_button, section_header};
 use crate::ui::theme::*;
@@ -420,6 +421,11 @@ impl App {
         let mut action = None;
         let has_project = self.project.project_root.is_some();
         egui::CentralPanel::default().show(ui, |ui| match self.shell.central {
+            // Routed through `apply` so New and Open pass the unsaved-changes
+            // guard like the app bar's.
+            CentralView::Contracts if !has_project => {
+                action = welcome(ui).map(Action::Project);
+            }
             CentralView::Contracts => {
                 action = central_body(ui, &mut self.contracts, has_project).map(Action::Contracts);
             }

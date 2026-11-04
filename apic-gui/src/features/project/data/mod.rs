@@ -11,8 +11,11 @@ pub(crate) enum PickKind {
     OpenProject,
     /// Initialize a fresh project in a folder.
     NewProject,
-    /// Import a Postman collection file into the open project.
+    /// Import a Postman collection file into the open project, or pick one
+    /// for an import into a new project when none is open.
     ImportPostman,
+    /// Pick the folder that becomes the project an import is written into.
+    ImportTarget,
 }
 
 /// Spawns a native dialog on a background thread (so the portal call never
@@ -34,11 +37,11 @@ pub(crate) fn pick(
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let picked = match kind {
-            PickKind::OpenProject | PickKind::NewProject => {
-                let title = if kind == PickKind::OpenProject {
-                    "Open apic project"
-                } else {
-                    "New apic project"
+            PickKind::OpenProject | PickKind::NewProject | PickKind::ImportTarget => {
+                let title = match kind {
+                    PickKind::OpenProject => "Open apic project",
+                    PickKind::ImportTarget => "Folder for the imported project",
+                    PickKind::NewProject | PickKind::ImportPostman => "New apic project",
                 };
                 pollster::block_on(rfd::AsyncFileDialog::new().set_title(title).pick_folder())
             }

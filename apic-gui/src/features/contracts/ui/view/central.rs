@@ -1,5 +1,6 @@
 //! The central body for the open contract: the viewer/editor, the repair
-//! editor for an invalid file, or the empty-state text.
+//! editor for an invalid file, or the empty-state text. With no project open
+//! it draws nothing, since the shell shows the welcome screen instead.
 
 use eframe::egui;
 use egui::RichText;
@@ -13,7 +14,8 @@ use crate::ui::components::{Tab, empty_state, icon_button, tab_strip, text_butto
 use crate::ui::theme::*;
 
 /// The central body for the loaded contract: the viewer/editor, the repair
-/// editor for an invalid file, or the empty-state text.
+/// editor for an invalid file, or the empty-state text. With no project open
+/// it draws nothing, since the shell shows the welcome screen instead.
 ///
 /// The panel frame is owned by the app shell. Saving, toggling edit mode and
 /// promoting a repaired file are returned as an action rather than done here.
@@ -22,7 +24,7 @@ use crate::ui::theme::*;
 ///
 /// * `ui` - the central panel to fill
 /// * `state` - the contracts view model
-/// * `has_project` - whether a project is open, otherwise the empty state shows
+/// * `has_project` - whether a project is open, otherwise nothing is drawn
 ///
 /// # Returns
 ///
@@ -46,11 +48,6 @@ pub(crate) fn central_body(
         ..
     } = state;
     if no_project {
-        empty_state(
-            ui,
-            "No project open",
-            "Use Open to open a project folder, or New to create one.",
-        );
         return None;
     }
     if let Some(rep) = repair.as_mut() {
