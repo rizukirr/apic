@@ -119,7 +119,7 @@ pub(crate) fn diff_job(
 /// Resolves symlinks in `path` for comparison purposes, falling back to
 /// `path` unresolved when resolution fails, a project directory deleted
 /// while the app is open being the case that matters. Never used for a path
-/// shown to the user: `ShellState::project_root` stays unresolved in the
+/// shown to the user: `ProjectState::project_root` stays unresolved in the
 /// status bar, and this is only applied to a local copy at the point it is
 /// compared against `repo_root`.
 fn resolve_for_comparison(path: &Path) -> Cow<'_, Path> {
