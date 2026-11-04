@@ -73,6 +73,12 @@ pub(crate) enum GitAction {
     /// `GitState::commit_message`.
     Commit,
 
+    /// Amend after the user confirmed rewriting a pushed commit.
+    ConfirmAmend,
+
+    /// Close the amend-pushed popup without committing.
+    CancelAmend,
+
     /// Re-read the branch list.
     RefreshBranches,
 
@@ -182,6 +188,9 @@ pub(crate) struct GitState {
 
     /// The upstream already holding the commit Amend would rewrite.
     pub(crate) amend_pushed_to: Option<String>,
+
+    /// The amend-pushed popup is open.
+    pub(crate) confirm_amend: bool,
 
     /// An amend read is owed, started by `poll` once nothing is pending.
     pub(crate) needs_amend_info: bool,
@@ -309,19 +318,17 @@ impl GitState {
                 }
             }
             GitAction::Commit => {
-                let message = self.commit_message.clone();
-                let (stage, unstage) = self.commit_paths();
-                self.start_mutation(
-                    paths,
-                    ctx,
-                    Mutation::Commit {
-                        message,
-                        amend: self.amend,
-                        stage,
-                        unstage,
-                    },
-                );
+                if self.amend && self.amend_pushed_to.is_some() {
+                    self.confirm_amend = true;
+                } else {
+                    self.start_commit(paths, ctx);
+                }
             }
+            GitAction::ConfirmAmend => {
+                self.confirm_amend = false;
+                self.start_commit(paths, ctx);
+            }
+            GitAction::CancelAmend => self.confirm_amend = false,
             GitAction::ToggleAmend => {
                 if self.amend {
                     self.amend = false;
@@ -506,6 +513,23 @@ impl GitState {
             return;
         };
         self.pending = Some(jobs::mutate(paths.clone(), mutation, notifier(ctx)));
+    }
+
+    /// Commits the ticked files with `commit_message`, amending when Amend is
+    /// ticked.
+    fn start_commit(&mut self, paths: Option<&RepoPaths>, ctx: &egui::Context) {
+        let message = self.commit_message.clone();
+        let (stage, unstage) = self.commit_paths();
+        self.start_mutation(
+            paths,
+            ctx,
+            Mutation::Commit {
+                message,
+                amend: self.amend,
+                stage,
+                unstage,
+            },
+        );
     }
 
     /// Starts reading what amending would rewrite, under the same one-job rule.
@@ -1110,6 +1134,59 @@ mod tests {
                 .as_deref()
                 .is_some_and(|u| u.starts_with("origin/"))
         );
+    }
+
+    /// A repo whose HEAD is pushed to a bare remote, with Amend ticked and
+    /// the pushed warning read.
+    fn pushed_amend_fixture() -> (std::path::PathBuf, GitState, RepoPaths, egui::Context) {
+        let root = project_fixture();
+        let remote = tempdir();
+        git_output(&remote, &["init", "--bare"]);
+        git_output(
+            &root,
+            &["remote", "add", "origin", &remote.to_string_lossy()],
+        );
+        git_output(&root, &["push", "-u", "origin", "HEAD"]);
+        let (mut git, paths) = git_at(&root);
+        let ctx = egui::Context::default();
+        git.handle(GitAction::ToggleAmend, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert!(git.amend_pushed_to.is_some());
+        (root, git, paths, ctx)
+    }
+
+    #[test]
+    fn committing_a_pushed_amend_asks_first() {
+        if !git_available() {
+            return;
+        }
+        let (root, mut git, paths, ctx) = pushed_amend_fixture();
+        let head = git_output(&root, &["rev-parse", "HEAD"]);
+        git.commit_message = "reworded initial".to_string();
+        git.handle(GitAction::Commit, Some(&paths), &ctx);
+        assert!(git.confirm_amend);
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(git_output(&root, &["rev-parse", "HEAD"]), head);
+        assert!(git.confirm_amend);
+    }
+
+    #[test]
+    fn confirm_amend_amends() {
+        if !git_available() {
+            return;
+        }
+        let (root, mut git, paths, ctx) = pushed_amend_fixture();
+        let count = git_output(&root, &["rev-list", "--count", "HEAD"]);
+        git.commit_message = "reworded initial".to_string();
+        git.handle(GitAction::Commit, Some(&paths), &ctx);
+        git.handle(GitAction::ConfirmAmend, Some(&paths), &ctx);
+        assert!(!git.confirm_amend);
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(
+            git_output(&root, &["log", "-1", "--format=%s"]).trim(),
+            "reworded initial"
+        );
+        assert_eq!(git_output(&root, &["rev-list", "--count", "HEAD"]), count);
     }
 
     #[test]
