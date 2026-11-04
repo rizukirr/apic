@@ -17,10 +17,10 @@ pub(crate) fn section_label(ui: &mut egui::Ui, text: &str) {
     ui.add_space(SPACE_EXTRA_SMALL);
 }
 
-/// A dim, small, upper-case column-header cell label.
+/// A dim, small column-header cell label, drawn in the case the caller passes.
 pub(crate) fn header_label(ui: &mut egui::Ui, text: &str) {
     ui.label(
-        RichText::new(text.to_uppercase())
+        RichText::new(text)
             .color(crate::ui::theme::palette(ui.ctx()).on_surface_variant)
             .size(SIZE_HEADER_LABEL)
             .strong(),
