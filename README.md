@@ -4,19 +4,7 @@
 
 CLI, TUI, and desktop GUI, all over one shared core (`apic-core`), so every interface edits the same files and never drifts.
 
-<img width="1905" height="1030" alt="2026-08-27-174220_hyprshot" src="https://github.com/user-attachments/assets/0a086445-9356-4881-9c89-4ecc3a1eaa55" />
-<img width="1906" height="1029" alt="2026-08-27-234227_hyprshot" src="https://github.com/user-attachments/assets/88a587f8-3d40-4457-90cb-d2b775567958" />
-
-
-> ## ROADMAP
-> - Distribution
->   - ~Aur~
->   - ~Copr~
->   - ~Launchpad~
->   - ~Flatpak~
->   - ~Winget~
->   - Homebrew
-> - Git GUI
+<img width="1898" height="1022" alt="2026-11-04-230314_screenshot" src="https://github.com/user-attachments/assets/c0f0a8e8-9237-41e5-a65f-0c9ef764462f" />
 
 ## Why?
 
