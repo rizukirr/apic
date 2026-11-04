@@ -12,7 +12,7 @@ use eframe::egui;
 
 use crate::app::App;
 use crate::app::state::ShellState;
-use crate::features::contracts::state::ContractsState;
+use crate::features::contracts::ui::state::ContractsState;
 use crate::features::git::data::cli;
 use crate::features::git::data::jobs::RepoPaths;
 use crate::features::git::ui::state::{GitEvent, GitState};

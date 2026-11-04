@@ -7,14 +7,14 @@
 use std::path::PathBuf;
 
 use eframe::egui;
+use egui::RichText;
 
 use crate::app::App;
-use crate::app::state::{CentralView, DialogKind};
-use crate::features::contracts::data::files;
-use crate::features::contracts::domain::entry::{DeleteTarget, display_location};
-use crate::features::contracts::domain::names::{request_target, template_file_name};
-use crate::features::contracts::state::{MainTab, Repair, RespTab};
+use crate::app::state::DialogKind;
+use crate::features::contracts::ui::state::ContractsPaths;
 use crate::settings::Settings;
+use crate::ui::components::text_button;
+use crate::ui::theme::*;
 
 impl App {
     /// Reconciles the open contract with the freshly checked-out branch.
@@ -23,15 +23,12 @@ impl App {
     /// `contracts.entries`. Does not touch `shell.project_root` or persisted
     /// settings, unlike `activate_project`: a checkout changes neither.
     pub(crate) fn reconcile_after_checkout(&mut self) {
-        self.reload_project();
-        let path = self.contracts.path.clone();
-        match path.and_then(|p| self.contracts.entries.iter().position(|e| e.path == p)) {
-            Some(i) => self.load(i),
-            None => {
-                self.contracts.model = None;
-                self.contracts.path = None;
-                self.contracts.selected = None;
+        match self.read_project() {
+            Some(paths) => {
+                let events = self.contracts.reconcile(&paths);
+                self.apply_contracts_events(events);
             }
+            None => self.contracts.close(),
         }
     }
 
@@ -39,14 +36,26 @@ impl App {
     /// the sidebar badge. Resolves everything against `self.shell.project_root`; never
     /// reads the process current directory.
     pub(crate) fn reload_project(&mut self) {
+        match self.read_project() {
+            Some(paths) => {
+                let events = self.contracts.reload(&paths);
+                self.apply_contracts_events(events);
+            }
+            None => self.contracts.close(),
+        }
+    }
+
+    /// Discovers the repository and reads the config of the active project into
+    /// `self.shell`, and returns where its contracts live. `None` when no project
+    /// is open. A config that does not read leaves `contracts_root` `None` and
+    /// reports the error on the status line.
+    fn read_project(&mut self) -> Option<ContractsPaths> {
         let Some(root) = self.shell.project_root.clone() else {
             self.shell.apic_dir = None;
             self.shell.root = None;
             self.shell.repo_root = None;
-            self.contracts.templates.clear();
-            self.contracts.entries.clear();
             self.shell.status = "No project open. Use Open or New.".into();
-            return;
+            return None;
         };
 
         match crate::features::git::data::cli::discover(&root) {
@@ -65,100 +74,28 @@ impl App {
             }
         }
 
-        self.shell.apic_dir = Some(root.join(".apic"));
-        self.contracts.templates = self
-            .shell
-            .apic_dir
-            .as_deref()
-            .map(files::templates)
-            .unwrap_or_default();
+        let apic_dir = root.join(".apic");
+        self.shell.apic_dir = Some(apic_dir.clone());
 
         match apic_core::config::read_config_in(&root).and_then(|c| c.root_dir_in(&root)) {
             Ok(contracts_root) => {
                 // `self.shell.root` is the contracts working dir consumed by import /
                 // new-request / delete; keep it in sync with the active project.
                 self.shell.root = Some(contracts_root.clone());
-                self.contracts.entries = files::scan(&contracts_root);
-                self.shell.status = display_location(&contracts_root);
+                Some(ContractsPaths {
+                    contracts_root: Some(contracts_root),
+                    apic_dir,
+                })
             }
             Err(err) => {
                 self.shell.root = None;
-                self.contracts.entries.clear();
                 self.shell.status =
                     apic_core::file::home_relative(&format!("Project error: {err}"));
+                Some(ContractsPaths {
+                    contracts_root: None,
+                    apic_dir,
+                })
             }
-        }
-    }
-
-    /// Loads an invalid contract's raw text into the repair editor.
-    pub(crate) fn enter_repair(&mut self, i: usize) {
-        let Some(entry) = self.contracts.entries.get(i) else {
-            return;
-        };
-        let buffer = files::read_text(&entry.path).unwrap_or_default();
-        let error = entry.error.clone().unwrap_or_default();
-        self.contracts.model = None;
-        self.contracts.original_model = None;
-        self.contracts.selected = Some(i);
-        self.contracts.selected_template = None;
-        self.contracts.repair = Some(Repair {
-            index: i,
-            buffer,
-            error,
-        });
-    }
-
-    /// Loads entry `i` into the editable model.
-    pub(crate) fn load(&mut self, i: usize) {
-        let Some(entry) = self.contracts.entries.get(i) else {
-            return;
-        };
-        let path = entry.path.clone();
-        match files::load_contract(&path) {
-            Ok(model) => {
-                self.contracts.model = Some(model);
-                self.contracts.path = Some(path);
-                self.contracts.selected = Some(i);
-                self.contracts.selected_template = None;
-                self.contracts.resp_tab = 0;
-                self.contracts.main_tab = MainTab::Overview;
-                self.contracts.resp_tab_view = RespTab::Body;
-                self.contracts.editing = false;
-                self.contracts.original_model = None;
-                self.shell.status = self
-                    .contracts
-                    .path
-                    .as_deref()
-                    .map(display_location)
-                    .unwrap_or_default();
-            }
-            Err(err) => self.shell.status = format!("load error: {err}"),
-        }
-    }
-
-    /// Loads template `i` into the editor, resolved against the built-in default
-    /// into a full contract. Editable and savable like any contract: `path` keeps
-    /// the template file so Save writes the edited contract straight back to it.
-    /// (Saving a resolved template makes it a full template, every field it then
-    /// contains is enforced when creating contracts from it.)
-    pub(crate) fn load_template(&mut self, i: usize) {
-        let Some((name, path)) = self.contracts.templates.get(i).cloned() else {
-            return;
-        };
-        match files::load_template(&path) {
-            Ok(model) => {
-                self.contracts.model = Some(model);
-                self.contracts.path = Some(path);
-                self.contracts.selected = None;
-                self.contracts.selected_template = Some(i);
-                self.contracts.resp_tab = 0;
-                self.contracts.main_tab = MainTab::Overview;
-                self.contracts.resp_tab_view = RespTab::Body;
-                self.contracts.editing = false;
-                self.contracts.original_model = None;
-                self.shell.status = format!("template '{name}'");
-            }
-            Err(err) => self.shell.status = format!("template error: {err}"),
         }
     }
 
@@ -301,105 +238,36 @@ impl App {
         }
     }
 
-    /// Creates a new template `<name>.json` in `.apic/template/`, seeded from the
-    /// built-in default. Safety: the path is confined to the template dir, and an
-    /// existing template is never overwritten.
-    pub(crate) fn create_template(&mut self, name: &str) {
-        let name = name.trim();
-        let file_name = match template_file_name(name) {
-            Ok(f) => f,
-            Err(e) => {
-                self.shell.status = e;
-                return;
-            }
-        };
-        let Some(apic_dir) = self.shell.apic_dir.clone() else {
-            self.shell.status = "no project".into();
+    /// Modal shown when a picked non-project folder has invalid contracts: the
+    /// user must fix them before it can be opened/initialized.
+    pub(crate) fn open_blocked_dialog(&mut self, ctx: &egui::Context) {
+        let p = palette(ctx);
+        let Some(failures) = self.contracts.open_blocked.clone() else {
             return;
         };
-        match files::create_template(&apic_dir, &file_name, name) {
-            Ok(dest) => {
-                self.reload_project();
-                // Open the freshly created template in the central view, the same
-                // way create_request opens a new contract.
-                if let Some(i) = self
-                    .contracts
-                    .templates
-                    .iter()
-                    .position(|(_, p)| *p == dest)
-                {
-                    self.load_template(i);
-                    self.shell.central = CentralView::Contracts;
+        let mut close = false;
+        egui::Window::new("Fix these contracts first")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new("This folder is not an apic project and has invalid contracts. Fix them, then open it again.")
+                        .color(p.on_surface),
+                );
+                ui.add_space(SPACE_SMALL);
+                for (path, err) in &failures {
+                    ui.label(RichText::new(path.to_string_lossy()).color(p.error).strong());
+                    ui.label(RichText::new(err).color(p.on_surface_variant).size(11.0));
+                    ui.add_space(SPACE_EXTRA_SMALL);
                 }
-                self.shell.status = format!("created template '{name}'");
-            }
-            Err(e) => self.shell.status = e,
-        }
-    }
-
-    /// Creates a new request from the dialog input, relative to the contracts
-    /// root. A name ending in `/` creates a folder; any other name creates a
-    /// contract file (with `.json` appended when the user did not type it),
-    /// seeded from `template` (or the built-in default when `None`) and opened.
-    /// Intermediate folders in the path are created as needed.
-    ///
-    /// Safety: the path is confined to the working dir (rejecting `..`/symlink
-    /// escapes) and an existing file is never overwritten.
-    pub(crate) fn create_request(&mut self, input: &str, template: Option<PathBuf>) {
-        let target = match request_target(input) {
-            Ok(t) => t,
-            Err(e) => {
-                self.shell.status = e;
-                return;
-            }
-        };
-        let Some(root) = self.shell.root.clone() else {
-            self.shell.status = "no project".into();
-            return;
-        };
-        let rel = &target.rel;
-        match files::create_request(&root, &target, template.as_deref()) {
-            Ok(_) if target.is_folder => {
-                self.reload_project();
-                self.shell.status = format!("created folder {rel}/");
-            }
-            Ok(dest) => {
-                self.reload_project();
-                if let Some(i) = self.contracts.entries.iter().position(|e| e.path == dest) {
-                    self.load(i);
-                    self.shell.central = CentralView::Contracts;
+                ui.add_space(SPACE_EXTRA_SMALL);
+                if text_button(ui, "Close", p.primary) {
+                    close = true;
                 }
-                self.shell.status = format!("created {rel}");
-            }
-            Err(e) => self.shell.status = e,
-        }
-    }
-
-    /// Removes the target (confined to its directory), then reloads. If the open
-    /// contract/template was deleted, the editor is cleared.
-    pub(crate) fn perform_delete(&mut self, target: &DeleteTarget) {
-        match files::delete(
-            target,
-            self.shell.root.as_deref(),
-            self.shell.apic_dir.as_deref(),
-        ) {
-            Ok((removed_path, label)) => {
-                // Clear the editor if the deleted path was (or contained) what is open.
-                if self
-                    .contracts
-                    .path
-                    .as_deref()
-                    .is_some_and(|p| p == removed_path || p.starts_with(&removed_path))
-                {
-                    self.contracts.model = None;
-                    self.contracts.path = None;
-                    self.contracts.selected = None;
-                    self.contracts.selected_template = None;
-                }
-                self.reload_project();
-                self.shell.status = format!("deleted {label}");
-            }
-            Err(e) => self.shell.status = e,
+            });
+        if close {
+            self.contracts.open_blocked = None;
         }
     }
 }
