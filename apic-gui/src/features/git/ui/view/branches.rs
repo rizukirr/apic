@@ -93,7 +93,7 @@ pub(super) fn branch_select_action(name: &str, current: Option<&str>) -> Option<
 }
 
 /// The create-branch dialog, shaped like `new_template_dialog` in
-/// `features::contracts::view` so the codebase does not grow a second
+/// `features::contracts::ui::view` so the codebase does not grow a second
 /// input-dialog style.
 pub(super) fn create_branch_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
     let p = palette(ctx);
@@ -226,7 +226,7 @@ pub(super) fn delete_branch_dialog(ctx: &egui::Context, state: &mut GitState) ->
 }
 
 /// Discard confirmation modal, shown when a discard is pending. Follows the
-/// shape of `delete_dialog` in `features::contracts::view`, so the codebase
+/// shape of `delete_dialog` in `features::contracts::ui::view`, so the codebase
 /// does not grow a second confirmation style.
 pub(super) fn discard_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
     let p = palette(ctx);

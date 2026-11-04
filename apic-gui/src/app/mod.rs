@@ -1,23 +1,19 @@
 //! Application shell: the top-level state container, the eframe entry point,
 //! and the orchestration that spans features.
 //!
-//! `App` owns one state struct per feature plus the in-flight file dialog. A
-//! new feature adds a field here and a match arm in [`actions`]; it does not
+//! `App` owns one state struct per feature. A new feature adds a field here and a match arm in [`actions`]; it does not
 //! touch any other feature's state.
 
 pub(crate) mod actions;
-pub(crate) mod project;
 pub(crate) mod state;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-use std::path::PathBuf;
-
 use eframe::egui;
 use egui::RichText;
 
-use crate::app::actions::{Action, SidebarAction};
-use crate::app::state::{CentralView, DialogKind, ShellState, SidebarView};
+use crate::app::actions::{Action, ShellAction};
+use crate::app::state::{CentralView, ShellState, SidebarView};
 use crate::features::contracts::ui::state::{
     ContractsAction, ContractsEvent, ContractsPaths, ContractsState,
 };
@@ -27,6 +23,8 @@ use crate::features::contracts::ui::view::{
 };
 use crate::features::git::ui::state::{GitAction, GitEvent, GitState};
 use crate::features::git::ui::view;
+use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
+use crate::features::project::ui::view::blocked_dialog;
 use crate::settings::Settings;
 use crate::ui::components::{icon_button, section_header};
 use crate::ui::theme::*;
@@ -47,38 +45,36 @@ const TOOLBAR_ROW_H: f32 = 26.0;
 
 /// Whole-app state.
 ///
-/// One field per feature plus the in-flight file dialog. A new feature adds a
-/// field here and a match arm in the action dispatch; it does not touch any
+/// One field per feature. A new feature adds a field here and a match arm in the action dispatch; it does not touch any
 /// other feature's state.
 pub(crate) struct App {
     /// Application chrome and the active project location, shared by every
     /// feature.
     pub(crate) shell: ShellState,
 
+    /// Everything the project feature owns: where the active project lives.
+    pub(crate) project: ProjectState,
+
     /// Everything the contracts feature owns.
     pub(crate) contracts: ContractsState,
 
     /// Everything the git feature owns.
     pub(crate) git: GitState,
-
-    /// In-flight native file dialog, run on a background thread so the portal
-    /// call never blocks the UI, plus the action to perform on its result.
-    pub(crate) pending_dialog: Option<(DialogKind, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
 }
 
 impl App {
     pub(crate) fn new() -> Self {
         let mut app = App {
             shell: ShellState::default(),
+            project: ProjectState::default(),
             contracts: ContractsState::default(),
             git: GitState::default(),
-            pending_dialog: None,
         };
         let settings = Settings::load();
         if let Some(root) = settings.last_project
             && root.is_dir()
         {
-            app.shell.project_root = Some(root);
+            app.project.project_root = Some(root);
         }
         app.reload_project();
         if let Ok(sub) = std::env::var("APIC_AUTOEDIT")
@@ -104,7 +100,7 @@ impl App {
         let p = palette(ui.ctx());
         let mut action = None;
         let project = self
-            .shell
+            .project
             .project_root
             .as_deref()
             .and_then(|root| root.file_name())
@@ -115,7 +111,7 @@ impl App {
             ui.horizontal(|ui| {
                 ui.set_min_height(TOOLBAR_ROW_H);
                 if icon_button(ui, egui_phosphor::regular::SIDEBAR, "Toggle sidebar").clicked() {
-                    action = Some(Action::Sidebar(SidebarAction::ToggleSidebar));
+                    action = Some(Action::Shell(ShellAction::ToggleSidebar));
                 }
                 egui::MenuBar::new()
                     .style(|style: &mut egui::Style| {
@@ -126,15 +122,15 @@ impl App {
                         let title = format!("{project} {}", egui_phosphor::regular::CARET_DOWN);
                         ui.menu_button(RichText::new(title).color(p.on_surface).strong(), |ui| {
                             if ui.button("New project").clicked() {
-                                action = Some(Action::Sidebar(SidebarAction::NewProject));
+                                action = Some(Action::Project(ProjectAction::New));
                                 ui.close();
                             }
                             if ui.button("Open project").clicked() {
-                                action = Some(Action::Sidebar(SidebarAction::OpenProject));
+                                action = Some(Action::Project(ProjectAction::Open));
                                 ui.close();
                             }
                             if ui.button("Import Postman collection").clicked() {
-                                action = Some(Action::Sidebar(SidebarAction::ImportPostman));
+                                action = Some(Action::Project(ProjectAction::ImportPostman));
                                 ui.close();
                             }
                         });
@@ -206,7 +202,7 @@ impl App {
                         }
                     });
                     if toggled {
-                        action = Some(Action::Sidebar(SidebarAction::ToggleTemplatesSection));
+                        action = Some(Action::Shell(ShellAction::ToggleTemplatesSection));
                     }
                     if self.shell.templates_open
                         && let Some(a) = templates_body(ui, &mut self.contracts)
@@ -224,7 +220,7 @@ impl App {
                         .min_size(100.0)
                         .show(ui, |ui| {
                             if section_header(ui, true, commit_title, |_| {}) {
-                                action = Some(Action::Sidebar(SidebarAction::ToggleCommitSection));
+                                action = Some(Action::Shell(ShellAction::ToggleCommitSection));
                             }
                             if let Some(a) = view::commit_body(ui, &mut self.git) {
                                 action = Some(Action::Git(a));
@@ -233,7 +229,7 @@ impl App {
                 } else {
                     egui::Panel::bottom("commit_section_closed").show(ui, |ui| {
                         if section_header(ui, false, commit_title, |_| {}) {
-                            action = Some(Action::Sidebar(SidebarAction::ToggleCommitSection));
+                            action = Some(Action::Shell(ShellAction::ToggleCommitSection));
                         }
                     });
                 }
@@ -264,7 +260,7 @@ impl App {
                                 .button(RichText::new(contracts).color(p.on_surface))
                                 .clicked()
                             {
-                                action = Some(Action::Sidebar(SidebarAction::SwitchView(
+                                action = Some(Action::Shell(ShellAction::SwitchView(
                                     SidebarView::Contracts,
                                 )));
                                 ui.close();
@@ -273,7 +269,7 @@ impl App {
                                 .button(RichText::new(changes_title).color(changes_color))
                                 .clicked()
                             {
-                                action = Some(Action::Sidebar(SidebarAction::SwitchView(
+                                action = Some(Action::Shell(ShellAction::SwitchView(
                                     SidebarView::Changes,
                                 )));
                                 ui.close();
@@ -324,7 +320,7 @@ impl App {
     /// once the panel closure has released its borrow of the feature state.
     fn central(&mut self, ui: &mut egui::Ui) {
         let mut action = None;
-        let has_project = self.shell.project_root.is_some();
+        let has_project = self.project.project_root.is_some();
         egui::CentralPanel::default().show(ui, |ui| match self.shell.central {
             CentralView::Contracts => {
                 action = central_body(ui, &mut self.contracts, has_project).map(Action::Contracts);
@@ -342,9 +338,9 @@ impl App {
     /// Where the contracts feature reads and writes, or `None` when no
     /// project is open.
     pub(crate) fn contracts_paths(&self) -> Option<ContractsPaths> {
-        let apic_dir = self.shell.apic_dir.clone()?;
+        let apic_dir = self.project.apic_dir.clone()?;
         Some(ContractsPaths {
-            contracts_root: self.shell.root.clone(),
+            contracts_root: self.project.root.clone(),
             apic_dir,
         })
     }
@@ -377,10 +373,87 @@ impl App {
         }
     }
 
+    /// Reconciles the open contract with the freshly checked-out branch.
+    /// A checkout can change or remove the tree behind every piece of
+    /// derived contract state at once, and `reload_project` only rebuilds
+    /// `contracts.entries`. Does not touch `project.project_root` or persisted
+    /// settings, unlike opening a project: a checkout changes neither.
+    pub(crate) fn reconcile_after_checkout(&mut self) {
+        match self.read_project() {
+            Some(paths) => {
+                let events = self.contracts.reconcile(&paths);
+                self.apply_contracts_events(events);
+            }
+            None => self.contracts.close(),
+        }
+    }
+
+    /// Discovers contracts for the active project and reads each one's method for
+    /// the sidebar badge. Resolves everything against `self.project.project_root`;
+    /// never reads the process current directory.
+    pub(crate) fn reload_project(&mut self) {
+        match self.read_project() {
+            Some(paths) => {
+                let events = self.contracts.reload(&paths);
+                self.apply_contracts_events(events);
+            }
+            None => self.contracts.close(),
+        }
+    }
+
+    /// Discovers the repository and locates the config of the active project,
+    /// and returns where its contracts live. `None` when no project is open. A
+    /// config that does not read leaves `contracts_root` `None` and reports the
+    /// error on the status line.
+    fn read_project(&mut self) -> Option<ContractsPaths> {
+        let Some(root) = self.project.project_root.clone() else {
+            let _ = self.project.locate();
+            self.shell.repo_root = None;
+            self.shell.status = "No project open. Use Open or New.".into();
+            return None;
+        };
+
+        match crate::features::git::data::cli::discover(&root) {
+            Ok(repo_root) => {
+                self.shell.repo_root = repo_root;
+                // The Git section header's dirty indicator must be correct before the
+                // Git section is ever opened, so a project load fetches status
+                // itself instead of waiting for tab activation.
+                if self.shell.repo_root.is_some() {
+                    self.git.request_refresh();
+                }
+            }
+            Err(err) => {
+                self.shell.repo_root = None;
+                self.shell.status = err;
+            }
+        }
+
+        if let Err(err) = self.project.locate() {
+            self.shell.status = apic_core::file::home_relative(&format!("Project error: {err}"));
+        }
+        self.contracts_paths()
+    }
+
+    /// Applies what the project view model asked the shell to do.
+    fn apply_project_events(&mut self, events: Vec<ProjectEvent>) {
+        for event in events {
+            match event {
+                ProjectEvent::Opened(folder) => {
+                    self.contracts.close();
+                    self.reload_project();
+                    Settings::update(|s| s.last_project = Some(folder));
+                }
+                ProjectEvent::ContractsChanged => self.reload_project(),
+                ProjectEvent::Status(text) => self.shell.status = text,
+            }
+        }
+    }
+
     /// Polls the git view model and applies the events it returns. Called
     /// every frame from `App::ui`.
     pub(crate) fn poll_git(&mut self, ctx: &egui::Context) {
-        let paths = self.shell.repo_paths();
+        let paths = self.shell.repo_paths(&self.project);
         let events = self.git.poll(paths.as_ref(), ctx);
         for event in events {
             match event {
@@ -392,30 +465,31 @@ impl App {
 
     /// Passes one git action to the git view model with the current repo paths.
     fn handle_git(&mut self, action: GitAction, ctx: &egui::Context) {
-        let paths = self.shell.repo_paths();
+        let paths = self.shell.repo_paths(&self.project);
         self.git.handle(action, paths.as_ref(), ctx);
     }
 
     /// Apply an action returned by the top bar or the sidebar to app state.
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         match action {
-            Action::Sidebar(SidebarAction::OpenProject) => self.open_project(ctx),
-            Action::Sidebar(SidebarAction::NewProject) => self.new_project(ctx),
-            Action::Sidebar(SidebarAction::ImportPostman) => self.import_postman(ctx),
-            Action::Sidebar(SidebarAction::ToggleSidebar) => {
+            Action::Project(action) => {
+                let events = self.project.handle(action, ctx);
+                self.apply_project_events(events);
+            }
+            Action::Shell(ShellAction::ToggleSidebar) => {
                 self.shell.sidebar_open = !self.shell.sidebar_open;
             }
-            Action::Sidebar(SidebarAction::ToggleCommitSection) => {
+            Action::Shell(ShellAction::ToggleCommitSection) => {
                 self.shell.commit_open = !self.shell.commit_open;
             }
-            Action::Sidebar(SidebarAction::SwitchView(view)) => {
+            Action::Shell(ShellAction::SwitchView(view)) => {
                 let was = self.shell.sidebar_view;
                 self.shell.sidebar_view = view;
                 if view == SidebarView::Changes && was != SidebarView::Changes {
                     self.handle_git(GitAction::Refresh, ctx);
                 }
             }
-            Action::Sidebar(SidebarAction::ToggleTemplatesSection) => {
+            Action::Shell(ShellAction::ToggleTemplatesSection) => {
                 self.shell.templates_open = !self.shell.templates_open;
             }
             Action::Contracts(action) => self.handle_contracts(action, ctx),
@@ -447,7 +521,8 @@ impl eframe::App for App {
     // via `ui.ctx()`.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        self.poll_dialog(&ctx);
+        let events = self.project.poll(&ctx);
+        self.apply_project_events(events);
         self.poll_git(&ctx);
         let top = self.top_bar(ui);
         self.bottom_bar(ui);
@@ -462,7 +537,9 @@ impl eframe::App for App {
         if let Some(a) = crate::features::contracts::ui::view::dialogs(&ctx, &mut self.contracts) {
             self.handle_contracts(a, &ctx);
         }
-        self.open_blocked_dialog(&ctx);
+        if let Some(a) = blocked_dialog(&ctx, &self.project) {
+            self.apply(Action::Project(a), &ctx);
+        }
     }
 }
 
@@ -679,7 +756,7 @@ mod tests {
         assert!(app.git.pending.is_none());
 
         app.apply(
-            Action::Sidebar(SidebarAction::SwitchView(SidebarView::Changes)),
+            Action::Shell(ShellAction::SwitchView(SidebarView::Changes)),
             &ctx,
         );
 

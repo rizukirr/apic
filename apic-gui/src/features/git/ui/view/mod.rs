@@ -1,6 +1,6 @@
 //! The git panel's rendering: the sidebar body (status list, refresh) and the
 //! central body (diff view). Both bodies fill a frame the app shell owns, the
-//! same shape as `features::contracts::view`.
+//! same shape as `features::contracts::ui::view`.
 
 mod branches;
 mod diff;

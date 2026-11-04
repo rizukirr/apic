@@ -66,10 +66,6 @@ pub(crate) struct ContractsState {
     /// The active sub-tab inside the Response tab; reset to [`RespTab::Body`].
     pub(crate) resp_tab_view: RespTab,
 
-    /// When `Some`, a modal listing contracts that must be fixed before the
-    /// picked non-project folder can be opened/initialized.
-    pub(crate) open_blocked: Option<Vec<(PathBuf, String)>>,
-
     /// Raw-JSON repair editor state for an invalid contract; `None` when not
     /// repairing.
     pub(crate) repair: Option<Repair>,

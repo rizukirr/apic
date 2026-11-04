@@ -121,7 +121,7 @@ fn menu_items_ui(
 ///
 /// The menu button is reserved first with a right-to-left layout, and the
 /// name is nested inside a left-to-right layout marked `.truncate()`, the
-/// pattern in `features::contracts::view` so a long file name truncates
+/// pattern in `features::contracts::ui::view` so a long file name truncates
 /// instead of forcing the panel wider than its dragged width.
 pub(super) fn file_row(
     ui: &mut egui::Ui,
@@ -196,7 +196,7 @@ pub(super) fn file_row(
 
 /// A folder tree of a group's changed files, each with its tick, built from their
 /// `/`-separated repo-relative paths. Local to `features/git/`: that module
-/// may not import `features/contracts/`, and `contracts::view::TreeNode`
+/// may not import `features/contracts/`, and `contracts::domain::tree::TreeNode`
 /// carries method badges and contract indices that mean nothing here.
 #[derive(Default)]
 pub(super) struct FileTree<'a> {
