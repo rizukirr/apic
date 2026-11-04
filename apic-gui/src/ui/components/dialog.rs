@@ -10,6 +10,12 @@ use crate::ui::theme::{Palette, palette};
 /// Every dialog is this wide, so popups read as one family.
 const DIALOG_WIDTH: f32 = 420.0;
 
+/// Space above and below the header row.
+const HEADER_PAD_Y: i8 = 10;
+
+/// The header row's height, fitting the title and the close button.
+const HEADER_ROW_H: f32 = 24.0;
+
 /// How a dialog button looks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ButtonKind {
@@ -82,13 +88,18 @@ pub(crate) fn dialog(
         .show(ctx, |ui| {
             ui.set_min_width(DIALOG_WIDTH);
             ui.set_max_width(DIALOG_WIDTH);
+            // No item spacing between the header, the line and the body, so
+            // the header's own equal top and bottom margins are the only
+            // space around the title.
+            let gap = ui.spacing().item_spacing.y;
+            ui.spacing_mut().item_spacing.y = 0.0;
             egui::Frame::new()
-                .inner_margin(egui::Margin::symmetric(16, 8))
+                .inner_margin(egui::Margin::symmetric(16, HEADER_PAD_Y))
                 .show(ui, |ui| {
-                    // `Sides` keeps the row as tall as its contents. A nested
+                    // `Sides` keeps the row as tall as `HEADER_ROW_H`. A nested
                     // right-to-left layout here would grow to the modal's
                     // full available height and leave a gap under the title.
-                    egui::containers::Sides::new().show(
+                    egui::containers::Sides::new().height(HEADER_ROW_H).show(
                         ui,
                         |ui| ui.label(RichText::new(title).color(p.on_surface).size(15.0)),
                         |ui| {
@@ -98,8 +109,9 @@ pub(crate) fn dialog(
                         },
                     );
                 });
-            ui.separator();
+            ui.add(egui::Separator::default().spacing(0.0));
             egui::Frame::new().inner_margin(16).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = gap;
                 ui.set_width(ui.available_width());
                 body(ui);
             });
