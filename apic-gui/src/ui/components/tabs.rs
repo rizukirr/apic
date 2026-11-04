@@ -50,6 +50,7 @@ pub(crate) fn tab_strip(ui: &mut egui::Ui, current: &mut usize, tabs: &[Tab]) ->
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 16.0;
                 for (i, tab) in tabs.iter().enumerate() {
                     let selected = i == *current;
                     let text = tab_text(ui.style(), tab, selected, p);
@@ -58,8 +59,8 @@ pub(crate) fn tab_strip(ui: &mut egui::Ui, current: &mut usize, tabs: &[Tab]) ->
                         let r = response.rect;
                         ui.painter().line_segment(
                             [
-                                egui::pos2(r.left(), r.bottom()),
-                                egui::pos2(r.right(), r.bottom()),
+                                egui::pos2(r.left(), r.bottom() + 3.0),
+                                egui::pos2(r.right(), r.bottom() + 3.0),
                             ],
                             egui::Stroke::new(2.0, p.primary),
                         );
@@ -75,7 +76,8 @@ pub(crate) fn tab_strip(ui: &mut egui::Ui, current: &mut usize, tabs: &[Tab]) ->
 }
 
 /// The label of `tab` with its count appended when the count is above zero,
-/// coloured for the selected or unselected state.
+/// coloured for the selected or unselected state. The count is drawn smaller
+/// and raised to the top of the line, after a thin space.
 fn tab_text(style: &egui::Style, tab: &Tab, selected: bool, p: &Palette) -> egui::text::LayoutJob {
     let color = tab.color.unwrap_or(if selected {
         p.on_surface
@@ -90,13 +92,21 @@ fn tab_text(style: &egui::Style, tab: &Tab, selected: bool, p: &Palette) -> egui
         egui::Align::Center,
     );
     if let Some(n) = tab.count.filter(|n| *n > 0) {
-        RichText::new(format!("  {n}"))
+        let label_size = egui::TextStyle::Body.resolve(style).size;
+        RichText::new("\u{2009}").append_to(
+            &mut text,
+            style,
+            egui::FontSelection::Default,
+            egui::Align::Center,
+        );
+        RichText::new(n.to_string())
+            .size(label_size * 0.75)
             .color(p.on_surface_variant)
             .append_to(
                 &mut text,
                 style,
                 egui::FontSelection::Default,
-                egui::Align::Center,
+                egui::Align::TOP,
             );
     }
     text
@@ -173,6 +183,24 @@ mod tests {
         );
         let three = tab_text(&style, &Tab::new("Headers").count(3), true, p);
         assert!(three.text.contains('3'), "{}", three.text);
+    }
+
+    #[test]
+    fn tab_strip_draws_the_count_smaller() {
+        let style = egui::Style::default();
+        let p = palette_for(egui::Theme::Dark);
+        let job = tab_text(&style, &Tab::new("Headers").count(3), false, p);
+        let size_of = |needle: &str| {
+            let start = job.text.find(needle).expect("needle is in the job text");
+            job.sections
+                .iter()
+                .find(|s| s.byte_range.contains(&egui::text::ByteIndex(start)))
+                .expect("a section covers the needle")
+                .format
+                .font_id
+                .size
+        };
+        assert!(size_of("3") < size_of("Headers"));
     }
 
     #[test]

@@ -31,16 +31,40 @@ pub(super) fn method_color(method: &str, p: &Palette) -> Color32 {
     }
 }
 
-/// A filled, method-colored badge (read mode); the edit view uses a plain
-/// button instead so it can cycle the method on click.
+/// A filled, rounded, method-colored pill (read mode); the edit view uses a
+/// dropdown instead so it can change the method.
 fn method_badge(ui: &mut egui::Ui, method: &str) {
     let p = palette(ui.ctx());
-    ui.label(
-        RichText::new(format!(" {method} "))
-            .color(p.surface)
-            .background_color(method_color(method, p))
-            .strong(),
-    );
+    egui::Frame::NONE
+        .fill(method_color(method, p))
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(8, 2))
+        .show(ui, |ui| {
+            ui.label(RichText::new(method).color(p.surface).strong());
+        });
+}
+
+/// Lays out `url` in `font`, with every `{{...}}` variable span in
+/// `syntax_number` and the rest in `on_surface`. A span runs from `{{` to the
+/// next `}}` inclusive, and an unclosed `{{` runs to the end.
+pub(super) fn url_layout_job(url: &str, p: &Palette, font: egui::FontId) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let format = |color| egui::TextFormat::simple(font.clone(), color);
+    let mut rest = url;
+    while !rest.is_empty() {
+        let Some(open) = rest.find("{{") else {
+            job.append(rest, 0.0, format(p.on_surface));
+            break;
+        };
+        if open > 0 {
+            job.append(&rest[..open], 0.0, format(p.on_surface));
+        }
+        let var = &rest[open..];
+        let end = var.find("}}").map_or(var.len(), |close| close + 2);
+        job.append(&var[..end], 0.0, format(p.syntax_number));
+        rest = &var[end..];
+    }
+    job
 }
 
 // egui temp-data keys for the "focus the new row's name field" markers, one per
@@ -117,17 +141,23 @@ pub(super) fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: 
             method_badge(ui, &method);
         }
         ui.add_space(SPACE_MEDIUM);
+        let font = egui::TextStyle::Monospace.resolve(ui.style());
         if editing {
+            let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+                let mut job = url_layout_job(buf.as_str(), p, font.clone());
+                job.wrap.max_width = wrap_width;
+                ui.fonts_mut(|f| f.layout_job(job))
+            };
             ui.add(
                 egui::TextEdit::singleline(&mut model.url)
                     .font(egui::TextStyle::Monospace)
                     .frame(egui::Frame::NONE)
                     .hint_text("https://host/path/{id}")
-                    .text_color(p.info)
+                    .layouter(&mut layouter)
                     .desired_width(f32::INFINITY),
             );
         } else {
-            ui.label(RichText::new(&model.url).color(p.info).strong().monospace());
+            ui.label(url_layout_job(&model.url, p, font));
         }
     });
 }
@@ -643,6 +673,27 @@ mod tests {
                 response_headers(ui, &mut m, 0, true);
             });
         }
+    }
+
+    #[test]
+    fn url_layout_job_colours_variables_apart_from_the_path() {
+        let p = &crate::ui::theme::TOKYO_NIGHT_STORM;
+        let job = url_layout_job("{{baseUrl}}/auth/login", p, egui::FontId::monospace(12.0));
+        let color_of = |needle: &str| {
+            let start = job.text.find(needle).expect("needle is in the job text");
+            let section = job
+                .sections
+                .iter()
+                .find(|s| s.byte_range.contains(&egui::text::ByteIndex(start)))
+                .expect("a section covers the needle");
+            assert!(
+                section.byte_range.end >= egui::text::ByteIndex(start + needle.len()),
+                "{needle}"
+            );
+            section.format.color
+        };
+        assert_eq!(color_of("{{baseUrl}}"), p.syntax_number);
+        assert_eq!(color_of("/auth/login"), p.on_surface);
     }
 
     #[test]

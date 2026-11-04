@@ -113,8 +113,7 @@ pub(crate) fn json_editor(ui: &mut egui::Ui, buf: &mut String, editing: bool) {
     let line_count = text.lines().count().max(1);
     let mut layouter = json_layouter;
     egui::Frame::new()
-        .fill(p.surface_container_lowest)
-        .inner_margin(egui::Margin::same(8))
+        .inner_margin(egui::Margin::symmetric(0, 4))
         .show(ui, |ui| {
             ui.horizontal_top(|ui| {
                 let gutter: String = (1..=line_count).map(|n| format!("{n}\n")).collect();

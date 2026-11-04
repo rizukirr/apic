@@ -13,8 +13,11 @@ pub(crate) fn url_bar<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R
         .fill(p.surface_container)
         .stroke(egui::Stroke::new(1.0, p.outline_variant))
         .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(egui::Margin::symmetric(8, 6))
-        .show(ui, |ui| ui.horizontal(add).inner)
+        .inner_margin(egui::Margin::symmetric(8, 8))
+        .show(ui, |ui| {
+            ui.set_min_height(20.0);
+            ui.horizontal(add).inner
+        })
         .inner
 }
 
