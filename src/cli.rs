@@ -1,7 +1,7 @@
 //! Command-line interface: argument parsing and subcommand handlers.
 
 use crate::flags::{AuthorFlags, apply_flags};
-use crate::render::{render, sanitize};
+use crate::render::{render, sanitize, use_color};
 use crate::tree;
 use apic_core::config::{Config, InitOutcome, find_apic_dir, read_config_file};
 use apic_core::edit::EditModel;
@@ -1325,7 +1325,10 @@ fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), String> {
             } else {
                 None
             };
-            print!("{}", tree::render(root_label.as_deref(), &tree_root, true));
+            print!(
+                "{}",
+                tree::render(root_label.as_deref(), &tree_root, use_color())
+            );
         } else {
             if filter.is_some() {
                 rows.sort_by_key(|row| std::cmp::Reverse(row.score));

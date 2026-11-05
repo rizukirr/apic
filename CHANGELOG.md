@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **JSON syntax highlighting in `apic read`.** Request and response bodies are coloured by token on a terminal: keys blue, string values green, numbers yellow, `true`, `false` and `null` magenta, and punctuation dim, using the terminal's own basic colours. Piped or redirected output stays plain.
+- `apic read` and `apic list` honour `NO_COLOR`: when it is set and not empty, no colour is written even on a terminal.
+
 ### Changed
 
 - **Curl-style CLI authoring (breaking).** `apic create -f <file> [<url>] [flags]` now writes a contract in one command instead of opening an editor. It seeds from the project template (`--use-template` picks one, and with several templates `convention.json` is used), defaults the name to the file stem, appends `.json` when missing, never overwrites, and prints `created <path>`. The new `apic edit -f <query> [<url>] [flags]` changes only the fields it is given and prints `updated <path>`. Both take the same flags: `-X` for the method, a URL whose query string is split into query params, `-H 'Name: value'` to add or replace a header and `-H 'Name:'` to remove one, `-d` with text, `@file` or `@-`, `-F name=value` or `name=@file[;type=mime]` for multipart parts, `--response CODE:DESC`, `--response-body CODE BODY`, `--response-header CODE HEADER`, `--name` and `--description`. A `-d` on a multipart body or a `-F` on a JSON body fails and points at `apic open`, a `--response-body` or `--response-header` for a missing code fails and points at `--response`, and nothing is written on any error.
