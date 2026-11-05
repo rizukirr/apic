@@ -10,6 +10,14 @@
 #![warn(unreachable_pub)]
 
 mod cli;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "wired up by the create and edit commands in the next commit"
+    )
+)]
+mod flags;
 mod picker;
 mod render;
 mod tree;
