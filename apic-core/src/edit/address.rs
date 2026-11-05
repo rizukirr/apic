@@ -36,6 +36,22 @@ pub enum Field {
     ResponseHeaderValue(usize, usize),
     ResponseHeaderAdd(usize),
     BodyExample(BodyLoc),
+    /// The name of part `usize` in the multipart body at `BodyLoc`.
+    PartName(BodyLoc, usize),
+    /// The text value of part `usize`. Blank for a file part.
+    PartValue(BodyLoc, usize),
+    /// The filename of part `usize`. Set only on a file part.
+    PartFilename(BodyLoc, usize),
+    /// The part's own media type, e.g. `image/png`.
+    PartContentType(BodyLoc, usize),
+    /// The description of part `usize`.
+    PartDesc(BodyLoc, usize),
+    /// Whether part `usize` is required.
+    PartRequired(BodyLoc, usize),
+    /// Whether part `usize` is a file part rather than a text part.
+    PartIsFile(BodyLoc, usize),
+    /// Appends a blank part to the multipart body at `BodyLoc`.
+    PartAdd(BodyLoc),
     ResponseAdd,
     SectionHeader,
 }
