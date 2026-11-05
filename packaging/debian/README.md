@@ -1,6 +1,6 @@
 # Launchpad PPA: apic-cli + apic-gui
 
-One `debian/` tree that builds `apic` (CLI/TUI) and `apic-gui` (desktop GUI)
+One `debian/` tree that builds `apic` (CLI) and `apic-gui` (desktop GUI)
 for Ubuntu, hosted on the Launchpad PPA `ppa:rizukirr/apic`.
 
 The PPA must already exist on Launchpad with the `amd64` and `arm64`

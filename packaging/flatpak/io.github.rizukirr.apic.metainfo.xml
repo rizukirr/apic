@@ -4,7 +4,7 @@
   <name>apic</name>
   <summary>Tool for designing and collaborating on API contracts</summary>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>GPL-3.0-only</project_license>
   <developer id="io.github.rizukirr">
     <name>Rizki Rakasiwi</name>
   </developer>

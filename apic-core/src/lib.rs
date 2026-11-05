@@ -1,5 +1,5 @@
 //! Frontend-free core for `apic`: the contract model and the parse, validate,
-//! load/save, template, and Postman-convert logic shared by the CLI/TUI and
+//! load/save, template, and Postman-convert logic shared by the CLI and
 //! future frontends.
 
 pub mod config;

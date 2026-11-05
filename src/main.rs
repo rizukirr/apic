@@ -10,10 +10,9 @@
 #![warn(unreachable_pub)]
 
 mod cli;
-mod picker;
+mod flags;
 mod render;
 mod tree;
-mod tui;
 
 /// Restores the default `SIGPIPE` disposition on Unix.
 ///

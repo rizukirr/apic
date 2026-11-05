@@ -1,11 +1,11 @@
 pkgbase = apic-bin
-	pkgdesc = Git-friendly API contracts tools: CLI/TUI (apic) and desktop GUI (apic-gui), prebuilt binaries
+	pkgdesc = Git-friendly API contracts tools: CLI (apic) and desktop GUI (apic-gui), prebuilt binaries
 	pkgver = 0.5.1
 	pkgrel = 1
 	url = https://github.com/rizukirr/apic
 	arch = x86_64
 	arch = aarch64
-	license = MIT
+	license = GPL-3.0-only
 	depends = hicolor-icon-theme
 	depends = fontconfig
 	depends = freetype2

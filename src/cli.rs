@@ -1,14 +1,16 @@
 //! Command-line interface: argument parsing and subcommand handlers.
 
-use crate::picker;
-use crate::render::{render, sanitize};
+use crate::flags::{AuthorFlags, apply_flags};
+use crate::render::{render, sanitize, use_color};
 use crate::tree;
 use apic_core::config::{Config, InitOutcome, find_apic_dir, read_config_file};
+use apic_core::edit::EditModel;
 use apic_core::file::{confine_to_dir, home_relative, read_file, to_slash};
 use apic_core::fuzzy::{fuzzy_find, fuzzy_match_path};
 use apic_core::json::{json_get, load_for_edit, scan_json_file};
 use apic_core::template::list_templates;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
+use serde_json::Value;
 use std::fs;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -92,18 +94,20 @@ enum Commands {
         template: bool,
     },
 
-    /// Scaffold a new contract — or, with `--template`, a new project template.
+    /// Create a new contract, or with `--template` a new project template.
     ///
-    /// Opens a full-screen editor seeded from the project template's structure;
-    /// the file is written when you save. Pass `--editor` to scaffold the file
-    /// to disk and open it in `$VISUAL`/`$EDITOR` instead. The path is resolved
-    /// against the working directory and confined to it; a `..` escape or an
-    /// absolute path elsewhere is rejected. Refuses to overwrite an existing file.
+    /// Seeds the contract from the project template, applies the curl-style
+    /// flags, validates the result and writes it, e.g.
+    /// `apic create -f auth/login -X POST 'https://api/auth/login?remember=true'
+    /// -H 'Content-Type: application/json' -d @body.json --response '200:OK'`.
+    /// The name defaults to the file stem. The path is resolved against the
+    /// working directory and confined to it, `.json` is appended when missing,
+    /// and an existing file is never overwritten.
     ///
     /// With `--template <name>` a new template is authored at
     /// `.apic/template/<name>.json` instead of a contract. `--use-template <name>`
-    /// picks which existing template seeds the new contract or template, skipping
-    /// the interactive picker shown when several templates exist.
+    /// picks which existing template seeds the new contract or template. With
+    /// several templates and no `--use-template`, the convention template is used.
     Create {
         /// Path for the new contract, relative to the working directory
         /// (e.g. `auth/login.json`). Required unless `--template` is given.
@@ -115,10 +119,9 @@ enum Commands {
         )]
         filename: Option<String>,
 
-        /// Edit in this external editor (e.g. `nvim` or `"code --wait"`) instead
-        /// of the built-in TUI, overriding `$VISUAL` and `$EDITOR`.
-        #[arg(long, short = 'e', value_name = "EDITOR")]
-        editor: Option<String>,
+        /// Request URL. A `?a=1&b=2` query string becomes query params.
+        #[arg(value_name = "URL")]
+        url: Option<String>,
 
         /// Author a new template at `.apic/template/<NAME>.json` instead of a
         /// contract (flat name; seeded from the built-in default or
@@ -127,9 +130,34 @@ enum Commands {
         template: Option<String>,
 
         /// Seed the new contract or template from this existing template
-        /// (fuzzy-matched in `.apic/template/`), skipping the interactive picker.
+        /// (fuzzy-matched in `.apic/template/`).
         #[arg(long, value_name = "NAME")]
         use_template: Option<String>,
+
+        #[command(flatten)]
+        flags: AuthorArgs,
+    },
+
+    /// Change an existing contract with curl-style flags.
+    ///
+    /// Resolves the contract like `read` (exact, extensionless, or fuzzy),
+    /// applies only the given flags, validates the result and writes it, e.g.
+    /// `apic edit -f auth/login -H 'X-Trace: 1' -H 'DeviceID:'`. `-d` on a body
+    /// with multipart parts, `-F` on a body with a JSON example, and
+    /// `--response-body` or `--response-header` for a code with no response
+    /// fail and write nothing, as does a result that is not a valid contract.
+    Edit {
+        /// Contract to edit — path, extensionless path, or fuzzy fragment.
+        #[arg(long, short = 'f', value_name = "QUERY")]
+        find: String,
+
+        /// Request URL. A `?a=1&b=2` query string is upserted into the query
+        /// params.
+        #[arg(value_name = "URL")]
+        url: Option<String>,
+
+        #[command(flatten)]
+        flags: AuthorArgs,
     },
 
     /// Check that contracts parse and conform to the schema.
@@ -153,11 +181,10 @@ enum Commands {
         template: bool,
     },
 
-    /// Edit an existing contract in the interactive TUI.
+    /// Open an existing contract in your editor.
     ///
     /// Resolves the filename like `read` (exact, extensionless, or fuzzy) and
-    /// opens it in the full-screen editor. Pass `--editor` to use your external
-    /// editor instead. Uses the same editor resolution as `create`.
+    /// opens it in `--editor`, then `$VISUAL`, then `$EDITOR`, then `vi`.
     ///
     /// Pass `--template` instead of a filename to edit the project template
     /// (in `.apic/template/`) that `apic create` scaffolds from.
@@ -173,8 +200,8 @@ enum Commands {
         )]
         find: Option<String>,
 
-        /// Edit in this external editor (e.g. `nvim` or `"code --wait"`) instead
-        /// of the built-in TUI, overriding `$VISUAL` and `$EDITOR`.
+        /// Open in this editor (e.g. `nvim` or `"code --wait"`), overriding
+        /// `$VISUAL` and `$EDITOR`.
         #[arg(long, short = 'e', value_name = "EDITOR")]
         editor: Option<String>,
 
@@ -188,10 +215,11 @@ enum Commands {
     ///
     /// The filename is resolved like `read`: an exact path (`user/user.json`),
     /// without the `.json` extension (`user/user`), or a fuzzy fragment
-    /// (`user`), prompting to pick when ambiguous. On an interactive terminal
-    /// it asks for confirmation before deleting; in scripts it removes without
-    /// prompting. With `--template <name>` a template in `.apic/template/` is
-    /// removed instead (fuzzy-matched the same way).
+    /// (`user`), failing with the candidates when ambiguous. On an interactive
+    /// terminal it asks for confirmation before deleting unless `--yes` is
+    /// given; in scripts it removes without prompting. With `--template <name>`
+    /// a template in `.apic/template/` is removed instead (fuzzy-matched the
+    /// same way).
     Remove {
         /// Contract to remove — path, extensionless path, or fuzzy fragment.
         /// Required unless `--template` is given.
@@ -207,6 +235,10 @@ enum Commands {
         /// instead of a contract.
         #[arg(long, short = 't', value_name = "NAME", conflicts_with = "find")]
         template: Option<String>,
+
+        /// Delete without asking for confirmation.
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 
     /// Import a Postman collection as apic contract files.
@@ -233,6 +265,78 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+}
+
+/// The curl-style authoring flags shared by `create` and `edit`.
+#[derive(Debug, Args)]
+struct AuthorArgs {
+    /// HTTP method, e.g. `POST`.
+    #[arg(long = "request", short = 'X', value_name = "METHOD")]
+    method: Option<String>,
+
+    /// Request header `'Name: value'`, added or replaced by name. `'Name:'`
+    /// removes it. Repeatable.
+    #[arg(long = "header", short = 'H', value_name = "HEADER")]
+    headers: Vec<String>,
+
+    /// JSON request body: literal text, `@file`, or `@-` for stdin.
+    #[arg(long, short = 'd', value_name = "DATA")]
+    data: Option<String>,
+
+    /// Multipart part `name=value`, `name=@file` or `'name=@file;type=mime'`,
+    /// added or replaced by name. Repeatable.
+    #[arg(long = "form", short = 'F', value_name = "PART")]
+    form: Vec<String>,
+
+    /// Response `CODE:DESC`, added or updating the first with that code.
+    /// Repeatable.
+    #[arg(long = "response", value_name = "CODE:DESC")]
+    responses: Vec<String>,
+
+    /// JSON body for response CODE, in the `-d` forms. Repeatable.
+    #[arg(long = "response-body", num_args = 2, value_names = ["CODE", "BODY"])]
+    response_bodies: Vec<String>,
+
+    /// Header for response CODE, with the `-H` rules. Repeatable.
+    #[arg(long = "response-header", num_args = 2, value_names = ["CODE", "HEADER"])]
+    response_headers: Vec<String>,
+
+    /// Contract name.
+    #[arg(long, value_name = "NAME")]
+    name: Option<String>,
+
+    /// Contract description.
+    #[arg(long, value_name = "TEXT")]
+    description: Option<String>,
+}
+
+impl AuthorArgs {
+    /// Converts the parsed flags and the positional `url` into [`AuthorFlags`].
+    fn into_flags(self, url: Option<String>) -> AuthorFlags {
+        AuthorFlags {
+            method: self.method,
+            url,
+            headers: self.headers,
+            data: self.data,
+            form: self.form,
+            responses: self.responses,
+            response_bodies: pairs(self.response_bodies),
+            response_headers: pairs(self.response_headers),
+            name: self.name,
+            description: self.description,
+        }
+    }
+}
+
+/// Groups a flat `num_args = 2` value list into `(first, second)` pairs. clap
+/// guarantees an even length.
+fn pairs(values: Vec<String>) -> Vec<(String, String)> {
+    let mut values = values.into_iter();
+    let mut out = Vec::new();
+    while let (Some(a), Some(b)) = (values.next(), values.next()) {
+        out.push((a, b));
+    }
+    out
 }
 
 /// Updates the configured root working directory.
@@ -426,18 +530,14 @@ enum TemplateChoice {
     /// No specific template — use the project default (`convention.json`, then
     /// the built-in).
     Default,
-
-    /// The user cancelled an interactive pick.
-    Cancelled,
 }
 
 /// Chooses which template `create` seeds from.
 ///
 /// With `use_template`, the name is fuzzy-resolved against the project templates
-/// (exact basename first): a unique match is used, no match errors, a tie shows
-/// the picker on a terminal and errors otherwise. Without it, a single template
-/// is used, several show the picker on a terminal (falling back to the default
-/// when non-interactive), and none yields the default.
+/// (exact basename first): a unique match is used, while no match or a tie
+/// errors listing the candidates. Without it, a single template is used and
+/// none or several yield the default.
 fn select_create_template(
     apic_dir: &Path,
     use_template: Option<&str>,
@@ -449,20 +549,11 @@ fn select_create_template(
         Some(name) => match classify_template(name, &templates) {
             Resolution::One(path) => Ok(TemplateChoice::Template(path)),
             Resolution::None => Err(no_template_error(name, &templates, root)),
-            Resolution::Many(candidates) => pick_template(name, candidates, root),
+            Resolution::Many(candidates) => Err(ambiguous_template_error(name, &candidates, root)),
         },
-        None => match templates.len() {
-            0 => Ok(TemplateChoice::Default),
-            1 => Ok(TemplateChoice::Template(
-                templates.into_iter().next().unwrap(),
-            )),
-            _ => {
-                if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-                    pick_template("", templates, root)
-                } else {
-                    Ok(TemplateChoice::Default)
-                }
-            }
+        None => match <[PathBuf; 1]>::try_from(templates) {
+            Ok([only]) => Ok(TemplateChoice::Template(only)),
+            Err(_) => Ok(TemplateChoice::Default),
         },
     }
 }
@@ -481,51 +572,21 @@ fn no_template_error(name: &str, templates: &[PathBuf], root: &Path) -> String {
     msg
 }
 
-/// Shows the template picker on a terminal; errors with the candidate list when
-/// non-interactive so scripts fail loudly instead of hanging.
-fn pick_template(
-    name: &str,
-    candidates: Vec<PathBuf>,
-    root: &Path,
-) -> Result<TemplateChoice, String> {
+/// Builds the error for a template `name` that matches several `candidates`.
+fn ambiguous_template_error(name: &str, candidates: &[PathBuf], root: &Path) -> String {
     let labels: Vec<String> = candidates.iter().map(|c| rel_display(c, root)).collect();
-    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
-        let mut msg = if name.is_empty() {
-            format!(
-                "{} templates available, pick one with --use-template:\n",
-                labels.len()
-            )
-        } else {
-            format!("'{}' matches {} templates:\n", sanitize(name), labels.len())
-        };
-        for label in &labels {
-            msg.push_str(&format!("  {label}\n"));
-        }
-        msg.push_str(&format!("Specify one, e.g. --use-template {}", labels[0]));
-        return Err(msg);
+    let mut msg = format!("'{}' matches {} templates:\n", sanitize(name), labels.len());
+    for label in &labels {
+        msg.push_str(&format!("  {label}\n"));
     }
-    let prompt = if name.is_empty() {
-        format!("{} templates available:", candidates.len())
-    } else {
-        format!(
-            "{} templates match \"{}\":",
-            candidates.len(),
-            sanitize(name)
-        )
-    };
-    match picker::pick(&prompt, &labels).map_err(|err| format!("picker failed: {err}"))? {
-        Some(idx) => Ok(TemplateChoice::Template(candidates[idx].clone())),
-        None => Ok(TemplateChoice::Cancelled),
-    }
+    msg.push_str(&format!("Specify one, e.g. --use-template {}", labels[0]));
+    msg
 }
 
 /// A contract reference resolved down to a single decision.
 enum Resolved {
     /// Exactly one contract — proceed.
     Path(PathBuf),
-
-    /// The user cancelled an interactive pick — not an error.
-    Cancelled,
 
     /// Nothing matched.
     NotFound,
@@ -536,26 +597,16 @@ fn rel_display(path: &Path, root: &Path) -> String {
     sanitize(&apic_core::file::relative_slash(path, root))
 }
 
-/// Reports a cancelled interactive pick; cancelling is not an error.
+/// Reports a declined confirmation; declining is not an error.
 fn cancelled() -> Result<(), String> {
     println!("cancelled");
     Ok(())
 }
 
-/// Prints each fallback warning to stderr, matching the previous `template`
-/// output (`Warning: <message>`).
-fn print_warnings(warnings: &[String]) {
-    for warning in warnings {
-        eprintln!("Warning: {warning}");
-    }
-}
-
-/// Resolves `filename` to exactly one contract, asking the user to pick when
-/// the reference is ambiguous.
+/// Resolves `filename` to exactly one contract.
 ///
-/// Interactive sessions get an inline arrow-key picker. When stdin or stdout
-/// is not a terminal the picker is never shown; an error listing every
-/// candidate is returned instead, so scripts fail loudly rather than hang.
+/// An ambiguous reference is an error listing every candidate, best match
+/// first, so a script fails loudly instead of guessing.
 fn resolve_one(filename: &str) -> Result<Resolved, String> {
     let files = match list(true) {
         Some(files) => files,
@@ -568,33 +619,22 @@ fn resolve_one(filename: &str) -> Result<Resolved, String> {
         Resolution::None => Ok(Resolved::NotFound),
         Resolution::Many(candidates) => {
             let labels: Vec<String> = candidates.iter().map(|c| rel_display(c, &root)).collect();
-            if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
-                let mut msg = format!(
-                    "'{}' is ambiguous, {} contracts match:\n",
-                    sanitize(filename),
-                    labels.len()
-                );
-                for label in &labels {
-                    msg.push_str(&format!("  {label}\n"));
-                }
-                msg.push_str(&format!("Specify the path, e.g. -f {}", labels[0]));
-                return Err(msg);
-            }
-            let prompt = format!(
-                "{} contracts match \"{}\":",
-                candidates.len(),
-                sanitize(filename)
+            let mut msg = format!(
+                "'{}' is ambiguous, {} contracts match:\n",
+                sanitize(filename),
+                labels.len()
             );
-            match picker::pick(&prompt, &labels).map_err(|err| format!("picker failed: {err}"))? {
-                Some(idx) => Ok(Resolved::Path(candidates[idx].clone())),
-                None => Ok(Resolved::Cancelled),
+            for label in &labels {
+                msg.push_str(&format!("  {label}\n"));
             }
+            msg.push_str(&format!("Specify the path, e.g. -f {}", labels[0]));
+            Err(msg)
         }
     }
 }
 
-/// Reads the project template if present, if multiple templates exist, picks
-/// one, otherwise fails.
+/// Reads the project template if there is exactly one, otherwise fails listing
+/// what is there.
 fn read_template_cmd() -> Result<(), String> {
     let apic_dir = find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
     let templates = list_templates(&apic_dir);
@@ -616,22 +656,12 @@ fn read_template_cmd() -> Result<(), String> {
         Resolution::None => Err(no_template_error("", &templates, root)),
         Resolution::Many(candidates) => {
             let labels: Vec<String> = candidates.iter().map(|c| rel_display(c, root)).collect();
-            if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
-                let mut msg = format!("'' is ambiguous, {} templates match:\n", labels.len());
-                for label in &labels {
-                    msg.push_str(&format!("  {label}\n"));
-                }
-                msg.push_str(&format!("Specify the path, e.g. -f {}", labels[0]));
-                return Err(msg);
+            let mut msg = format!("'' is ambiguous, {} templates match:\n", labels.len());
+            for label in &labels {
+                msg.push_str(&format!("  {label}\n"));
             }
-            let prompt = format!("{} templates match \"\":", candidates.len(),);
-            match picker::pick(&prompt, &labels).map_err(|err| format!("picker failed: {}", err))? {
-                Some(idx) => match read_file(&templates[idx]) {
-                    Ok(content) => read(&content, None),
-                    Err(_) => Err(no_template_error("", &templates, root)),
-                },
-                None => Ok(()),
-            }
+            msg.push_str(&format!("Specify the path, e.g. -f {}", labels[0]));
+            Err(msg)
         }
     }
 }
@@ -657,7 +687,6 @@ fn read_cmd(filename: Option<&str>, status: Option<u16>, template: bool) -> Resu
                 Ok(())
             }
         },
-        Resolved::Cancelled => cancelled(),
         Resolved::NotFound => {
             println!("No contract found");
             Ok(())
@@ -733,7 +762,6 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
         }
         Some(name) => match resolve_one(name)? {
             Resolved::Path(path) => vec![path],
-            Resolved::Cancelled => return cancelled(),
             Resolved::NotFound => {
                 eprintln!("No contract matches {}", sanitize(name));
                 std::process::exit(1);
@@ -851,27 +879,25 @@ fn create_cmd(
     filename: Option<&str>,
     template: Option<&str>,
     use_template: Option<&str>,
-    editor: Option<&str>,
+    flags: &AuthorFlags,
 ) -> Result<(), String> {
     if let Some(name) = template {
-        return create_template_cmd(name, use_template, editor);
+        return create_template_cmd(name, use_template, flags);
     }
     // clap guarantees `-f` is present when `--template` is absent.
     let filename = filename.expect("clap requires -f unless --template is given");
-    create_contract_cmd(filename, use_template, editor)
+    create_contract_cmd(filename, use_template, flags)
 }
 
 /// Authors a new template at `.apic/template/<name>.json`.
 ///
 /// Requires an initialized project. The name is flat (no path separators). Seeds
-/// from an existing template (`--use-template`) or the built-in default. Refuses
-/// to overwrite an existing template. Without `--editor` the TUI is opened and
-/// the file is written on save; with `--editor` the seed is scaffolded to disk
-/// and opened in the external editor.
+/// from an existing template (`--use-template`) or the built-in default, applies
+/// `flags` and writes the result. Refuses to overwrite an existing template.
 fn create_template_cmd(
     name: &str,
     use_template: Option<&str>,
-    editor: Option<&str>,
+    flags: &AuthorFlags,
 ) -> Result<(), String> {
     let apic_dir =
         apic_core::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
@@ -888,175 +914,229 @@ fn create_template_cmd(
         format!("{name}.json")
     };
     let dir = apic_core::template::dir(&apic_dir);
-    fs::create_dir_all(&dir)
-        .map_err(|err| format!("Failed to create {}: {}", dir.display(), err))?;
     let path = dir.join(&file);
     if path.exists() {
         return Err(format!("template '{}' already exists", sanitize(&file)));
     }
 
-    let source = match use_template {
+    let overlay = match use_template {
         Some(src) => match select_create_template(&apic_dir, Some(src))? {
-            TemplateChoice::Template(p) => Some(p),
-            TemplateChoice::Cancelled => return cancelled(),
+            TemplateChoice::Template(p) => Some(read_template(&p)?),
             TemplateChoice::Default => None,
         },
         None => None,
     };
-
-    if editor.is_some() {
-        let contract = match &source {
-            Some(p) => {
-                let (contract, warnings) = apic_core::template::resolve_contract_from(p)?;
-                print_warnings(&warnings);
-                contract
-            }
-            None => apic_core::template::DEFAULT.to_string(),
-        };
-        fs::write(&path, contract)
-            .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
-        println!("Created {}", home_relative(&sanitize(&to_slash(&path))));
-        return open_in_editor(&path, editor)
-            .map_err(|err| format!("Failed to open editor: {err}"));
-    }
-
-    let overlay = match &source {
-        Some(p) => read_file(p).ok(),
-        None => None,
-    };
-    let model = crate::tui::seed_model(overlay.as_deref())?;
-    crate::tui::run(model, &path)
+    write_new(&path, overlay.as_deref(), flags)
 }
 
 /// Creates a new contract at `filename`, seeded from the chosen template.
 ///
 /// Inside an initialized project the `filename` is resolved against the working
 /// directory and confined to it; a `..` escape or absolute path elsewhere is
-/// rejected. Refuses to overwrite an existing file. The seed template is chosen
-/// by [`select_create_template`] (interactive picker when ambiguous).
+/// rejected. `.json` is appended when the name lacks it. Refuses to overwrite an
+/// existing file. The seed template is chosen by [`select_create_template`].
 fn create_contract_cmd(
     filename: &str,
     use_template: Option<&str>,
-    editor: Option<&str>,
+    flags: &AuthorFlags,
 ) -> Result<(), String> {
+    let filename = if filename.ends_with(".json") {
+        filename.to_string()
+    } else {
+        format!("{filename}.json")
+    };
     let path = match read_config_file().and_then(|conf| conf.get_root_dir()) {
-        Ok(root) => confine_to_dir(&root, Path::new(filename))?,
-        Err(_) => PathBuf::from(filename),
+        Ok(root) => confine_to_dir(&root, Path::new(&filename))?,
+        Err(_) => PathBuf::from(&filename),
     };
 
     if path.exists() {
         return Err(format!("{} already exists", path.display()));
     }
 
-    let chosen = match apic_core::config::find_apic_dir() {
+    let overlay = match apic_core::config::find_apic_dir() {
         Some(apic_dir) => match select_create_template(&apic_dir, use_template)? {
-            TemplateChoice::Template(p) => Some(p),
-            TemplateChoice::Default => None,
-            TemplateChoice::Cancelled => return cancelled(),
+            TemplateChoice::Template(p) => Some(read_template(&p)?),
+            TemplateChoice::Default => read_project_template(),
         },
         None => None,
     };
-
-    if editor.is_some() {
-        let contract = match &chosen {
-            Some(p) => {
-                let (contract, warnings) = apic_core::template::resolve_contract_from(p)?;
-                print_warnings(&warnings);
-                contract
-            }
-            None => {
-                let (contract, warnings) = apic_core::template::resolve_for_create()?;
-                print_warnings(&warnings);
-                contract
-            }
-        };
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|err| format!("Failed to create {}: {}", parent.display(), err))?;
-        }
-        fs::write(&path, contract)
-            .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
-        println!("Created {}", home_relative(&sanitize(&to_slash(&path))));
-        return open_in_editor(&path, editor)
-            .map_err(|err| format!("Failed to open editor: {err}"));
-    }
-
-    // The file is written only when the user saves inside the TUI.
-    let overlay = match &chosen {
-        Some(p) => read_file(p).ok(),
-        None => read_project_template(),
-    };
-    let model = crate::tui::seed_model(overlay.as_deref())?;
-    crate::tui::run(model, &path)
+    write_new(&path, overlay.as_deref(), flags)
 }
 
-/// Reads the resolved project template if present, for seeding the create TUI.
+/// Reads the template file at `path` for seeding.
+fn read_template(path: &Path) -> Result<String, String> {
+    read_file(path).map_err(|err| format!("Failed to read {}: {err}", path.display()))
+}
+
+/// Reads the resolved project template if present, seeding it first when
+/// missing.
 fn read_project_template() -> Option<String> {
     let apic_dir = apic_core::config::find_apic_dir()?;
     apic_core::template::seed_if_missing(&apic_dir).ok()?;
     fs::read_to_string(apic_core::template::resolve_path(&apic_dir)).ok()
 }
 
-/// Opens a contract for editing, or the project template when `template` is set.
+/// Seeds a model from `overlay`, applies `flags`, validates the result and
+/// writes it to the new file `path`, printing `created <path>`.
 ///
-/// Without `--editor` the interactive TUI is opened on the parsed contract;
-/// with `--editor` the file is opened in the external editor (legacy behavior).
-/// With `--template` the project's template in `.apic/template/` is targeted,
-/// seeded from the default first if it does not exist. The TUI is seeded like `create`
-/// (template values over blanked builtin structure), so it shows the template's
-/// own schema without the builtin's placeholder headers, fields, or examples.
+/// The name defaults to the file stem when `--name` is absent and the seed's
+/// name is blank or still the built-in placeholder. Nothing is written when any
+/// step fails, and an existing file is never replaced.
+fn write_new(path: &Path, overlay: Option<&str>, flags: &AuthorFlags) -> Result<(), String> {
+    let mut model = seed_model(overlay)?;
+    if flags.name.is_none()
+        && (model.name.trim().is_empty() || model.name == builtin_name()?)
+        && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+    {
+        model.name = stem.to_string();
+    }
+    let contract = finish(&mut model, flags)?;
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to create {}: {}", parent.display(), err))?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|err| format!("Failed to create {}: {}", path.display(), err))?;
+    file.write_all(contract.as_bytes())
+        .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
+    println!("created {}", home_relative(&sanitize(&to_slash(path))));
+    Ok(())
+}
+
+/// Applies `flags` to `model` and returns the validated contract text.
+fn finish(model: &mut EditModel, flags: &AuthorFlags) -> Result<String, String> {
+    apply_flags(model, flags, &mut std::io::stdin().lock())?;
+    let contract = model.to_json()?;
+    apic_core::json::validate(&contract).map_err(|err| format!("invalid contract: {err}"))?;
+    Ok(contract)
+}
+
+/// The `name` of the built-in template, a placeholder a new contract replaces.
+fn builtin_name() -> Result<String, String> {
+    let builtin: Value = serde_json::from_str(apic_core::template::DEFAULT)
+        .map_err(|err| format!("builtin template invalid: {err}"))?;
+    Ok(builtin
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string())
+}
+
+/// Builds a seed contract value: the builtin `contract.json` provides the full
+/// structure, but every array is emptied and every body cleared unless the
+/// project `overlay` supplies a value at that path.
+fn seed_value(overlay: Option<&str>) -> Result<Value, String> {
+    let mut base: Value = serde_json::from_str(apic_core::template::DEFAULT)
+        .map_err(|err| format!("builtin template invalid: {err}"))?;
+    strip_to_seed_defaults(&mut base);
+
+    if let Some(overlay) = overlay {
+        let over: Value = serde_json::from_str(overlay)
+            .map_err(|err| format!("project template is not valid JSON: {err}"))?;
+        overlay_values(&mut base, &over);
+    }
+    Ok(base)
+}
+
+/// Prepares the builtin template as a create seed: keeps scalar default values
+/// (name, description, method, url) but empties every array so a new contract
+/// starts with no leftover items, and clears every request and response body.
+fn strip_to_seed_defaults(v: &mut Value) {
+    match v {
+        Value::Array(items) => items.clear(),
+        Value::Object(map) => {
+            for (k, val) in map.iter_mut() {
+                // Body payloads: request is a bare body, a response's is `schema`.
+                if k == "request" || k == "schema" {
+                    *val = Value::Null;
+                } else {
+                    strip_to_seed_defaults(val);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Overlays the project template's values onto the blanked structure. Object
+/// keys merge; arrays and scalars from the overlay replace wholesale.
+fn overlay_values(base: &mut Value, overlay: &Value) {
+    match (base, overlay) {
+        (Value::Object(base_map), Value::Object(over_map)) => {
+            for (k, ov) in over_map {
+                overlay_values(base_map.entry(k.clone()).or_insert(Value::Null), ov);
+            }
+        }
+        (slot, ov) => *slot = ov.clone(),
+    }
+}
+
+/// Produces the seed [`EditModel`] for `create` from the template text
+/// `overlay`, or from the blanked builtin structure when it is absent.
+fn seed_model(overlay: Option<&str>) -> Result<EditModel, String> {
+    let value = seed_value(overlay)?;
+    let text = serde_json::to_string(&value).map_err(|err| format!("seed render failed: {err}"))?;
+    let contract = apic_core::json::json_get(&text, None)
+        .map_err(|err| format!("seed is not a valid contract: {err}"))?;
+    Ok(EditModel::from_contract(contract))
+}
+
+/// Handles `apic edit`: resolves `filename` to one contract, applies `flags`,
+/// validates the result and writes it, printing `updated <path>`. Nothing is
+/// written when any step fails.
+fn edit_cmd(filename: &str, flags: &AuthorFlags) -> Result<(), String> {
+    let path = match resolve_one(filename)? {
+        Resolved::Path(path) => path,
+        Resolved::NotFound => {
+            return Err(format!(
+                "No contract found matching '{}'",
+                sanitize(filename)
+            ));
+        }
+    };
+    let text =
+        read_file(&path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
+    let contract = load_for_edit(&text)
+        .map_err(|err| format!("{} is not a valid contract: {err}", path.display()))?;
+    let mut model = EditModel::from_contract(contract);
+    let contract = finish(&mut model, flags)?;
+    fs::write(&path, contract)
+        .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
+    println!("updated {}", home_relative(&sanitize(&to_slash(&path))));
+    Ok(())
+}
+
+/// Opens a contract in the editor, or the project template when `template` is
+/// set, seeding the template from the default first if it does not exist.
 fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Result<(), String> {
-    if template {
+    let path = if template {
         let apic_dir =
             apic_core::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
         apic_core::template::seed_if_missing(&apic_dir)?;
-        let path = apic_core::template::resolve_path(&apic_dir);
-        if editor.is_some() {
-            return open_in_editor(&path, editor)
-                .map_err(|err| format!("Failed to open editor: {err}"));
-        }
-        // Seed the model from the template exactly like `create`: the project
-        // template's own values plus the builtin's scalar defaults for
-        // name/description/url, with the builtin's arrays and examples blanked.
-        // This keeps the template's schema while dropping the builtin's
-        // placeholder headers, schema fields, and examples.
-        let overlay =
-            read_file(&path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
-        let model = crate::tui::seed_model(Some(&overlay))
-            .map_err(|reason| format!("{}: {reason}", path.display()))?;
-        return crate::tui::run(model, &path);
-    }
-
-    // The parser requires `-f` unless `--template` is given, so this is safe.
-    let filename = filename.expect("a find query is required without --template");
-    match resolve_one(filename)? {
-        Resolved::Path(path) => {
-            if editor.is_some() {
-                open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))
-            } else {
-                open_path_in_tui(&path)
+        apic_core::template::resolve_path(&apic_dir)
+    } else {
+        // The parser requires `-f` unless `--template` is given, so this is safe.
+        let filename = filename.expect("a find query is required without --template");
+        match resolve_one(filename)? {
+            Resolved::Path(path) => path,
+            Resolved::NotFound => {
+                return Err(format!("No contract found matching '{filename}'"));
             }
         }
-        Resolved::Cancelled => cancelled(),
-        Resolved::NotFound => Err(format!("No contract found matching '{filename}'")),
-    }
-}
-
-/// Reads, parses, and edits an existing contract file in the TUI.
-fn open_path_in_tui(path: &Path) -> Result<(), String> {
-    let text =
-        read_file(path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
-    let contract = load_for_edit(&text)
-        .map_err(|err| format!("{} is not a valid contract: {err}", path.display()))?;
-    let model = crate::tui::EditModel::from_contract(contract);
-    crate::tui::run(model, path)
+    };
+    open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))
 }
 
 /// Handles `apic remove`: deletes a template (`--template`) or a contract
-/// (`--find`), after confirmation on an interactive terminal.
-fn remove_cmd(filename: Option<&str>, template: Option<&str>) -> Result<(), String> {
+/// (`--find`), after confirmation on an interactive terminal unless `yes`.
+fn remove_cmd(filename: Option<&str>, template: Option<&str>, yes: bool) -> Result<(), String> {
     if let Some(name) = template {
-        return remove_template_cmd(name);
+        return remove_template_cmd(name, yes);
     }
     // clap guarantees `--find` is present when `--template` is absent.
     let filename = filename.expect("clap requires --find unless --template is given");
@@ -1064,27 +1144,25 @@ fn remove_cmd(filename: Option<&str>, template: Option<&str>) -> Result<(), Stri
         Resolved::Path(path) => {
             let root = read_config_file().and_then(|c| c.get_root_dir())?;
             let shown = rel_display(&path, &root);
-            if !confirm(&format!("Remove {shown}?"))? {
+            if !yes && !confirm(&format!("Remove {shown}?"))? {
                 return cancelled();
             }
             fs::remove_file(&path).map_err(|err| format!("Failed to remove {shown}: {err}"))?;
             println!("Removed {shown}");
             Ok(())
         }
-        Resolved::Cancelled => cancelled(),
         Resolved::NotFound => Err(format!("No contract found matching '{filename}'")),
     }
 }
 
 /// Removes a project template from `.apic/template/` by (fuzzy) `name`.
 ///
-/// Resolution matches `--use-template` (exact basename, then fuzzy with the
-/// picker when ambiguous): a unique match is removed, no match errors listing
-/// the available templates, a tie shows the picker on a terminal and errors
-/// otherwise. Confirmation matches contract removal (the prompt is skipped when
-/// stdin/stdout is not a terminal). No template is protected — removing the last
-/// one is fine, since `create` reseeds `convention.json` from the built-in.
-fn remove_template_cmd(name: &str) -> Result<(), String> {
+/// Resolution matches `--use-template` (exact basename, then fuzzy): a unique
+/// match is removed, while no match or a tie errors listing the candidates.
+/// Confirmation matches contract removal (skipped with `yes` or when
+/// stdin/stdout is not a terminal). No template is protected — removing the
+/// last one is fine, since `create` reseeds `convention.json` from the built-in.
+fn remove_template_cmd(name: &str, yes: bool) -> Result<(), String> {
     let apic_dir =
         apic_core::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
     let templates = apic_core::template::list_templates(&apic_dir);
@@ -1093,16 +1171,13 @@ fn remove_template_cmd(name: &str) -> Result<(), String> {
     let path = match classify_template(name, &templates) {
         Resolution::One(path) => path,
         Resolution::None => return Err(no_template_error(name, &templates, root)),
-        Resolution::Many(candidates) => match pick_template(name, candidates, root)? {
-            TemplateChoice::Template(path) => path,
-            // pick_template only returns Template or Cancelled; treat anything
-            // else as a cancel for exhaustiveness.
-            _ => return cancelled(),
-        },
+        Resolution::Many(candidates) => {
+            return Err(ambiguous_template_error(name, &candidates, root));
+        }
     };
 
     let shown = rel_display(&path, root);
-    if !confirm(&format!("Remove {shown}?"))? {
+    if !yes && !confirm(&format!("Remove {shown}?"))? {
         return cancelled();
     }
     fs::remove_file(&path).map_err(|err| format!("Failed to remove {shown}: {err}"))?;
@@ -1161,7 +1236,7 @@ fn confirm(prompt: &str) -> Result<bool, String> {
 
 /// Opens `path` in the user's preferred editor and waits for it to close.
 ///
-/// Resolves the editor from the explicit `editor` argument (the `--editor`
+/// Resolves the editor from the explicit `editor` argument (the `-e`
 /// flag), then `$VISUAL`, then `$EDITOR`, falling back to `vi`. The `--editor`
 /// flag takes precedence over the environment. Extra arguments in the value
 /// (e.g. `code --wait`) are honored.
@@ -1250,7 +1325,10 @@ fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), String> {
             } else {
                 None
             };
-            print!("{}", tree::render(root_label.as_deref(), &tree_root, true));
+            print!(
+                "{}",
+                tree::render(root_label.as_deref(), &tree_root, use_color())
+            );
         } else {
             if filter.is_some() {
                 rows.sort_by_key(|row| std::cmp::Reverse(row.score));
@@ -1272,15 +1350,17 @@ pub(crate) fn run() {
         Commands::Config { set_dir } => update_working_dir(set_dir.as_deref()),
         Commands::Create {
             filename,
-            editor,
+            url,
             template,
             use_template,
+            flags,
         } => create_cmd(
             filename.as_deref(),
             template.as_deref(),
             use_template.as_deref(),
-            editor.as_deref(),
+            &flags.into_flags(url),
         ),
+        Commands::Edit { find, url, flags } => edit_cmd(&find, &flags.into_flags(url)),
         Commands::Init { set_dir } => init_cmd(set_dir.as_deref()),
         Commands::List { filter, absolute } => list_cmd(filter.as_deref(), absolute),
         Commands::Read {
@@ -1294,7 +1374,11 @@ pub(crate) fn run() {
             editor,
             template,
         } => open_cmd(template, find.as_deref(), editor.as_deref()),
-        Commands::Remove { find, template } => remove_cmd(find.as_deref(), template.as_deref()),
+        Commands::Remove {
+            find,
+            template,
+            yes,
+        } => remove_cmd(find.as_deref(), template.as_deref(), yes),
         Commands::Convert {
             postman,
             destination,

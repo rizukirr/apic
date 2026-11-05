@@ -1,7 +1,7 @@
 # AUR: apic-bin
 
 PKGBUILD for the [`apic-bin`](https://aur.archlinux.org/packages/apic-bin) AUR
-package — prebuilt `apic` (CLI/TUI) and `apic-gui` (GUI) for Arch / CachyOS.
+package — prebuilt `apic` (CLI) and `apic-gui` (GUI) for Arch / CachyOS.
 
 ## Test locally
 

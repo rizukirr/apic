@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **JSON syntax highlighting in `apic read`.** Request and response bodies are coloured by token on a terminal: keys blue, string values green, numbers yellow, `true`, `false` and `null` magenta, and punctuation dim, using the terminal's own basic colours. Piped or redirected output stays plain.
+- `apic read` and `apic list` honour `NO_COLOR`: when it is set and not empty, no colour is written even on a terminal.
+
+### Changed
+
+- **apic is now licensed under the GNU General Public License, version 3 only (GPL-3.0-only)**, replacing the MIT License, starting with this release. `LICENSE`, the crate manifests, the Windows installer's license page and the AUR, Copr, Debian, Flatpak and winget metadata all say so. Releases up to and including 0.5.1 were published under MIT and stay available under it.
+- **Curl-style CLI authoring (breaking).** `apic create -f <file> [<url>] [flags]` now writes a contract in one command instead of opening an editor. It seeds from the project template (`--use-template` picks one, and with several templates `convention.json` is used), defaults the name to the file stem, appends `.json` when missing, never overwrites, and prints `created <path>`. The new `apic edit -f <query> [<url>] [flags]` changes only the fields it is given and prints `updated <path>`. Both take the same flags: `-X` for the method, a URL whose query string is split into query params, `-H 'Name: value'` to add or replace a header and `-H 'Name:'` to remove one, `-d` with text, `@file` or `@-`, `-F name=value` or `name=@file[;type=mime]` for multipart parts, `--response CODE:DESC`, `--response-body CODE BODY`, `--response-header CODE HEADER`, `--name` and `--description`. A `-d` on a multipart body or a `-F` on a JSON body fails and points at `apic open`, a `--response-body` or `--response-header` for a missing code fails and points at `--response`, and nothing is written on any error.
+- **`apic open` always uses your editor.** It opens the contract in `-e`, then `$VISUAL`, then `$EDITOR`, then `vi`, so the `-e` flag no longer switches away from a built-in editor.
+- **The TUI editor and the inline picker are gone.** An ambiguous name in `open`, `edit`, `remove` or `--use-template` now fails and lists the candidates instead of prompting, and `apic create` no longer prompts for a template when several exist. `apic remove` still asks `y/N` on a terminal, and the new `-y`/`--yes` skips the question.
+- The `ratatui` and `ratatui-textarea` dependencies were dropped with the TUI. `crossterm` stays, since it colours `apic read` and `apic list` output.
+
 ## [0.5.1] - 2026-08-27
 
 A packaging release on top of 0.5.0, plus one change to how the git panel presents a diff. The CLI, the TUI, and the contract format are unchanged, so existing projects need no migration. The packaging work makes apic installable from `apt` on Ubuntu, which required moving the GUI back one egui release.
