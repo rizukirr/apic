@@ -11,8 +11,11 @@ pub(crate) enum PickKind {
     OpenProject,
     /// Initialize a fresh project in a folder.
     NewProject,
-    /// Import a Postman collection file into the open project.
+    /// Import a Postman collection file into the open project, or pick one
+    /// for an import into a new project when none is open.
     ImportPostman,
+    /// Pick the folder that becomes the project an import is written into.
+    ImportTarget,
 }
 
 /// Spawns a native dialog on a background thread (so the portal call never
@@ -34,11 +37,11 @@ pub(crate) fn pick(
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let picked = match kind {
-            PickKind::OpenProject | PickKind::NewProject => {
-                let title = if kind == PickKind::OpenProject {
-                    "Open apic project"
-                } else {
-                    "New apic project"
+            PickKind::OpenProject | PickKind::NewProject | PickKind::ImportTarget => {
+                let title = match kind {
+                    PickKind::OpenProject => "Open apic project",
+                    PickKind::ImportTarget => "Folder for the imported project",
+                    PickKind::NewProject | PickKind::ImportPostman => "New apic project",
                 };
                 pollster::block_on(rfd::AsyncFileDialog::new().set_title(title).pick_folder())
             }
@@ -60,6 +63,20 @@ pub(crate) fn pick(
 /// `.apic/config.toml`.
 pub(crate) fn has_config(folder: &Path) -> bool {
     folder.join(".apic").join("config.toml").is_file()
+}
+
+/// The project that holds `path`: the nearest folder above it, starting at
+/// its parent, that holds `.apic/config.toml` as a file.
+///
+/// # Returns
+///
+/// That folder canonicalized, or `None` when no folder above `path` is a
+/// project or the folder does not canonicalize.
+pub(crate) fn project_root_of(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .skip(1)
+        .find(|folder| has_config(folder))
+        .and_then(|folder| folder.canonicalize().ok())
 }
 
 /// Initializes a project in `folder`.
@@ -97,4 +114,39 @@ pub(crate) fn import_postman(src: &Path, root: &Path) -> Result<(usize, usize), 
     // The GUI import never overwrites; existing contracts must be removed
     // first (or edited), matching the CLI default.
     apic_core::convert::run(src, root, false).map(|out| (out.written, out.warnings.len()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::tempdir;
+
+    /// Makes `folder` a project by writing an empty `.apic/config.toml`.
+    fn make_project(folder: &Path) {
+        std::fs::create_dir_all(folder.join(".apic")).expect("apic dir creates");
+        std::fs::write(folder.join(".apic").join("config.toml"), "").expect("config writes");
+    }
+
+    #[test]
+    fn project_root_of_finds_the_nearest_apic_root() {
+        let outer = tempdir();
+        make_project(&outer);
+        let contract = outer.join("contracts").join("users").join("get.json");
+        std::fs::create_dir_all(contract.parent().expect("contract has a parent"))
+            .expect("contract dir creates");
+        std::fs::write(&contract, "{}").expect("contract writes");
+        let outer_canon = outer.canonicalize().expect("outer canonicalizes");
+        assert_eq!(project_root_of(&contract), Some(outer_canon));
+
+        let inner = outer.join("contracts").join("nested");
+        make_project(&inner);
+        let inner_contract = inner.join("x.json");
+        std::fs::write(&inner_contract, "{}").expect("inner contract writes");
+        let inner_canon = inner.canonicalize().expect("inner canonicalizes");
+        assert_eq!(project_root_of(&inner_contract), Some(inner_canon));
+
+        let loose = tempdir().join("loose.json");
+        std::fs::write(&loose, "{}").expect("loose file writes");
+        assert_eq!(project_root_of(&loose), None);
+    }
 }

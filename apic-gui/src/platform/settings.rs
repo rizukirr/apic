@@ -14,7 +14,17 @@ pub struct Settings {
 
     /// The chosen theme. Missing or unknown in the file means `System`.
     pub theme: ThemePreference,
+
+    /// Each project's last opened file, relative to the project root, as
+    /// `(project root, relative path)` pairs with the most recent last. The
+    /// relative path is untrusted: whoever reads it checks it against the
+    /// project before opening anything.
+    pub last_file: Vec<(PathBuf, String)>,
 }
+
+/// How many projects keep a remembered last file. The oldest is dropped
+/// past this.
+const MAX_LAST_FILES: usize = 20;
 
 impl Settings {
     /// Loads settings, returning defaults when the file is missing or unreadable.
@@ -24,22 +34,23 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    /// Loads the saved settings, applies `change`, and saves the result, so
-    /// changing one setting never erases another. Best-effort: a write
+    /// Loads the settings at `path`, applies `change`, and saves the result,
+    /// so changing one setting never erases another. Best-effort: a write
     /// failure is ignored.
-    pub fn update(change: impl FnOnce(&mut Settings)) {
-        if let Some(path) = Self::path() {
-            Self::update_at(&path, change);
-        }
-    }
-
-    fn update_at(path: &Path, change: impl FnOnce(&mut Settings)) {
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - the settings file, usually [`Settings::path`]
+    /// * `change` - the edit to apply to the loaded settings
+    pub fn update_at(path: &Path, change: impl FnOnce(&mut Settings)) {
         let mut settings = Self::load_from(path);
         change(&mut settings);
         settings.save_to(path);
     }
 
-    fn load_from(path: &Path) -> Settings {
+    /// Loads the settings at `path`, returning defaults when the file is
+    /// missing or unreadable.
+    pub fn load_from(path: &Path) -> Settings {
         match std::fs::read_to_string(path) {
             Ok(text) => Self::parse(&text),
             Err(_) => Settings::default(),
@@ -53,10 +64,56 @@ impl Settings {
         let _ = std::fs::write(path, self.body());
     }
 
+    /// Remembers `rel` as the last opened file of the project at `root`,
+    /// making it the most recent entry and dropping the oldest entries past
+    /// [`MAX_LAST_FILES`].
+    ///
+    /// # Arguments
+    ///
+    /// * `root` - the project root
+    /// * `rel` - the file's path relative to `root`, with forward slashes
+    pub fn remember_file(&mut self, root: PathBuf, rel: String) {
+        self.last_file.retain(|(r, _)| *r != root);
+        self.last_file.push((root, rel));
+        let excess = self.last_file.len().saturating_sub(MAX_LAST_FILES);
+        self.last_file.drain(..excess);
+    }
+
+    /// The remembered last file of the project at `root`, relative to it.
+    pub fn last_file_of(&self, root: &Path) -> Option<&str> {
+        self.last_file
+            .iter()
+            .find(|(r, _)| r == root)
+            .map(|(_, rel)| rel.as_str())
+    }
+
     fn parse(text: &str) -> Settings {
+        let mut top = String::new();
+        let mut last_file = Vec::new();
+        let mut section: Option<&str> = None;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') {
+                section = Some(trimmed);
+                continue;
+            }
+            match section {
+                None => {
+                    top.push_str(line);
+                    top.push('\n');
+                }
+                Some("[last_file]") => {
+                    if let Some(pair) = parse_last_file_line(trimmed) {
+                        last_file.push(pair);
+                    }
+                }
+                Some(_) => {}
+            }
+        }
         Settings {
-            last_project: parse_last_project(text),
-            theme: parse_theme(text),
+            last_project: parse_last_project(&top),
+            theme: parse_theme(&top),
+            last_file,
         }
     }
 
@@ -66,10 +123,16 @@ impl Settings {
             body.push_str(&format!("last_project = {:?}\n", p.to_string_lossy()));
         }
         body.push_str(&format!("theme = \"{}\"\n", theme_name(self.theme)));
+        body.push_str("\n[last_file]\n");
+        for (root, rel) in &self.last_file {
+            body.push_str(&format!("{:?} = {:?}\n", root.to_string_lossy(), rel));
+        }
         body
     }
 
-    fn path() -> Option<PathBuf> {
+    /// The settings file in the OS config dir, or `None` when the OS names
+    /// no config dir.
+    pub fn path() -> Option<PathBuf> {
         Some(dirs::config_dir()?.join("apic-gui").join("config.toml"))
     }
 }
@@ -107,6 +170,38 @@ fn parse_theme(text: &str) -> ThemePreference {
             _ => None,
         })
         .unwrap_or_default()
+}
+
+/// Parses one `"<root>" = "<rel>"` line of the `[last_file]` section,
+/// or `None` when the line has any other shape.
+fn parse_last_file_line(line: &str) -> Option<(PathBuf, String)> {
+    let (root, rest) = parse_quoted(line)?;
+    let rest = rest.trim_start().strip_prefix('=')?.trim_start();
+    let (rel, rest) = parse_quoted(rest)?;
+    if root.is_empty() || rel.is_empty() || !rest.trim().is_empty() {
+        return None;
+    }
+    Some((PathBuf::from(root), rel))
+}
+
+/// Reads one double-quoted string from the start of `text`, as written by
+/// `{:?}`, and returns it with the text after the closing quote. Only the
+/// `\\` and `\"` escapes are understood; any other escape is refused.
+fn parse_quoted(text: &str) -> Option<(String, &str)> {
+    let body = text.strip_prefix('"')?;
+    let mut value = String::new();
+    let mut chars = body.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '"' => return Some((value, &body[i + 1..])),
+            '\\' => match chars.next()?.1 {
+                c @ ('\\' | '"') => value.push(c),
+                _ => return None,
+            },
+            c => value.push(c),
+        }
+    }
+    None
 }
 
 /// The settings-file spelling of `theme`.
@@ -167,8 +262,76 @@ mod tests {
         let settings = Settings {
             last_project: Some(PathBuf::from("/home/u/proj")),
             theme: ThemePreference::Light,
+            last_file: Vec::new(),
         };
         assert_eq!(Settings::parse(&settings.body()), settings);
+    }
+
+    #[test]
+    fn last_file_round_trips_with_the_other_settings() {
+        let path = temp_settings_path("last-file-round-trip");
+        Settings::update_at(&path, |s| {
+            s.last_project = Some(PathBuf::from("/home/u/proj"));
+            s.theme = ThemePreference::Dark;
+            s.remember_file(PathBuf::from("/home/u/proj"), "users/get.json".into());
+            s.remember_file(PathBuf::from("/home/u/with \"quote\""), "a\\b.json".into());
+        });
+        let loaded = Settings::load_from(&path);
+        assert_eq!(loaded.last_project, Some(PathBuf::from("/home/u/proj")));
+        assert_eq!(loaded.theme, ThemePreference::Dark);
+        assert_eq!(
+            loaded.last_file_of(Path::new("/home/u/proj")),
+            Some("users/get.json")
+        );
+        assert_eq!(
+            loaded.last_file_of(Path::new("/home/u/with \"quote\"")),
+            Some("a\\b.json")
+        );
+        let _ = std::fs::remove_dir_all(path.parent().expect("temp path has a parent"));
+    }
+
+    #[test]
+    fn a_malformed_last_file_line_is_skipped() {
+        let text = "theme = \"light\"\n\n[last_file]\n\
+            \"/a\" = \"a.json\"\n\
+            garbage\n\
+            \"/b\" = \n\
+            \"/c\" \"c.json\"\n\
+            \"/d\" = \"d.json\" trailing\n\
+            \"/e\" = \"bad\\x\"\n\
+            \"/f\" = \"f.json\"\n\
+            [other]\n\
+            \"/g\" = \"g.json\"\n\
+            theme = \"dark\"\n";
+        let settings = Settings::parse(text);
+        assert_eq!(
+            settings.last_file,
+            vec![
+                (PathBuf::from("/a"), "a.json".to_string()),
+                (PathBuf::from("/f"), "f.json".to_string()),
+            ]
+        );
+        assert_eq!(settings.theme, ThemePreference::Light);
+    }
+
+    #[test]
+    fn last_file_keeps_at_most_twenty_projects() {
+        let mut settings = Settings::default();
+        for i in 0..25 {
+            settings.remember_file(PathBuf::from(format!("/p{i}")), format!("{i}.json"));
+        }
+        settings.remember_file(PathBuf::from("/p10"), "again.json".into());
+        assert_eq!(settings.last_file.len(), 20);
+        assert_eq!(settings.last_file_of(Path::new("/p4")), None);
+        assert_eq!(settings.last_file_of(Path::new("/p5")), Some("5.json"));
+        assert_eq!(settings.last_file_of(Path::new("/p10")), Some("again.json"));
+        assert_eq!(
+            settings.last_file.last(),
+            Some(&(PathBuf::from("/p10"), "again.json".to_string()))
+        );
+        settings.remember_file(PathBuf::from("/new"), "n.json".into());
+        assert_eq!(settings.last_file.len(), 20);
+        assert_eq!(settings.last_file_of(Path::new("/p5")), None);
     }
 
     #[test]

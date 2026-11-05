@@ -9,6 +9,8 @@ pub(crate) mod state;
 #[cfg(test)]
 pub(crate) mod test_support;
 
+use std::path::{Path, PathBuf};
+
 use eframe::egui;
 use egui::RichText;
 
@@ -23,7 +25,9 @@ use crate::features::contracts::ui::view::{
 };
 use crate::features::git::ui::state::{GitAction, GitEvent, GitState};
 use crate::features::git::ui::view;
+use crate::features::project::data::project_root_of;
 use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
+use crate::features::project::ui::view::welcome;
 use crate::platform::settings::Settings;
 use crate::ui::components::{icon_button, section_header};
 use crate::ui::theme::*;
@@ -81,6 +85,11 @@ pub(crate) struct App {
     /// Set once the window close was confirmed, so the close request that
     /// follows is not guarded again.
     pub(crate) closing: bool,
+
+    /// The settings file every settings write from the app goes to, `None`
+    /// when the OS names no config dir. Tests point it at a temp file so they
+    /// never touch the developer's real settings.
+    pub(crate) settings_path: Option<PathBuf>,
 }
 
 impl App {
@@ -91,6 +100,7 @@ impl App {
             contracts: ContractsState::default(),
             git: GitState::default(),
             closing: false,
+            settings_path: Settings::path(),
         };
         let settings = Settings::load();
         if let Some(root) = settings.last_project
@@ -99,20 +109,96 @@ impl App {
             app.project.project_root = Some(root);
         }
         app.reload_project();
-        if let Ok(sub) = std::env::var("APIC_AUTOEDIT")
-            && let Some(i) = app
-                .contracts
+        let autoedit = std::env::var("APIC_AUTOEDIT").ok().and_then(|sub| {
+            app.contracts
                 .entries
                 .iter()
                 .position(|e| e.error.is_none() && e.rel.contains(&sub))
-        {
-            let paths = app.contracts_paths();
-            for action in [ContractsAction::Load(i), ContractsAction::ToggleEdit] {
-                let events = app.contracts.handle(action, paths.as_ref());
-                app.apply_contracts_events(events, None);
+        });
+        match autoedit {
+            Some(i) => {
+                let paths = app.contracts_paths();
+                for action in [ContractsAction::Load(i), ContractsAction::ToggleEdit] {
+                    let events = app.contracts.handle(action, paths.as_ref());
+                    app.apply_contracts_events(events, None);
+                }
             }
+            None => app.restore_last_file(),
         }
         app
+    }
+
+    /// Loads the settings at `settings_path`, applies `change` and saves
+    /// them. Does nothing when there is no settings path.
+    fn update_settings(&self, change: impl FnOnce(&mut Settings)) {
+        if let Some(path) = &self.settings_path {
+            Settings::update_at(path, change);
+        }
+    }
+
+    /// Remembers `path` as the open project's last file, relative to the
+    /// project root with forward slashes. A path outside the project, or no
+    /// open project, remembers nothing.
+    fn remember_open_file(&self, path: &Path) {
+        let Some(root) = self.project.project_root.clone() else {
+            return;
+        };
+        let (Ok(canon_root), Ok(canon_path)) = (root.canonicalize(), path.canonicalize()) else {
+            return;
+        };
+        let Ok(rel) = canon_path.strip_prefix(&canon_root) else {
+            return;
+        };
+        let rel = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        self.update_settings(|s| s.remember_file(root, rel));
+    }
+
+    /// Reopens the open project's remembered last file. The saved relative
+    /// path is untrusted, since the settings file can be edited, so it is
+    /// never opened directly: it only selects a scanned valid contract or a
+    /// listed template with the same canonical path, and only when the
+    /// nearest `.apic` project above that file is the open project. Anything
+    /// else opens nothing.
+    fn restore_last_file(&mut self) {
+        let Some(root) = self.project.project_root.clone() else {
+            return;
+        };
+        let Some(settings_path) = &self.settings_path else {
+            return;
+        };
+        let settings = Settings::load_from(settings_path);
+        let Some(rel) = settings.last_file_of(&root) else {
+            return;
+        };
+        if Path::new(rel).is_absolute() {
+            return;
+        }
+        let (Ok(canon_root), Ok(abs)) = (root.canonicalize(), root.join(rel).canonicalize()) else {
+            return;
+        };
+        if !abs.is_file() || project_root_of(&abs).as_ref() != Some(&canon_root) {
+            return;
+        }
+        let same = |p: &Path| p.canonicalize().is_ok_and(|p| p == abs);
+        let action = if let Some(i) = self
+            .contracts
+            .entries
+            .iter()
+            .position(|e| e.error.is_none() && same(&e.path))
+        {
+            ContractsAction::Load(i)
+        } else if let Some(i) = self.contracts.templates.iter().position(|(_, p)| same(p)) {
+            ContractsAction::LoadTemplate(i)
+        } else {
+            return;
+        };
+        let paths = self.contracts_paths();
+        let events = self.contracts.handle(action, paths.as_ref());
+        self.apply_contracts_events(events, None);
     }
 
     /// Top header: sidebar toggle, the project dropdown (new, open, import) and
@@ -165,7 +251,7 @@ impl App {
                             let (next, icon, hover) = theme_toggle(ui.ctx().theme());
                             if icon_button(ui, icon, hover).clicked() {
                                 ui.ctx().set_theme(next);
-                                Settings::update(|s| s.theme = next);
+                                self.update_settings(|s| s.theme = next);
                             }
                         });
                     });
@@ -335,6 +421,11 @@ impl App {
         let mut action = None;
         let has_project = self.project.project_root.is_some();
         egui::CentralPanel::default().show(ui, |ui| match self.shell.central {
+            // Routed through `apply` so New and Open pass the unsaved-changes
+            // guard like the app bar's.
+            CentralView::Contracts if !has_project => {
+                action = welcome(ui).map(Action::Project);
+            }
             CentralView::Contracts => {
                 action = central_body(ui, &mut self.contracts, has_project).map(Action::Contracts);
             }
@@ -393,6 +484,7 @@ impl App {
                 // filesystem watcher.
                 ContractsEvent::Saved => self.git.request_refresh(),
                 ContractsEvent::ShowCentral => self.shell.central = CentralView::Contracts,
+                ContractsEvent::Opened(path) => self.remember_open_file(&path),
                 ContractsEvent::Continue(g) => {
                     if let Some(ctx) = ctx {
                         self.continue_guarded(g, ctx);
@@ -499,7 +591,8 @@ impl App {
                 ProjectEvent::Opened(folder) => {
                     self.contracts.close();
                     self.reload_project();
-                    Settings::update(|s| s.last_project = Some(folder));
+                    self.update_settings(|s| s.last_project = Some(folder));
+                    self.restore_last_file();
                 }
                 ProjectEvent::ContractsChanged => self.reload_project(),
                 ProjectEvent::Status(text) => self.shell.status = text,
@@ -1242,5 +1335,109 @@ mod tests {
         settle(&mut app, &ctx);
 
         assert_eq!(app.shell.status, "unstaged contracts/sample.json");
+    }
+
+    /// An app on `root` whose temp settings remember `rel` as the project's
+    /// last file, after the project loads and the last file is restored.
+    fn restored_app(root: PathBuf, rel: &str) -> App {
+        let mut app = app_at(root.clone());
+        let settings_path = app
+            .settings_path
+            .clone()
+            .expect("test app has a settings path");
+        Settings::update_at(&settings_path, |s| s.remember_file(root, rel.to_string()));
+        app.reload_project();
+        app.restore_last_file();
+        app
+    }
+
+    #[test]
+    fn a_saved_contract_reopens() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let app = restored_app(root.clone(), "contracts/sample.json");
+        let expected = root
+            .join("contracts")
+            .join("sample.json")
+            .canonicalize()
+            .expect("sample canonicalizes");
+        assert!(app.contracts.model.is_some());
+        assert_eq!(
+            app.contracts.path.as_ref().map(|p| p.canonicalize().ok()),
+            Some(Some(expected))
+        );
+        assert_eq!(app.shell.central, CentralView::Contracts);
+    }
+
+    #[test]
+    fn a_missing_saved_file_opens_nothing() {
+        if !git_available() {
+            return;
+        }
+        let app = restored_app(project_fixture(), "contracts/missing.json");
+        assert!(app.contracts.model.is_none());
+        assert!(app.contracts.path.is_none());
+    }
+
+    #[test]
+    fn an_invalid_saved_contract_opens_nothing() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        std::fs::write(root.join("contracts").join("broken.json"), "{ not json")
+            .expect("broken contract writes");
+        let app = restored_app(root, "contracts/broken.json");
+        assert!(app.contracts.model.is_none());
+        assert!(app.contracts.path.is_none());
+        assert!(app.contracts.repair.is_none());
+    }
+
+    #[test]
+    fn a_saved_file_outside_the_project_opens_nothing() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let outside = tempdir();
+        std::fs::write(outside.join("x.json"), apic_core::template::DEFAULT)
+            .expect("outside contract writes");
+        let name = outside
+            .file_name()
+            .expect("temp dir has a name")
+            .to_string_lossy()
+            .into_owned();
+        let app = restored_app(root, &format!("../{name}/x.json"));
+        assert!(app.contracts.model.is_none());
+        assert!(app.contracts.path.is_none());
+    }
+
+    #[test]
+    fn a_saved_file_under_another_apic_root_opens_nothing() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let nested = root.join("contracts").join("nested");
+        std::fs::create_dir_all(nested.join(".apic")).expect("nested apic dir creates");
+        std::fs::write(
+            nested.join(".apic").join("config.toml"),
+            "name = \"nested\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("nested config writes");
+        std::fs::write(nested.join("x.json"), apic_core::template::DEFAULT)
+            .expect("nested contract writes");
+        let app = restored_app(root, "contracts/nested/x.json");
+        assert!(
+            app.contracts
+                .entries
+                .iter()
+                .any(|e| e.rel == "nested/x.json" && e.error.is_none()),
+            "the nested contract must be a valid scanned entry for this to prove anything",
+        );
+        assert!(app.contracts.model.is_none());
+        assert!(app.contracts.path.is_none());
     }
 }
