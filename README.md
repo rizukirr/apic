@@ -493,6 +493,7 @@ body.
 | `query` | no | Array of query parameters; see below. |
 | `headers` | yes | Array of request headers; see below. |
 | `request` | no | Request body: the raw JSON payload, written directly. Omit it when the endpoint has no body. |
+| `multipart` | no | A multipart request body, as an array of parts; see [Multipart bodies](#multipart-bodies). Use it instead of `request`, not alongside it. |
 | `responses` | yes | Array of responses; see below. |
 
 Each **query** parameter:
@@ -520,6 +521,7 @@ Each **response**:
 | `description` | yes | Short description, e.g. `OK`. |
 | `headers` | no | Array of response headers (same shape as request headers). |
 | `schema` | no | The response body: the raw JSON payload for this response. |
+| `multipart` | no | A multipart response body, as an array of parts. Use it instead of `schema`, not alongside it. |
 
 Path parameters are not a separate section: write them inline in the `url`
 string as `{name}` (e.g. `{id}` in `.../users/{id}`).
@@ -527,6 +529,38 @@ string as `{name}` (e.g. `{id}` in `.../users/{id}`).
 > The request body has no wrapper key, it is the JSON value itself. A response's
 > body lives under `schema` (not `example`). Contracts written for the older
 > `{ "example": ... }` body shape do not carry over and must be updated.
+
+### Multipart bodies
+
+A request or a response can carry a multipart body (form data and file
+uploads) instead of a JSON one. Each part is one form field:
+
+```json
+"multipart": [
+    { "name": "title", "value": "Hello", "required": true },
+    {
+        "name": "avatar",
+        "filename": "avatar.png",
+        "contentType": "image/png",
+        "description": "Profile picture",
+        "required": false
+    }
+]
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Form field name. |
+| `value` | no | Example value for a text part. |
+| `filename` | no | Present on a file part, e.g. `avatar.png`. A part with a `filename` is a file part; one without is a text part. |
+| `contentType` | no | The part's own media type, e.g. `image/png`. |
+| `description` | no | What the part is for. |
+| `required` | no | Whether the part is required (default `false`). |
+
+A request sets `request` or `multipart`, and a response sets `schema` or
+`multipart`, never both: an HTTP message carries one body, and `apic validate`
+rejects a contract that sets both. In the desktop GUI, the body-type dropdown
+switches a body between JSON and Multipart while editing.
 
 ## Configuration
 

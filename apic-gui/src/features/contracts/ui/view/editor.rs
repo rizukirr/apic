@@ -8,7 +8,7 @@
 use eframe::egui;
 use egui::{Color32, RichText};
 
-use apic_core::edit::{EditAction, EditBody, EditModel, Field, apply};
+use apic_core::edit::{BodyLoc, EditAction, EditBody, EditModel, EditPart, Field, apply};
 use apic_core::json::method_str;
 
 use crate::features::contracts::ui::state::ContractsAction;
@@ -50,6 +50,7 @@ fn method_badge(ui: &mut egui::Ui, method: &str) {
 const FOCUS_QUERY: &str = "apic.focus.query";
 const FOCUS_HEADER: &str = "apic.focus.header";
 const FOCUS_RESPONSE_HEADER: &str = "apic.focus.response_header";
+const FOCUS_PARTS: &str = "apic.focus.parts";
 
 /// Width of the delete column: the trash icon plus the grid cell's padding.
 const DELETE_COL_W: f32 = 36.0;
@@ -60,13 +61,19 @@ enum RowTable {
     Query,
     Header,
     ResponseHeader(usize),
+    /// The parts of the multipart request body.
+    RequestParts,
+    /// The parts of response `usize`'s multipart body.
+    ResponseParts(usize),
 }
 
 /// A text column of a [`RowTable`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum RowColumn {
     Key,
+    Name,
     Value,
+    ContentType,
     Description,
 }
 
@@ -75,7 +82,9 @@ impl RowColumn {
     fn hint(self) -> &'static str {
         match self {
             RowColumn::Key => "Key",
+            RowColumn::Name => "Name",
             RowColumn::Value => "Value",
+            RowColumn::ContentType => "Content-Type",
             RowColumn::Description => "Description",
         }
     }
@@ -87,7 +96,27 @@ impl RowTable {
         match self {
             RowTable::Query => &[RowColumn::Key, RowColumn::Value, RowColumn::Description],
             RowTable::Header | RowTable::ResponseHeader(_) => &[RowColumn::Key, RowColumn::Value],
+            RowTable::RequestParts | RowTable::ResponseParts(_) => &[
+                RowColumn::Name,
+                RowColumn::Value,
+                RowColumn::ContentType,
+                RowColumn::Description,
+            ],
         }
+    }
+
+    /// Whether the add row draws an empty non-text cell (a chip column)
+    /// before text column `n`.
+    fn spacer_before(self, n: usize) -> bool {
+        match self {
+            RowTable::Query | RowTable::Header | RowTable::ResponseHeader(_) => n == 1,
+            RowTable::RequestParts | RowTable::ResponseParts(_) => n == 1 || n == 3,
+        }
+    }
+
+    /// Whether value cells use the monospace font.
+    fn monospace_values(self) -> bool {
+        matches!(self, RowTable::Header | RowTable::ResponseHeader(_))
     }
 
     /// The temp-data key of the table's pending-focus marker.
@@ -96,6 +125,7 @@ impl RowTable {
             RowTable::Query => FOCUS_QUERY,
             RowTable::Header => FOCUS_HEADER,
             RowTable::ResponseHeader(_) => FOCUS_RESPONSE_HEADER,
+            RowTable::RequestParts | RowTable::ResponseParts(_) => FOCUS_PARTS,
         }
     }
 
@@ -105,6 +135,8 @@ impl RowTable {
             RowTable::Query => Field::QueryAdd,
             RowTable::Header => Field::HeaderAdd,
             RowTable::ResponseHeader(r) => Field::ResponseHeaderAdd(r),
+            RowTable::RequestParts => Field::PartAdd(BodyLoc::Request),
+            RowTable::ResponseParts(r) => Field::PartAdd(BodyLoc::Response(r)),
         }
     }
 
@@ -114,7 +146,19 @@ impl RowTable {
             RowTable::Query => model.query.len(),
             RowTable::Header => model.headers.len(),
             RowTable::ResponseHeader(r) => model.responses.get(r).map_or(0, |r| r.headers.len()),
+            RowTable::RequestParts => model.multipart.len(),
+            RowTable::ResponseParts(r) => model.responses.get(r).map_or(0, |r| r.multipart.len()),
         }
+    }
+}
+
+/// The parts `table` holds in `model`, or `None` for a table that is not a
+/// parts table or a response that does not exist.
+fn table_parts(model: &mut EditModel, table: RowTable) -> Option<&mut Vec<EditPart>> {
+    match table {
+        RowTable::RequestParts => Some(&mut model.multipart),
+        RowTable::ResponseParts(r) => Some(&mut model.responses.get_mut(r)?.multipart),
+        RowTable::Query | RowTable::Header | RowTable::ResponseHeader(_) => None,
     }
 }
 
@@ -129,11 +173,12 @@ fn cell_text_mut(
     match table {
         RowTable::Query => {
             let q = model.query.get_mut(row)?;
-            Some(match column {
-                RowColumn::Key => &mut q.name,
-                RowColumn::Value => &mut q.value,
-                RowColumn::Description => &mut q.description,
-            })
+            match column {
+                RowColumn::Key => Some(&mut q.name),
+                RowColumn::Value => Some(&mut q.value),
+                RowColumn::Description => Some(&mut q.description),
+                RowColumn::Name | RowColumn::ContentType => None,
+            }
         }
         RowTable::Header | RowTable::ResponseHeader(_) => {
             let h = match table {
@@ -143,7 +188,19 @@ fn cell_text_mut(
             match column {
                 RowColumn::Key => Some(&mut h.name),
                 RowColumn::Value => Some(&mut h.value),
-                RowColumn::Description => None,
+                RowColumn::Name | RowColumn::ContentType | RowColumn::Description => None,
+            }
+        }
+        RowTable::RequestParts | RowTable::ResponseParts(_) => {
+            let part = table_parts(model, table)?.get_mut(row)?;
+            match column {
+                RowColumn::Name => Some(&mut part.name),
+                // A file part's value column shows its filename.
+                RowColumn::Value if !part.filename.is_empty() => Some(&mut part.filename),
+                RowColumn::Value => Some(&mut part.value),
+                RowColumn::ContentType => Some(&mut part.content_type),
+                RowColumn::Description => Some(&mut part.description),
+                RowColumn::Key => None,
             }
         }
     }
@@ -235,8 +292,10 @@ fn edit_cell(
 ) {
     let hint = column.hint();
     let resp = match column {
-        RowColumn::Value => tcell_edit_vars(ui, buf, hint, table != RowTable::Query),
-        RowColumn::Key | RowColumn::Description => tcell_edit(ui, buf, hint),
+        RowColumn::Value => tcell_edit_vars(ui, buf, hint, table.monospace_values()),
+        RowColumn::Key | RowColumn::Name | RowColumn::ContentType | RowColumn::Description => {
+            tcell_edit(ui, buf, hint)
+        }
     };
     let Some(row) = row else {
         return;
@@ -261,19 +320,19 @@ fn edit_cell(
 fn read_cell(ui: &mut egui::Ui, table: RowTable, column: RowColumn, text: &str) {
     let p = palette(ui.ctx());
     match column {
-        RowColumn::Key => {
+        RowColumn::Key | RowColumn::Name => {
             ui.label(RichText::new(text).color(p.info));
         }
         RowColumn::Value => {
-            let style = if table == RowTable::Query {
-                egui::TextStyle::Body
-            } else {
+            let style = if table.monospace_values() {
                 egui::TextStyle::Monospace
+            } else {
+                egui::TextStyle::Body
             };
             let font = style.resolve(ui.style());
             ui.label(url_layout_job(text, p, font));
         }
-        RowColumn::Description => {
+        RowColumn::ContentType | RowColumn::Description => {
             ui.label(RichText::new(text).color(p.on_surface));
         }
     }
@@ -299,12 +358,12 @@ fn text_cell(
 }
 
 /// The add row closing an editable table: empty fields bound to the scratch
-/// buffers `texts` (one per [`RowTable::columns`] entry), with the requirement
-/// and delete cells left empty.
+/// buffers `texts` (one per [`RowTable::columns`] entry), with the chip
+/// columns (see [`RowTable::spacer_before`]) and the delete cell left empty.
 fn ghost_row(row: &mut egui_extras::TableRow<'_, '_>, table: RowTable, texts: &mut [String]) {
     let mut texts = texts.iter_mut();
     for (n, column) in table.columns().iter().enumerate() {
-        if n == 1 {
+        if table.spacer_before(n) {
             row.col(|ui| grid_cell(ui, |_| {}));
         }
         if let Some(buf) = texts.next() {
@@ -674,28 +733,263 @@ pub(super) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
     }
 }
 
-pub(super) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+/// The body-type dropdown shown while editing: `JSON` or `Multipart`.
+///
+/// # Arguments
+///
+/// * `ui` - where to draw it
+/// * `loc` - which body it switches
+/// * `is_multipart` - whether that body is multipart now
+///
+/// # Returns
+///
+/// [`ContractsAction::SwitchBody`] when the other type was picked.
+fn body_kind_dropdown(
+    ui: &mut egui::Ui,
+    loc: BodyLoc,
+    is_multipart: bool,
+) -> Option<ContractsAction> {
+    let p = palette(ui.ctx());
+    let label = |multipart: bool| if multipart { "Multipart" } else { "JSON" };
+    let mut picked = None;
+    egui::ComboBox::from_id_salt(("body_kind", format!("{loc:?}")))
+        .width(90.0)
+        .selected_text(RichText::new(label(is_multipart)).color(p.on_surface))
+        .show_ui(ui, |ui| {
+            for multipart in [false, true] {
+                if ui
+                    .selectable_label(multipart == is_multipart, label(multipart))
+                    .clicked()
+                    && multipart != is_multipart
+                {
+                    picked = Some(multipart);
+                }
+            }
+        });
+    picked.map(|multipart| ContractsAction::SwitchBody { loc, multipart })
+}
+
+/// The start of a body's edit row: a `Body` label and the body-type
+/// dropdown, drawn into a horizontal `ui`.
+///
+/// # Returns
+///
+/// What [`body_kind_dropdown`] returns.
+fn body_kind_row(ui: &mut egui::Ui, loc: BodyLoc, is_multipart: bool) -> Option<ContractsAction> {
+    section_label(ui, "Body");
+    body_kind_dropdown(ui, loc, is_multipart)
+}
+
+/// The `Text` / `File` pill of a part's Type column. While editing it is a
+/// button.
+///
+/// # Returns
+///
+/// Whether it was clicked this frame (always `false` when not editing).
+fn part_kind_chip(ui: &mut egui::Ui, is_file: bool, editing: bool) -> bool {
+    let p = palette(ui.ctx());
+    let (label, fg) = if is_file {
+        ("File", p.info)
+    } else {
+        ("Text", p.on_surface_variant)
+    };
+    let text = RichText::new(format!(" {label} "))
+        .color(fg)
+        .size(SIZE_SECONDARY)
+        .background_color(p.secondary_container);
+    if editing {
+        ui.add(egui::Button::new(text).frame(false)).clicked()
+    } else {
+        ui.label(text);
+        false
+    }
+}
+
+/// The parts of the multipart body at `loc` as a grid table: Name, Type,
+/// Value (the filename for a file part), Content-Type, Requirement and
+/// Description, plus a delete column and an empty add row while editing.
+/// Text typed into a cell lands in the model directly, and text typed into
+/// the add row becomes a new part before this returns.
+///
+/// # Returns
+///
+/// The toggle and delete actions clicked this frame, for the caller to apply.
+fn parts_table(
+    ui: &mut egui::Ui,
+    model: &mut EditModel,
+    loc: BodyLoc,
+    editing: bool,
+) -> Vec<EditAction> {
+    let p = palette(ui.ctx());
+    let (table, salt) = match loc {
+        BodyLoc::Request => (RowTable::RequestParts, "parts_request".to_string()),
+        BodyLoc::Response(r) => (RowTable::ResponseParts(r), format!("parts_response_{r}")),
+    };
+    let mut actions: Vec<EditAction> = Vec::new();
+    let ids = ghost_ids(ui, table);
+    let mut ghost = load_ghost(ui, &ids);
+    table_frame(ui, |ui| {
+        let mut fixed = vec![110.0, 60.0, 120.0, 110.0, 88.0];
+        if editing {
+            fixed.push(DELETE_COL_W);
+        }
+        let stretch = fill_column(ui, &fixed);
+        let mut t = metadata_table(ui)
+            .id_salt(salt)
+            .column(Column::exact(110.0)) // name
+            .column(Column::exact(60.0)) // type
+            .column(Column::exact(120.0)) // value
+            .column(Column::exact(110.0)) // content type
+            .column(Column::exact(88.0)) // requirement
+            .column(stretch); // description
+        if editing {
+            t = t.column(Column::exact(DELETE_COL_W)); // delete
+        }
+        t.header(TABLE_HEADER_H, |mut h| {
+            for label in [
+                "Name",
+                "Type",
+                "Value",
+                "Content-Type",
+                "Requirement",
+                "Description",
+            ] {
+                h.col(|ui| grid_cell(ui, |ui| header_label(ui, label)));
+            }
+            if editing {
+                h.col(|ui| grid_cell(ui, |_| {}));
+            }
+        })
+        .body(|mut body| {
+            for i in 0..table.len(model) {
+                body.row(TABLE_ROW_H, |mut row| {
+                    let Some(part) = table_parts(model, table).and_then(|parts| parts.get_mut(i))
+                    else {
+                        return;
+                    };
+                    text_cell(
+                        &mut row,
+                        table,
+                        (i, RowColumn::Name),
+                        &mut part.name,
+                        editing,
+                    );
+                    let is_file = !part.filename.is_empty();
+                    row.col(|ui| {
+                        grid_cell(ui, |ui| {
+                            if part_kind_chip(ui, is_file, editing) {
+                                actions.push(EditAction::ToggleBool {
+                                    field: Field::PartIsFile(loc.clone(), i),
+                                });
+                            }
+                        });
+                    });
+                    if is_file && !editing {
+                        row.col(|ui| {
+                            grid_cell(ui, |ui| {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} {}",
+                                        egui_phosphor::regular::FILE,
+                                        part.filename
+                                    ))
+                                    .color(p.on_surface),
+                                );
+                            });
+                        });
+                    } else {
+                        let value = if is_file {
+                            &mut part.filename
+                        } else {
+                            &mut part.value
+                        };
+                        text_cell(&mut row, table, (i, RowColumn::Value), value, editing);
+                    }
+                    text_cell(
+                        &mut row,
+                        table,
+                        (i, RowColumn::ContentType),
+                        &mut part.content_type,
+                        editing,
+                    );
+                    row.col(|ui| {
+                        grid_cell(ui, |ui| {
+                            if required_chip(ui, part.required, editing).is_some() {
+                                actions.push(EditAction::ToggleBool {
+                                    field: Field::PartRequired(loc.clone(), i),
+                                });
+                            }
+                        });
+                    });
+                    text_cell(
+                        &mut row,
+                        table,
+                        (i, RowColumn::Description),
+                        &mut part.description,
+                        editing,
+                    );
+                    if editing {
+                        row.col(|ui| {
+                            grid_cell(ui, |ui| {
+                                if delete_button(ui) {
+                                    actions.push(EditAction::Delete {
+                                        field: Field::PartName(loc.clone(), i),
+                                    });
+                                }
+                            });
+                        });
+                    }
+                });
+            }
+            if editing {
+                body.row(TABLE_ROW_H, |mut row| {
+                    ghost_row(&mut row, table, &mut ghost)
+                });
+            }
+        });
+    });
+    if editing {
+        finish_ghost(ui, model, table, ghost);
+    }
+    actions
+}
+
+/// The Request section's body: the parts table for a multipart request, else
+/// the JSON example. While editing, a body-type dropdown sits above it, with
+/// the Pretty control for a JSON body.
+///
+/// # Returns
+///
+/// The body switch the dropdown asks for this frame.
+pub(super) fn request_body(
+    ui: &mut egui::Ui,
+    model: &mut EditModel,
+    editing: bool,
+) -> Option<ContractsAction> {
     let p = palette(ui.ctx());
     ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
-    // A multipart body has no JSON example. Materializing an empty request
-    // body here would let a keystroke create a second body that `to_json`
-    // refuses to save, with nothing on screen explaining why.
-    if !model.multipart.is_empty() {
-        ui.label(
-            RichText::new("multipart body, preserved on save, not editable here yet")
-                .color(p.on_surface_variant),
-        );
-        ui.add_space(SPACE_MEDIUM);
-        return;
-    }
-    if editing {
+    let is_multipart = !model.multipart.is_empty();
+    let mut action = None;
+    if is_multipart {
+        // A multipart body has no JSON example. Materializing an empty request
+        // body here would let a keystroke create a second body that `to_json`
+        // refuses to save.
+        if editing {
+            action = ui
+                .horizontal(|ui| body_kind_row(ui, BodyLoc::Request, true))
+                .inner;
+        }
+        for a in parts_table(ui, model, BodyLoc::Request, editing) {
+            apply(model, &a);
+        }
+    } else if editing {
         // The request body is always editable — materialize an empty one so the
         // JSON editor is shown by default. An untouched (blank) body is dropped
         // on save (see `EditModel::to_json`), so this never pollutes contracts.
         let req = model.request.get_or_insert_with(EditBody::empty);
         ui.horizontal(|ui| {
-            section_label(ui, "JSON");
             ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
+            action = body_kind_row(ui, BodyLoc::Request, false);
             ui.add_space(SPACE_MEDIUM);
             if text_button(ui, "Pretty", p.warning) {
                 req.example = apic_core::json::pretty_json(&req.example);
@@ -711,6 +1005,7 @@ pub(super) fn request_body(ui: &mut egui::Ui, model: &mut EditModel, editing: bo
         json_editor(ui, text, false);
     }
     ui.add_space(SPACE_MEDIUM);
+    action
 }
 
 /// Color for an HTTP status code by its class: 2xx success, 3xx info, 4xx
@@ -911,19 +1206,43 @@ fn status_label(code: &str, title: &str, sep: &str) -> String {
     }
 }
 
-/// Renders the selected response's JSON example body. The caller (the Response
-/// tab) has already drawn the code-tab strip, which now also owns the response's
+/// Renders the selected response's body: its parts table when it is
+/// multipart, else its JSON example. While editing, a body-type dropdown sits
+/// above it, with the Pretty control for a JSON body. The caller (the Response
+/// tab) has already drawn the code-tab strip, which also owns the response's
 /// title, and guarantees `idx` is a valid response index.
-pub(super) fn response_body(ui: &mut egui::Ui, model: &mut EditModel, idx: usize, editing: bool) {
+///
+/// # Returns
+///
+/// The body switch the dropdown asks for this frame.
+pub(super) fn response_body(
+    ui: &mut egui::Ui,
+    model: &mut EditModel,
+    idx: usize,
+    editing: bool,
+) -> Option<ContractsAction> {
     let p = palette(ui.ctx());
     ui.spacing_mut().item_spacing.y = SPACE_SMALL;
+    let loc = BodyLoc::Response(idx);
+    let is_multipart = !model.responses[idx].multipart.is_empty();
+    let mut action = None;
+    if is_multipart {
+        if editing {
+            action = ui
+                .horizontal(|ui| body_kind_row(ui, loc.clone(), true))
+                .inner;
+        }
+        for a in parts_table(ui, model, loc, editing) {
+            apply(model, &a);
+        }
+        ui.add_space(SPACE_MEDIUM);
+        return action;
+    }
     let r = &mut model.responses[idx];
-    // The title/description now lives in the status tab, so the body is just
-    // the JSON example (with its Pretty control in edit mode).
     if editing {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
-            section_label(ui, "JSON");
+            action = body_kind_row(ui, loc, false);
             ui.add_space(SPACE_MEDIUM);
             if text_button(ui, "Pretty", p.warning) {
                 r.example = apic_core::json::pretty_json(&r.example);
@@ -932,6 +1251,7 @@ pub(super) fn response_body(ui: &mut egui::Ui, model: &mut EditModel, idx: usize
     }
     json_editor(ui, &mut r.example, editing);
     ui.add_space(SPACE_MEDIUM);
+    action
 }
 
 #[cfg(test)]
@@ -1060,6 +1380,62 @@ mod tests {
             "the caret followed into the new row"
         );
         assert_eq!(m.headers[0].value, "");
+    }
+
+    /// A contract with a text and a file part in the request and in the first
+    /// response.
+    fn multipart_model() -> EditModel {
+        let c = apic_core::json::json_get(
+            r#"{ "name":"u","method":"POST","url":"https://h","headers":[],
+             "multipart":[{"name":"title","value":"hi","required":false},
+                          {"name":"avatar","filename":"a.png","contentType":"image/png","required":true}],
+             "responses":[{"code":201,"description":"ok",
+                "multipart":[{"name":"thumb","filename":"t.png","required":false}]}] }"#,
+            None,
+        )
+        .unwrap();
+        EditModel::from_contract(c)
+    }
+
+    #[test]
+    fn parts_table_renders_in_both_themes() {
+        for preference in crate::ui::theme::BOTH_THEMES {
+            crate::ui::theme::run_in_theme(preference, |ui| {
+                let mut m = multipart_model();
+                for editing in [false, true] {
+                    assert!(request_body(ui, &mut m, editing).is_none());
+                    assert!(response_body(ui, &mut m, 0, editing).is_none());
+                }
+                assert!(m.request.is_none(), "no JSON body appears");
+                assert_eq!(m.multipart.len(), 2);
+                assert_eq!(m.responses[0].multipart.len(), 1);
+                assert!(m.responses[0].example.is_empty());
+            });
+        }
+    }
+
+    #[test]
+    fn typing_in_the_parts_add_row_adds_one_part() {
+        for table in [RowTable::RequestParts, RowTable::ResponseParts(0)] {
+            for (n, column) in table.columns().iter().enumerate() {
+                let mut m = multipart_model();
+                let before = table.len(&m);
+                let mut texts = vec![String::new(); table.columns().len()];
+                texts[n] = "x".to_string();
+                let adopted = adopt_ghost_text(&mut m, table, &mut texts);
+                assert_eq!(adopted, Some((before, *column)), "{table:?} {column:?}");
+                assert_eq!(table.len(&m), before + 1, "{table:?} {column:?}");
+                let mut expected = vec![String::new(); table.columns().len()];
+                expected[n] = "x".to_string();
+                assert_eq!(row_texts(&mut m, table, before), expected);
+                assert!(texts.iter().all(String::is_empty), "scratch is cleared");
+            }
+            let mut m = multipart_model();
+            let before = table.len(&m);
+            let mut empty = vec![String::new(); table.columns().len()];
+            assert_eq!(adopt_ghost_text(&mut m, table, &mut empty), None);
+            assert_eq!(table.len(&m), before, "an empty add row adds nothing");
+        }
     }
 
     #[test]

@@ -1,5 +1,5 @@
 //! The contracts modals: new template, new request, new example, delete
-//! confirmation and unsaved changes.
+//! confirmation, unsaved changes and the body-type switch.
 
 use eframe::egui;
 use egui::RichText;
@@ -19,8 +19,8 @@ pub(crate) const FOCUS_NEW_TEMPLATE: &str = "apic.focus.new_template";
 // field, so the focus lands only on the frame the popup opens.
 const NEW_EXAMPLE_FOCUSED: &str = "apic.new_example.focused";
 
-/// Renders whichever of the new-template, new-request, new-example, delete and
-/// unsaved-changes dialogs is open.
+/// Renders whichever of the new-template, new-request, new-example, delete,
+/// unsaved-changes and body-switch dialogs is open.
 ///
 /// # Returns
 ///
@@ -31,7 +31,13 @@ pub(crate) fn dialogs(ctx: &egui::Context, state: &mut ContractsState) -> Option
     let example = new_example_dialog(ctx, state);
     let delete = delete_dialog(ctx, state);
     let unsaved = unsaved_dialog(ctx, state);
-    template.or(request).or(example).or(delete).or(unsaved)
+    let body_switch = body_switch_dialog(ctx, state);
+    template
+        .or(request)
+        .or(example)
+        .or(delete)
+        .or(unsaved)
+        .or(body_switch)
 }
 
 /// Renders the "new template" dialog when open, and returns what was chosen.
@@ -276,11 +282,60 @@ fn unsaved_dialog(ctx: &egui::Context, state: &ContractsState) -> Option<Contrac
     }
 }
 
+/// Renders the body-type switch confirmation while a switch is pending, and
+/// returns what was chosen.
+fn body_switch_dialog(ctx: &egui::Context, state: &ContractsState) -> Option<ContractsAction> {
+    let (_, multipart) = state.pending_body_switch.as_ref()?;
+    let p = palette(ctx);
+    let (title, line) = if *multipart {
+        ("Switch to multipart?", "The JSON body will be removed.")
+    } else {
+        ("Switch to JSON?", "The multipart parts will be removed.")
+    };
+    let outcome = dialog(
+        ctx,
+        "body_switch_modal",
+        title,
+        |ui| {
+            ui.label(RichText::new(line).color(p.on_surface));
+        },
+        &[
+            DialogButton::new("Cancel", ButtonKind::Secondary),
+            DialogButton::new("Switch", ButtonKind::Danger),
+        ],
+    );
+    if outcome.clicked == Some(1) {
+        Some(ContractsAction::ConfirmBodySwitch)
+    } else if outcome.clicked == Some(0) || outcome.closed {
+        Some(ContractsAction::CancelBodySwitch)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::features::contracts::ui::state::Guarded;
     use crate::ui::theme::{BOTH_THEMES, run_in_theme};
+    use apic_core::edit::BodyLoc;
+
+    #[test]
+    fn body_switch_popup_renders_in_both_themes() {
+        for preference in BOTH_THEMES {
+            run_in_theme(preference, |ui| {
+                let ctx = ui.ctx().clone();
+                for pending in [(BodyLoc::Request, true), (BodyLoc::Response(0), false)] {
+                    let mut state = ContractsState {
+                        pending_body_switch: Some(pending.clone()),
+                        ..Default::default()
+                    };
+                    assert!(dialogs(&ctx, &mut state).is_none());
+                    assert_eq!(state.pending_body_switch, Some(pending));
+                }
+            });
+        }
+    }
 
     #[test]
     fn new_example_popup_renders_in_both_themes() {
