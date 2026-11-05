@@ -2,7 +2,7 @@
 
 **A Free, Full Open Source** Git-able api contract tools. `Apic` stores your API contracts as plain JSON in your repo, so they're diffable, reviewable, and versioned like any other code. No paywalled seats or separate workspaces, if a teammate can clone the repo, they can collaborate on the contract.
 
-CLI, TUI, and desktop GUI, all over one shared core (`apic-core`), so every interface edits the same files and never drifts.
+CLI and desktop GUI, both over one shared core (`apic-core`), so every interface edits the same files and never drifts.
 
 <img width="1898" height="1022" alt="2026-11-04-230314_screenshot" src="https://github.com/user-attachments/assets/c0f0a8e8-9237-41e5-a65f-0c9ef764462f" />
 
@@ -17,7 +17,7 @@ Mainstream API tooling gates collaboration behind paywalls, charging per team me
 
 ## Install
 
-`apic` ships as two binaries that share one core: `apic` (the CLI/TUI) and
+`apic` ships as two binaries that share one core: `apic` (the CLI) and
 `apic-gui` (the desktop app). Install either or both.
 
 ### Package managers
@@ -27,7 +27,7 @@ Mainstream API tooling gates collaboration behind paywalls, charging per team me
 - **Flatpak:** `flatpak install io.github.rizukirr.apic` (GUI)
 - **Windows (winget):** `winget install rizukirr.apic` (CLI) · `winget install rizukirr.apic-gui` (GUI). The GUI installs as an MSI that adds an **apic** entry to the Start menu and an uninstaller in Settings → Apps.
 
-### CLI / TUI (`apic`)
+### CLI (`apic`)
 
 **crates.io** (recommended):
 
@@ -86,45 +86,33 @@ apic config --set-dir api-contract
 apic open --template              # edit .apic/template/convention.json
 apic create --template mobile     # author .apic/template/mobile.json
 
-# 4. Scaffold a new contract (opens the interactive editor)
-# uses the only template, prompts to pick when several exist, or
+# 4. Scaffold a new contract with curl-style flags
+# uses the only template, convention.json when several exist, or
 # --use-template chooses one; falls back to the built-in template
-apic create -f auth/login.json
-apic create -f auth/login.json --use-template mobile
+apic create -f auth/login -X POST https://api.example.com/auth/login \
+  -H 'Content-Type: application/json' -d '{"user":"rizki"}' --response '200:OK'
+apic create -f auth/login --use-template mobile
 
-# 5. List and read contracts
+# 5. Change it later, only the flags you pass are touched
+apic edit -f login -H 'X-Trace: 1' --response '401:Unauthorized'
+
+# 6. List and read contracts
 apic list
 apic read -f login
 ```
 
 ### Editing contracts
 
-`apic create <file>` and `apic open <file>` open an interactive terminal editor
-(TUI) by default. It shows the contract exactly as `apic read` renders it, the
-same header, sections, tables, and inline JSON examples, and lets you edit in
-place:
+`apic create` and `apic edit` take curl-style flags, so a contract can be written
+or changed in one command: `-X` for the method, a bare URL argument, `-H` for
+headers, `-d` for a JSON body, `-F` for multipart parts, and `--response`,
+`--response-body` and `--response-header` for responses. `create` starts from the
+project template, and `edit` changes only the fields you pass. Both validate the
+result and write nothing when any flag fails.
 
-- **Navigate:** `↑/↓` (or `j/k`) select a row; `Enter` steps into the row's cells;
-  `←/→` (or `h/l`) move between cells; `Esc` steps back out.
-- **Method + URL:** the header shows one ` METHOD url` line. `Enter` on it focuses
-  the method; `Enter` there opens a **method picker** (`j/k` to choose, `Enter`
-  to select, `Esc` to cancel). `l` moves to the URL, edited inline with `Enter`/`i`.
-- **Query / headers:** `QUERY` and `HEADERS` are `NAME/VALUE(/DESCRIPTION)` tables.
-  `a` adds a row and drops you into it; `d` deletes the selected row after a
-  confirmation. A row you add and then cancel while still empty is discarded.
-- **Request body:** `a` in `REQUEST` opens the JSON editor (creating the body);
-  an empty body reads as `(none)`.
-- **Responses:** `RESPONSE` is a `code - title` tab strip. `a` opens a small
-  `Status / Short Description` form, then the JSON editor for the new response.
-  `e` on a tab re-opens that form to edit its status/title; `e` (or `Enter`) on
-  the JSON opens the editor. `d` removes the whole response.
-- **JSON editor:** type the example payload; `Ctrl-P` pretty-prints it, `Ctrl-S`
-  saves, `Esc` cancels. Saving an empty body removes its response.
-- **Save / quit:** `Ctrl-S` saves the contract; `Esc`/`q` exits; `?` shows the
-  full key map.
-
-Prefer your own editor? Pass `--editor` to open the file in `$VISUAL`/`$EDITOR`
-(or a specific one, e.g. `apic open login --editor "code --wait"`).
+For anything the flags do not cover, such as descriptions on a query param or
+the `required` flag on a header, `apic open -f <query>` opens the file in your own
+editor (`-e`, then `$VISUAL`, then `$EDITOR`, then `vi`).
 
 ## Desktop GUI
 
@@ -144,7 +132,7 @@ What it does:
 - **Browse**, a sidebar lists every contract (with its HTTP method badge) and
   every template; a search box filters them.
 - **Read / Edit**, selecting a contract renders it, and **Edit** lets you change
-  fields in place through the same model as the TUI, saving to the file. The
+  fields in place through the same edit model as the CLI, saving to the file. The
   method is a dropdown, the request/response bodies are tabs with a
   line-numbered JSON editor, and metadata (headers, query, response headers) are
   editable tables.
@@ -201,8 +189,8 @@ A **template** is a starter contract that `apic create -f <file>` copies from
 when you scaffold a new endpoint. `apic init` seeds one at
 `.apic/template/convention.json` from the built-in default; a project can hold
 several named templates (`apic create --template <name>` authors more), and
-`--use-template <name>` chooses which one seeds a new contract (`apic create`
-prompts when several exist). A template is never overwritten once it exists.
+`--use-template <name>` chooses which one seeds a new contract (with several and
+no `--use-template`, `apic create` uses `convention.json`). A template is never overwritten once it exists.
 
 The project template is **overlaid onto the built-in default**, so it only needs
 to carry the fields you want to standardize, it can be a small partial contract.
@@ -246,36 +234,73 @@ Updates project configuration.
 - `--set-dir <dir>`, change the working directory that contracts are scanned
   from (must exist).
 
-### `apic create (-f <filename> | --template <name>) [--use-template <name>] [-e <editor>]`
+### `apic create (-f <filename> | --template <name>) [<url>] [--use-template <name>] [flags]`
 Creates a new **contract** (`-f`) or authors a new **template** (`--template`).
 
-With `-f <filename>`, a contract is seeded from a project template and opened in
-the interactive TUI; the file is written only when you save. A relative path is
-resolved against the configured working directory, and `apic` refuses to
-overwrite an existing file. When `.apic/template/` holds a single template it is
-used; when it holds several you are prompted to pick one (an inline picker), and
-`--use-template <name>` selects one directly (fuzzy-matched) to skip the prompt.
-With no usable template, the built-in default is used.
+With `-f <filename>`, a contract is seeded from a project template, the
+authoring flags (listed under [`apic edit`](#apic-edit--f-query-url-flags)) are
+applied on top, and the result is validated and written. A relative path is
+resolved against the configured working directory and confined to it, `.json`
+is appended when the name lacks it, and `apic` refuses to overwrite an existing
+file. The contract name defaults to the file stem unless `--name` is given. When
+`.apic/template/` holds a single template it is used; when it holds several,
+`convention.json` is used unless `--use-template <name>` selects one
+(fuzzy-matched). With no usable template, the built-in default is used. On
+success it prints `created <path>`.
 
 With `--template <name>`, a new template is authored at
 `.apic/template/<name>.json` (a flat name), seeded from the built-in default or,
-with `--use-template <name>`, from an existing template. It opens in the TUI and
-refuses to overwrite an existing template. `--template` and `-f` are mutually
-exclusive; `--use-template` composes with either.
+with `--use-template <name>`, from an existing template, with the same flags
+applied. It refuses to overwrite an existing template. `--template` and `-f` are
+mutually exclusive; `--use-template` composes with either.
 
 ```bash
-apic create -f auth/login.json                       # contract from the project template
-apic create -f auth/login.json --use-template mobile # contract from the `mobile` template
+apic create -f auth/login                            # contract from the project template
+apic create -f auth/login --use-template mobile      # contract from the `mobile` template
+apic create -f auth/login -X POST 'https://api.example.com/auth/login?remember=true' \
+  -H 'Content-Type: application/json' -d @body.json --response '200:OK'
 apic create --template mobile                        # author a new template
 apic create --template mobile --use-template convention  # seed it from `convention`
 ```
 
-Pass `-e`/`--editor` to scaffold the file to disk and open it in your external
-editor instead of the TUI. Editor resolution order: `--editor` flag → `$VISUAL`
-→ `$EDITOR` → `vi`. The flag picks the editor for a single invocation (e.g.
-`apic create -f auth/login.json -e nano`) and the value may include arguments.
-GUI editors need their wait flag (`code --wait`, `subl -w`) so `apic` waits for
-the file to be saved.
+### `apic edit -f <query> [<url>] [flags]`
+Resolves `<query>` exactly like `read` (path, extensionless, or fuzzy) and
+changes only the fields the flags name, leaving the rest of the contract as it
+is. The result is validated before it is written, and on success it prints
+`updated <path>`. An ambiguous query fails and lists the candidates.
+
+The same flags work on `apic create`:
+
+- `<url>`, the request URL. A `?a=1&b=2` query string is split off into query
+  params, each added or updated by name:
+  `apic edit -f login 'https://api.example.com/auth/login?remember=true'`
+- `-X`/`--request <method>`, the HTTP method, in any case:
+  `apic edit -f login -X POST`
+- `-H`/`--header 'Name: value'`, adds a request header or replaces the one with
+  that name (names compare without case). `'Name:'` with no value removes it.
+  Repeatable: `apic edit -f login -H 'Authorization: Bearer {token}' -H 'DeviceID:'`
+- `-d`/`--data <body>`, the JSON request body, as literal text, `@file`, or
+  `@-` for stdin: `apic edit -f login -d @body.json`
+- `-F`/`--form <part>`, a multipart part, `name=value` for a text part or
+  `name=@file` (optionally `'name=@file;type=mime'`) for a file part, which
+  records the file's name, not its contents. Added or replaced by name,
+  repeatable: `apic edit -f upload -F title=Hello -F 'avatar=@me.png;type=image/png'`
+- `--response <code:desc>`, adds a response or updates the description of the
+  first one with that code. Repeatable: `apic edit -f login --response '401:Unauthorized'`
+- `--response-body <code> <body>`, the JSON body of response `<code>`, in the
+  `-d` forms: `apic edit -f login --response-body 200 @ok.json`
+- `--response-header <code> <header>`, a header on response `<code>`, with the
+  `-H` rules: `apic edit -f login --response-header 200 'X-Request-Id: abc-123'`
+- `--name <name>`, the contract name: `apic edit -f login --name login-v2`
+- `--description <text>`, the contract description:
+  `apic edit -f login --description 'Log a user in'`
+
+A request body is either JSON or multipart, so `-d` on a contract with multipart
+parts, and `-F` on one with a JSON body, fail and point you at `apic open`.
+`--response-body` and `--response-header` for a code with no response fail and
+point you at `--response`, which you can pass in the same command to add it
+first. Nothing is written when any flag fails or the result is not a valid
+contract.
 
 ### `apic list [--filter <query>] [--absolute <true|false>]`
 Lists discovered `.json` contract files under the working directory.
@@ -324,8 +349,11 @@ JSON example payloads:
 
 ### `apic open (-f <query> | --template) [-e <editor>]`
 Resolves `<query>` exactly like `read` (path, extensionless, or fuzzy) and
-opens the matching contract in the interactive TUI. Pass `-e`/`--editor` to open
-it in your external editor instead, the same editor resolution as `apic create`.
+opens the matching contract in your external editor. An ambiguous query fails
+and lists the candidates. Editor resolution order: `--editor` flag → `$VISUAL`
+→ `$EDITOR` → `vi`. The flag picks the editor for a single invocation and the
+value may include arguments. GUI editors need their wait flag (`code --wait`,
+`subl -w`) so `apic` waits for the file to be saved.
 
 Pass `--template` instead of `-f` to edit the project template in
 `.apic/template/` that `apic create` scaffolds from (the sole template, or
@@ -337,6 +365,7 @@ is required. To author a *new* named template, use `apic create --template <name
 apic open -f user/user.json
 apic open -f user
 apic open -f user -e nano       # open with a one-off editor
+apic open -f user -e "code --wait"
 apic open --template            # edit the project template
 ```
 
@@ -344,12 +373,12 @@ Output is colorized when stdout is a terminal and plain when piped, so it stays
 clean in scripts. Contract strings are sanitized before display, so a file from
 an untrusted source cannot inject terminal escape sequences.
 
-### `apic remove (-f <query> | --template <name>)`
+### `apic remove (-f <query> | --template <name>) [-y]`
 Resolves `<query>` exactly like `read`/`open` (path, extensionless, or
-fuzzy, prompting to pick when ambiguous) and deletes the matching contract
-file. On an interactive terminal it asks `Remove <path>? [y/N]` first and only
-deletes on `y`/`yes`; when stdin/stdout is not a terminal (scripts) it removes
-without prompting.
+fuzzy, failing with the candidates when ambiguous) and deletes the matching
+contract file. On an interactive terminal it asks `Remove <path>? [y/N]` first
+and only deletes on `y`/`yes`; `-y`/`--yes` skips the question, and when
+stdin/stdout is not a terminal (scripts) it removes without prompting.
 
 Pass `--template <name>` instead of `-f` to remove a project template from
 `.apic/template/` (fuzzy-matched the same way, with the same confirmation). No
@@ -360,6 +389,7 @@ time. `--template` and `-f` are mutually exclusive.
 ```bash
 apic remove -f user/user.json
 apic remove -f login            # fuzzy, with confirmation
+apic remove -f login -y         # no confirmation
 apic remove --template mobile   # remove a project template
 ```
 
