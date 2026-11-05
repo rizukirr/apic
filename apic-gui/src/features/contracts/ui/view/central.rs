@@ -160,7 +160,9 @@ pub(crate) fn central_body(
                             query_section(ui, model, *editing);
                             ui.add_space(16.0);
                             section_heading(ui, "Request");
-                            request_body(ui, model, *editing);
+                            if let Some(a) = request_body(ui, model, *editing) {
+                                action = Some(a);
+                            }
                         });
                 });
             ui.visuals_mut().widgets.noninteractive.bg_stroke = saved_stroke;
@@ -185,7 +187,8 @@ pub(crate) fn central_body(
 ///
 /// # Returns
 ///
-/// The action the response picker asks for this frame.
+/// The action the response picker or the body-type dropdown asks for this
+/// frame.
 fn response_pane(
     ui: &mut egui::Ui,
     model: &mut apic_core::edit::EditModel,
@@ -238,7 +241,11 @@ fn response_pane(
             }
             let idx = *resp_tab;
             match *resp_tab_view {
-                RespTab::Body => response_body(ui, model, idx, editing),
+                RespTab::Body => {
+                    if let Some(a) = response_body(ui, model, idx, editing) {
+                        action = Some(a);
+                    }
+                }
                 RespTab::Headers => response_headers(ui, model, idx, editing),
             }
         });

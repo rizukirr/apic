@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use apic_core::edit::{EditAction, EditModel, Field, apply};
+use apic_core::edit::{BodyLoc, EditAction, EditModel, Field, apply};
 use apic_core::json::method_str;
 
 use crate::features::contracts::data::files;
@@ -102,6 +102,9 @@ pub(crate) struct ContractsState {
 
     /// The action the unsaved-changes popup is asking about, while it is open.
     pub(crate) pending_discard: Option<Guarded>,
+
+    /// A body-type switch waiting for confirmation: which body, and whether to multipart.
+    pub(crate) pending_body_switch: Option<(BodyLoc, bool)>,
 }
 
 /// Where the contracts feature reads and writes, built by `App` from the
@@ -153,6 +156,18 @@ pub(crate) enum ContractsAction {
     DiscardAndContinue,
     /// Close the popup and keep editing.
     KeepEditing,
+    /// Make the body at `loc` multipart (`true`) or JSON (`false`). A body
+    /// with content asks for confirmation first.
+    SwitchBody {
+        /// Which body to switch.
+        loc: BodyLoc,
+        /// Whether the body becomes multipart.
+        multipart: bool,
+    },
+    /// The pending body switch was confirmed.
+    ConfirmBodySwitch,
+    /// Drop the pending body switch, keeping the body as it is.
+    CancelBodySwitch,
 }
 
 /// Something a contracts action asks the app shell to do.
@@ -349,6 +364,7 @@ impl ContractsState {
                 self.new_template = None;
                 self.new_example = None;
                 self.pending_delete = None;
+                self.pending_body_switch = None;
             }
             ContractsAction::ToggleEdit => {
                 if self.editing {
@@ -379,8 +395,73 @@ impl ContractsState {
                 }
             }
             ContractsAction::KeepEditing => self.pending_discard = None,
+            ContractsAction::SwitchBody { loc, multipart } => self.switch_body(loc, multipart),
+            ContractsAction::ConfirmBodySwitch => {
+                if let Some((loc, multipart)) = self.pending_body_switch.take() {
+                    self.apply_body_switch(&loc, multipart);
+                }
+            }
+            ContractsAction::CancelBodySwitch => self.pending_body_switch = None,
         }
         events
+    }
+
+    /// Switches the body at `loc` to multipart or JSON. Nothing happens when
+    /// it already is that kind. A body holding a non-blank JSON example or any
+    /// part waits for the confirmation popup, an empty one switches at once.
+    fn switch_body(&mut self, loc: BodyLoc, multipart: bool) {
+        let Some(model) = self.model.as_ref() else {
+            return;
+        };
+        let (example, parts) = match &loc {
+            BodyLoc::Request => (
+                model.request.as_ref().map_or("", |r| r.example.as_str()),
+                model.multipart.len(),
+            ),
+            BodyLoc::Response(r) => match model.responses.get(*r) {
+                Some(resp) => (resp.example.as_str(), resp.multipart.len()),
+                None => return,
+            },
+        };
+        if (parts > 0) == multipart {
+            return;
+        }
+        if !example.trim().is_empty() || parts > 0 {
+            self.pending_body_switch = Some((loc, multipart));
+        } else {
+            self.apply_body_switch(&loc, multipart);
+        }
+    }
+
+    /// Applies a body switch to the open model. A multipart body is one with
+    /// parts, so switching to multipart also adds one blank part, or the body
+    /// would read as JSON again.
+    fn apply_body_switch(&mut self, loc: &BodyLoc, multipart: bool) {
+        let Some(model) = self.model.as_mut() else {
+            return;
+        };
+        apply(
+            model,
+            &EditAction::SetBodyKind {
+                loc: loc.clone(),
+                multipart,
+            },
+        );
+        let empty = match loc {
+            BodyLoc::Request => model.multipart.is_empty(),
+            BodyLoc::Response(r) => model
+                .responses
+                .get(*r)
+                .is_some_and(|r| r.multipart.is_empty()),
+        };
+        if multipart && empty {
+            apply(
+                model,
+                &EditAction::Add {
+                    field: Field::PartAdd(loc.clone()),
+                },
+            );
+        }
     }
 
     /// Adds the response the new-example popup holds and selects it. A code
@@ -991,6 +1072,99 @@ mod tests {
 
         assert!(!state.editing);
         assert_ne!(open_name(&state), "dirtied");
+    }
+
+    /// A state whose open model has a non-blank JSON request body.
+    fn with_json_request() -> (ContractsState, ContractsPaths) {
+        let (mut state, paths) = loaded();
+        let model = state.model.as_mut().expect("contract is open");
+        model.multipart.clear();
+        model.request = Some(apic_core::edit::EditBody {
+            example: r#"{"a":1}"#.to_string(),
+        });
+        state.editing = true;
+        (state, paths)
+    }
+
+    #[test]
+    fn switching_a_body_with_content_waits_for_the_popup() {
+        let (mut state, paths) = with_json_request();
+        let before = state.model.clone();
+
+        state.handle(
+            ContractsAction::SwitchBody {
+                loc: BodyLoc::Request,
+                multipart: true,
+            },
+            Some(&paths),
+        );
+
+        assert_eq!(state.pending_body_switch, Some((BodyLoc::Request, true)));
+        assert!(state.model == before, "nothing changes before the popup");
+    }
+
+    #[test]
+    fn confirming_the_switch_applies_it() {
+        let (mut state, paths) = with_json_request();
+        state.handle(
+            ContractsAction::SwitchBody {
+                loc: BodyLoc::Request,
+                multipart: true,
+            },
+            Some(&paths),
+        );
+
+        state.handle(ContractsAction::ConfirmBodySwitch, Some(&paths));
+
+        assert!(state.pending_body_switch.is_none());
+        let model = state.model.as_ref().expect("contract is open");
+        assert!(model.request.is_none());
+        assert_eq!(model.multipart.len(), 1, "one blank part to fill in");
+    }
+
+    #[test]
+    fn cancelling_the_switch_keeps_the_body() {
+        let (mut state, paths) = with_json_request();
+        let before = state.model.clone();
+        state.handle(
+            ContractsAction::SwitchBody {
+                loc: BodyLoc::Request,
+                multipart: true,
+            },
+            Some(&paths),
+        );
+
+        state.handle(ContractsAction::CancelBodySwitch, Some(&paths));
+
+        assert!(state.pending_body_switch.is_none());
+        assert!(state.model == before);
+    }
+
+    #[test]
+    fn switching_an_empty_body_is_immediate() {
+        let (mut state, paths) = loaded();
+        let model = state.model.as_mut().expect("contract is open");
+        model.request = None;
+        model.multipart.clear();
+        if model.responses.is_empty() {
+            model.responses.push(apic_core::edit::EditResponse::blank());
+        }
+        model.responses[0].example.clear();
+        model.responses[0].multipart.clear();
+
+        for loc in [BodyLoc::Request, BodyLoc::Response(0)] {
+            state.handle(
+                ContractsAction::SwitchBody {
+                    loc: loc.clone(),
+                    multipart: true,
+                },
+                Some(&paths),
+            );
+            assert!(state.pending_body_switch.is_none(), "{loc:?}");
+        }
+        let model = state.model.as_ref().expect("contract is open");
+        assert_eq!(model.multipart.len(), 1);
+        assert_eq!(model.responses[0].multipart.len(), 1);
     }
 
     #[test]
