@@ -8,7 +8,7 @@ PublisherSupportUrl: https://github.com/rizukirr/apic/issues
 Author: Rizki Rakasiwi
 PackageName: apic
 PackageUrl: https://github.com/rizukirr/apic
-License: MIT
+License: GPL-3.0-only
 LicenseUrl: https://github.com/rizukirr/apic/blob/main/LICENSE
 Copyright: Copyright (c) Rizki Rakasiwi
 ShortDescription: A lightweight, Git-friendly CLI tool for designing and collaborating on API contracts.

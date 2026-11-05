@@ -80,4 +80,4 @@ against contracts from any source:
 
 ## License
 
-Licensed under the [MIT License](LICENSE).
+Copyright (c) 2026 Rizki Rakasiwi. Licensed under the [GNU General Public License, version 3 only](LICENSE) (GPL-3.0). Releases up to and including 0.5.1 were published under the MIT License and stay available under it.
