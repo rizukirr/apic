@@ -2,7 +2,7 @@
 
 Manifests for publishing apic to the [Windows Package Manager](https://learn.microsoft.com/windows/package-manager/) (winget):
 
-- `rizukirr.apic` — the CLI / TUI (`apic`)
+- `rizukirr.apic` — the CLI (`apic`)
 - `rizukirr.apic-gui` — the desktop GUI (`apic-gui`)
 
 Both are portable apps shipped inside the `x86_64-pc-windows-msvc` `.zip`
@@ -11,7 +11,7 @@ archives attached to each GitHub Release.
 ## End users
 
 ```powershell
-winget install rizukirr.apic        # CLI / TUI
+winget install rizukirr.apic        # CLI
 winget install rizukirr.apic-gui    # desktop GUI
 ```
 

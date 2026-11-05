@@ -1,6 +1,6 @@
 //! Addresses into an [`EditModel`]: which part of a contract an edit targets.
 //!
-//! These are UI-agnostic so every front-end (CLI/TUI table cells, GUI widgets)
+//! These are UI-agnostic so every front-end (CLI flags, GUI widgets)
 //! can describe an edit the same way and apply it through [`super::apply`].
 //!
 //! [`EditModel`]: super::EditModel

@@ -4,7 +4,7 @@
 //! contracts, displays them in a styled, panelled layout (a viewer that mirrors
 //! `apic read`), and edits them through the shared [`apic_core::edit`] model.
 //! The GUI owns only its widgets, theme, and layout, never the editing behavior,
-//! so it cannot drift from the CLI/TUI.
+//! so it cannot drift from the CLI.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 

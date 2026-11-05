@@ -1,8 +1,8 @@
 //! UI-agnostic edits over an [`EditModel`].
 //!
 //! Every mutation a front-end can make to a contract is expressed as an
-//! [`EditAction`] and applied through [`apply`]. Front-ends (the CLI/TUI table
-//! handlers, a future GUI) translate their own input into these actions, so the
+//! [`EditAction`] and applied through [`apply`]. Front-ends (the CLI's curl-style
+//! flags, the desktop GUI) translate their own input into these actions, so the
 //! editing behavior, what an add/delete/toggle/generate actually does, lives in
 //! one place and cannot drift between front-ends.
 //!

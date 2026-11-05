@@ -1,7 +1,7 @@
 Name:           apic-cli
 Version:        0.5.1
 Release:        1%{?dist}
-Summary:        Git-friendly API contracts, CLI/TUI (prebuilt)
+Summary:        Git-friendly API contracts, CLI (prebuilt)
 License:        MIT
 URL:            https://github.com/rizukirr/apic
 ExclusiveArch:  x86_64 aarch64

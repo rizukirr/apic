@@ -1,6 +1,6 @@
 # COPR: apic-cli + apic-gui
 
-One RPM spec that builds prebuilt **`apic-cli`** (CLI/TUI) and **`apic-gui`**
+One RPM spec that builds prebuilt **`apic-cli`** (CLI) and **`apic-gui`**
 (desktop GUI) for Fedora, hosted on [COPR](https://copr.fedorainfracloud.org/).
 
 > **You are on Arch / CachyOS, which has no `rpmbuild`/`dnf`.** Everything that
@@ -22,7 +22,7 @@ copr-cli create apic \
   --chroot fedora-43-x86_64 --chroot fedora-43-aarch64 \
   --chroot fedora-44-x86_64 --chroot fedora-44-aarch64 \
   --chroot fedora-rawhide-x86_64 --chroot fedora-rawhide-aarch64 \
-  --description "Git-friendly API contracts: apic CLI/TUI and apic-gui desktop GUI." \
+  --description "Git-friendly API contracts: apic CLI and apic-gui desktop GUI." \
   --instruction "dnf copr enable rizukirr/apic && dnf install apic-cli apic-gui"
 ```
 

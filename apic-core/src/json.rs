@@ -115,7 +115,7 @@ pub fn method_str(method: &Method) -> String {
     }
 }
 
-/// All HTTP methods in a fixed order, for cycling through choices in the TUI.
+/// All HTTP methods in a fixed order, for offering every choice in a picker or dropdown.
 pub fn method_all() -> [Method; 7] {
     [
         Method::GET,

@@ -27,8 +27,8 @@ impl Printer {
     }
 
     /// Prints the whole contract. Every section is always shown; an empty one
-    /// renders a dim `(none)` placeholder rather than being skipped, matching
-    /// the TUI viewer so the two stay consistent.
+    /// renders a dim `(none)` placeholder rather than being skipped, so every
+    /// contract reads with the same sections in the same order.
     fn contract(&self, c: &JsonContent) {
         println!(" {}", sanitize(&c.name).to_uppercase());
         if let Some(desc) = &c.description {
@@ -135,8 +135,7 @@ impl Printer {
         );
     }
 
-    /// Prints a dim `(none)` placeholder for an empty section, mirroring the
-    /// TUI viewer's `none_line`.
+    /// Prints a dim `(none)` placeholder for an empty section.
     fn none(&self) {
         if self.color {
             println!(" {}", "(none)".dark_grey());
