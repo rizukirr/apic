@@ -9,6 +9,7 @@ use apic_core::json::method_str;
 use crate::features::contracts::data::files;
 use crate::features::contracts::domain::entry::{DeleteTarget, Entry, display_location};
 use crate::features::contracts::domain::names::{request_target, template_file_name};
+use crate::features::contracts::ui::send::SendState;
 
 /// In-progress raw-JSON repair of an invalid contract.
 pub(crate) struct Repair {
@@ -105,6 +106,9 @@ pub(crate) struct ContractsState {
 
     /// A body-type switch waiting for confirmation: which body, and whether to multipart.
     pub(crate) pending_body_switch: Option<(BodyLoc, bool)>,
+
+    /// The selected environment, the request in flight and the live reply.
+    pub(crate) send: SendState,
 }
 
 /// Where the contracts feature reads and writes, built by `App` from the
@@ -168,6 +172,13 @@ pub(crate) enum ContractsAction {
     ConfirmBodySwitch,
     /// Drop the pending body switch, keeping the body as it is.
     CancelBodySwitch,
+    /// Send the open contract as shown.
+    Send,
+    /// Drop the request in flight and its reply.
+    CancelSend,
+    /// Show the live reply (`true`) or the documented examples (`false`) in
+    /// the right pane.
+    SetLive(bool),
 }
 
 /// Something a contracts action asks the app shell to do.
@@ -221,6 +232,7 @@ impl ContractsState {
         self.selected = None;
         self.selected_template = None;
         self.repair = None;
+        self.send = SendState::default();
     }
 
     /// Reloads, then reconciles the open contract with the freshly
@@ -402,6 +414,13 @@ impl ContractsState {
                 }
             }
             ContractsAction::CancelBodySwitch => self.pending_body_switch = None,
+            ContractsAction::Send => {
+                if let Some(model) = self.model.as_ref() {
+                    events.extend(self.send.send(model, paths.map(|p| p.apic_dir.as_path())));
+                }
+            }
+            ContractsAction::CancelSend => self.send.cancel(),
+            ContractsAction::SetLive(live) => self.send.show_live = live,
         }
         events
     }
@@ -540,6 +559,7 @@ impl ContractsState {
                 self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
+                self.send.clear();
                 events.push(ContractsEvent::Status(display_location(&path)));
                 events.push(ContractsEvent::Opened(path));
             }
@@ -566,6 +586,7 @@ impl ContractsState {
                 self.resp_tab_view = RespTab::Body;
                 self.editing = false;
                 self.original_model = None;
+                self.send.clear();
                 events.push(ContractsEvent::Status(format!("template '{name}'")));
                 events.push(ContractsEvent::Opened(path));
             }

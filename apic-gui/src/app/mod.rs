@@ -683,6 +683,7 @@ impl eframe::App for App {
         let events = self.project.poll(&ctx);
         self.apply_project_events(events);
         self.poll_git(&ctx);
+        self.contracts.send.poll(&ctx);
         let top = self.top_bar(ui);
         self.bottom_bar(ui);
         let side = self.sidebar(ui);

@@ -9,6 +9,8 @@ use super::editor::{
     endpoint_title, headers, method_url_row, query_section, request_body, response_body,
     response_fields, response_headers, response_picker,
 };
+use super::live::{live_body, live_summary, live_switch};
+use crate::features::contracts::ui::send::SendState;
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState, RespTab};
 use crate::ui::components::{Tab, empty_state, icon_button, tab_strip, text_button};
 use crate::ui::theme::*;
@@ -45,6 +47,7 @@ pub(crate) fn central_body(
         resp_tab_view,
         repair,
         entries,
+        send,
         ..
     } = state;
     if no_project {
@@ -96,7 +99,16 @@ pub(crate) fn central_body(
         empty_state(ui, "No contract open", "Select a contract on the left.");
         return None;
     };
-    let defined = |_: &str| true;
+    let pending = send.is_pending();
+    // With no environment selected nothing can be undefined, so every
+    // variable keeps the normal variable colour.
+    let no_env = send.env.is_none();
+    let names: std::collections::BTreeSet<String> = send.env_vars.keys().cloned().collect();
+    let defined = |name: &str| no_env || names.contains(name);
+    // COMMAND is Ctrl on Linux and Windows and Cmd on macOS.
+    if !pending && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)) {
+        action = Some(ContractsAction::Send);
+    }
 
     // Toolbar row: endpoint name on the left, edit and save icons on the right.
     ui.horizontal(|ui| {
@@ -146,7 +158,9 @@ pub(crate) fn central_body(
                 }))
                 .show(ui, |left| {
                     left.visuals_mut().widgets.noninteractive.bg_stroke = saved_stroke;
-                    method_url_row(left, model, *editing, &defined);
+                    if let Some(a) = method_url_row(left, model, *editing, &defined, pending) {
+                        action = Some(a);
+                    }
                     left.add_space(12.0);
                     // One scroll per pane (distinct id) so the left
                     // and right panes scroll independently.
@@ -174,7 +188,9 @@ pub(crate) fn central_body(
                     ..Default::default()
                 })
                 .show(ui, |ui| {
-                    if let Some(a) = response_pane(ui, model, resp_tab, resp_tab_view, *editing) {
+                    if let Some(a) =
+                        response_pane(ui, model, (resp_tab, resp_tab_view), send, *editing)
+                    {
                         action = Some(a);
                     }
                 });
@@ -182,22 +198,25 @@ pub(crate) fn central_body(
     action
 }
 
-/// The right pane: one header row with the `Response` and `Headers` tabs on
-/// the left and the response picker on the right, the selected response's
-/// code and title fields while editing, then the selected tab's body.
+/// The right pane: one header row with the Examples | Live switch and the
+/// `Response` and `Headers` tabs on the left, and on the right the response
+/// picker or, in Live, the reply's status, time and size. While editing the
+/// examples, the selected response's code and title fields follow. Then the
+/// selected tab's body: the documented example or the live reply.
 ///
 /// # Returns
 ///
-/// The action the response picker or the body-type dropdown asks for this
-/// frame.
+/// The action the switch, the response picker or the body-type dropdown asks
+/// for this frame.
 fn response_pane(
     ui: &mut egui::Ui,
     model: &mut apic_core::edit::EditModel,
-    resp_tab: &mut usize,
-    resp_tab_view: &mut RespTab,
+    (resp_tab, resp_tab_view): (&mut usize, &mut RespTab),
+    send: &mut SendState,
     editing: bool,
 ) -> Option<ContractsAction> {
     let mut action = None;
+    let live = send.show_live;
     // An endpoint is expected to document a response, so default to a 200 in
     // edit mode (its editor shows without "+ New example").
     if editing && model.responses.is_empty() {
@@ -206,29 +225,43 @@ fn response_pane(
     if *resp_tab >= model.responses.len() {
         *resp_tab = 0;
     }
-    let resp_headers = model
-        .responses
-        .get(*resp_tab)
-        .map_or(0, |r| r.headers.len());
+    let header_count = if live {
+        send.live_header_count()
+    } else {
+        model
+            .responses
+            .get(*resp_tab)
+            .map_or(0, |r| r.headers.len())
+    };
     ui.horizontal(|ui| {
+        action = live_switch(ui, live);
+        ui.separator();
         let mut idx = resp_tab_index(*resp_tab_view);
         tab_strip(
             ui,
             &mut idx,
             &[
                 Tab::new("Response"),
-                Tab::new("Headers").count(resp_headers),
+                Tab::new("Headers").count(header_count),
             ],
         );
         *resp_tab_view = resp_tab_at(idx);
+        if live {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                live_summary(ui, send);
+            });
+            return;
+        }
         if model.responses.is_empty() {
             return;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            action = response_picker(ui, model, resp_tab, editing);
+            if let Some(a) = response_picker(ui, model, resp_tab, editing) {
+                action = Some(a);
+            }
         });
     });
-    if editing && !model.responses.is_empty() {
+    if editing && !live && !model.responses.is_empty() {
         response_fields(ui, model, *resp_tab);
     }
     ui.add_space(8.0);
@@ -236,6 +269,10 @@ fn response_pane(
         .id_salt("right_pane_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            if live {
+                live_body(ui, send, *resp_tab_view);
+                return;
+            }
             if model.responses.is_empty() {
                 empty_state(ui, "No responses", "");
                 return;
@@ -279,6 +316,7 @@ fn resp_tab_at(idx: usize) -> RespTab {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::contracts::ui::send::{LiveBody, LiveReply};
     use apic_core::edit::EditModel;
 
     use crate::ui::theme::{BOTH_THEMES, run_in_theme};
@@ -356,6 +394,51 @@ mod tests {
                 classes.editing = true;
                 classes.resp_tab = 2;
                 central_body(ui, &mut classes, true);
+            });
+        }
+    }
+
+    #[test]
+    fn the_live_pane_renders_each_state_in_both_themes() {
+        for preference in BOTH_THEMES {
+            run_in_theme(preference, |ui| {
+                let reply = |body: LiveBody, truncated: bool| LiveReply {
+                    status: 404,
+                    reason: "Not Found".to_string(),
+                    millis: 12,
+                    size: 7,
+                    headers: vec![("content-type".to_string(), "application/json".to_string())],
+                    body,
+                    truncated,
+                };
+                let lives = [
+                    None,
+                    Some(Err("connection refused".to_string())),
+                    Some(Ok(reply(LiveBody::Json(r#"{"a":1}"#.to_string()), false))),
+                    Some(Ok(reply(LiveBody::Text("plain".to_string()), true))),
+                    Some(Ok(reply(LiveBody::Text(String::new()), false))),
+                    Some(Ok(reply(LiveBody::Binary(3), false))),
+                ];
+                for live in lives {
+                    for tab in [RespTab::Body, RespTab::Headers] {
+                        let mut state = ContractsState {
+                            model: Some(sample_model()),
+                            resp_tab_view: tab,
+                            ..Default::default()
+                        };
+                        state.send.show_live = true;
+                        state.send.live = live.clone();
+                        central_body(ui, &mut state, true);
+                    }
+                }
+                let (_tx, rx) = std::sync::mpsc::channel();
+                let mut pending = ContractsState {
+                    model: Some(sample_model()),
+                    ..Default::default()
+                };
+                pending.send.show_live = true;
+                pending.send.pending = Some(rx);
+                central_body(ui, &mut pending, true);
             });
         }
     }

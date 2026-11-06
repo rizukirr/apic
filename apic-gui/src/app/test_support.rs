@@ -243,6 +243,46 @@ pub(crate) fn settle_git(
     panic!("git job did not complete within {MAX_ITERS} polls");
 }
 
+/// Serves one HTTP request on 127.0.0.1 with the raw response `reply`.
+///
+/// # Returns
+///
+/// The base URL, `http://127.0.0.1:<port>`, and a channel that receives the
+/// raw request bytes once the response is written.
+pub(crate) fn serve_once(reply: &'static str) -> (String, std::sync::mpsc::Receiver<Vec<u8>>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener binds");
+    let addr = listener.local_addr().expect("listener has an address");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while let Ok(n) = stream.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&buf[..end]).to_ascii_lowercase();
+                let len = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("content-length:"))
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                if buf.len() >= end + 4 + len {
+                    break;
+                }
+            }
+        }
+        let _ = stream.write_all(reply.as_bytes());
+        let _ = tx.send(buf);
+    });
+    (format!("http://{addr}"), rx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

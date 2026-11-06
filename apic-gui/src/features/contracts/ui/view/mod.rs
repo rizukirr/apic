@@ -5,6 +5,7 @@
 mod central;
 mod dialogs;
 mod editor;
+mod live;
 mod sidebar;
 
 pub(crate) use self::central::central_body;

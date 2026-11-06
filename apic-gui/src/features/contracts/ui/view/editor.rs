@@ -449,14 +449,30 @@ pub(super) fn endpoint_title(ui: &mut egui::Ui, model: &mut EditModel, editing: 
     ui.add(egui::Label::new(job).truncate());
 }
 
-/// The `[ METHOD ] [ url................ ]` top row.
+/// The `[ METHOD ] [ url................ ] [ Send ]` top row. The button
+/// reads Cancel while a send is in flight.
+///
+/// # Arguments
+///
+/// * `ui` - the left pane
+/// * `model` - the open contract
+/// * `editing` - whether the method and URL are editable
+/// * `defined` - whether the selected environment defines a variable name
+/// * `pending` - whether a send is in flight
+///
+/// # Returns
+///
+/// [`ContractsAction::Send`] or [`ContractsAction::CancelSend`] when the
+/// button was clicked.
 pub(super) fn method_url_row(
     ui: &mut egui::Ui,
     model: &mut EditModel,
     editing: bool,
     defined: &dyn Fn(&str) -> bool,
-) {
+    pending: bool,
+) -> Option<ContractsAction> {
     let p = palette(ui.ctx());
+    let mut action = None;
     url_bar(ui, |ui| {
         let method = method_str(&model.method);
         if editing {
@@ -487,25 +503,46 @@ pub(super) fn method_url_row(
             method_badge(ui, &method);
         }
         ui.add_space(SPACE_MEDIUM);
-        let font = egui::TextStyle::Monospace.resolve(ui.style());
-        if editing {
-            let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-                let mut job = url_layout_job(buf.as_str(), p, font.clone(), defined);
-                job.wrap.max_width = wrap_width;
-                ui.fonts_mut(|f| f.layout_job(job))
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (label, color) = if pending {
+                ("Cancel", p.error)
+            } else {
+                ("Send", p.primary)
             };
-            ui.add(
-                egui::TextEdit::singleline(&mut model.url)
-                    .font(egui::TextStyle::Monospace)
-                    .frame(egui::Frame::NONE)
-                    .hint_text("https://host/path/{id}")
-                    .layouter(&mut layouter)
-                    .desired_width(f32::INFINITY),
-            );
-        } else {
-            ui.label(url_layout_job(&model.url, p, font, defined));
-        }
+            if text_button(ui, label, color) {
+                action = Some(if pending {
+                    ContractsAction::CancelSend
+                } else {
+                    ContractsAction::Send
+                });
+            }
+            // The URL fills the space left of the button.
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let font = egui::TextStyle::Monospace.resolve(ui.style());
+                if editing {
+                    let mut layouter =
+                        |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+                            let mut job = url_layout_job(buf.as_str(), p, font.clone(), defined);
+                            job.wrap.max_width = wrap_width;
+                            ui.fonts_mut(|f| f.layout_job(job))
+                        };
+                    ui.add(
+                        egui::TextEdit::singleline(&mut model.url)
+                            .font(egui::TextStyle::Monospace)
+                            .frame(egui::Frame::NONE)
+                            .hint_text("https://host/path/{id}")
+                            .layouter(&mut layouter)
+                            .desired_width(f32::INFINITY),
+                    );
+                } else {
+                    ui.add(
+                        egui::Label::new(url_layout_job(&model.url, p, font, defined)).truncate(),
+                    );
+                }
+            });
+        });
     });
+    action
 }
 
 /// Body of the QUERY PARAMS section. Uses the flat `{name, value, description}`
@@ -1301,7 +1338,8 @@ mod tests {
                 let mut resp = 0usize;
                 endpoint_title(ui, &mut m, true);
                 endpoint_title(ui, &mut m, false);
-                method_url_row(ui, &mut m, true, &|_: &str| true);
+                method_url_row(ui, &mut m, true, &|_: &str| true, false);
+                method_url_row(ui, &mut m, false, &|_: &str| false, true);
                 headers(ui, &mut m, true, &|_: &str| true);
                 headers(ui, &mut m, false, &|_: &str| true);
                 query_section(ui, &mut m, true, &|_: &str| true);
