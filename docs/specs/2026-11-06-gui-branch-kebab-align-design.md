@@ -1,7 +1,7 @@
 ---
 title: gui branch kebab align
 date: 2026-11-06
-status: draft
+status: approved
 ---
 
 # gui branch kebab align: Design
