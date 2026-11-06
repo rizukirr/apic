@@ -17,7 +17,7 @@
 - Modify: `apic-gui/src/features/git/ui/view/branches.rs` (`branch_menu`)
 - Modify: `apic-gui/src/features/git/ui/view/mod.rs` (tests module)
 
-- [ ] Step 1: In `view/mod.rs` tests module, after `kebab_menu_picks_a_pull_source_through_nested_menus`, add:
+- [x] Step 1: In `view/mod.rs` tests module, after `kebab_menu_picks_a_pull_source_through_nested_menus`, add:
 
 ```rust
     /// The ⋮ buttons line up in one column at the right edge of the
@@ -55,9 +55,9 @@
     }
 ```
 
-- [ ] Step 2: Run `cargo test -p apic-gui kebab_buttons_share_one_column` and confirm it fails (the ⋮ buttons start at different `x` today).
+- [x] Step 2: Run `cargo test -p apic-gui kebab_buttons_share_one_column` and confirm it fails (the ⋮ buttons start at different `x` today).
 
-- [ ] Step 3: In `branches.rs` `branch_menu`, inside the `ui.menu_button` closure and before `for name in &branches.all {`, add:
+- [x] Step 3: In `branches.rs` `branch_menu`, inside the `ui.menu_button` closure and before `for name in &branches.all {`, add:
 
 ```rust
         // Every name gets the widest name's width, so the ⋮ buttons that
@@ -88,7 +88,7 @@ Then replace the row's first line `let row = ui.selectable_label(Some(name.as_st
 
 If `ui.fonts_mut` does not exist in this egui version, use `ui.fonts` with the same closure and say so in concerns.
 
-- [ ] Step 4: Run `cargo fmt --all`.
-- [ ] Step 5: Run `cargo test -p apic-gui`.
-- [ ] Step 6: Run `cargo clippy --workspace --all-targets -- -D warnings`.
-- [ ] Step 7: Commit: `fix(gui): line up the branch ⋮ buttons in one column`.
+- [x] Step 4: Run `cargo fmt --all`.
+- [x] Step 5: Run `cargo test -p apic-gui`.
+- [x] Step 6: Run `cargo clippy --workspace --all-targets -- -D warnings`.
+- [x] Step 7: Commit: `fix(gui): line up the branch ⋮ buttons in one column`.
