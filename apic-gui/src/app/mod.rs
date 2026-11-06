@@ -529,10 +529,11 @@ impl App {
         if !self.git.status.find(&rel).is_some_and(|f| f.conflicted) {
             return;
         }
-        self.apply(
-            Action::Shell(ShellAction::SwitchView(SidebarView::Changes)),
-            ctx,
-        );
+        // Set directly rather than through `ShellAction::SwitchView`: that
+        // also starts a status refresh, and git runs one job at a time, so
+        // the diff fetch `Select` starts below would be refused. Status is
+        // already loaded, since it is what said this file is conflicted.
+        self.shell.sidebar_view = SidebarView::Changes;
         self.apply(
             Action::Git(GitAction::Select {
                 path: rel,
@@ -1726,5 +1727,33 @@ mod tests {
 
         assert_eq!(app.shell.central, CentralView::Git);
         assert_eq!(app.shell.sidebar_view, SidebarView::Changes);
+    }
+
+    #[test]
+    fn redirected_conflict_loads_its_diff() {
+        if !git_available() {
+            return;
+        }
+        let mut app = app_at(conflict_fixture());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        app.poll_git(&ctx);
+        settle(&mut app, &ctx);
+        let sample = app
+            .contracts
+            .entries
+            .iter()
+            .position(|e| e.path.ends_with("sample.json"))
+            .expect("sample.json is listed");
+
+        app.apply(Action::Contracts(ContractsAction::Load(sample)), &ctx);
+        settle(&mut app, &ctx);
+
+        let key = ("contracts/sample.json".to_string(), false);
+        assert_eq!(
+            app.git.diff.as_ref().map(|(k, _)| k.clone()),
+            Some(key),
+            "the redirect must fetch the selected file's diff"
+        );
     }
 }
