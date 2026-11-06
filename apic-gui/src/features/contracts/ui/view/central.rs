@@ -96,6 +96,7 @@ pub(crate) fn central_body(
         empty_state(ui, "No contract open", "Select a contract on the left.");
         return None;
     };
+    let defined = |_: &str| true;
 
     // Toolbar row: endpoint name on the left, edit and save icons on the right.
     ui.horizontal(|ui| {
@@ -145,7 +146,7 @@ pub(crate) fn central_body(
                 }))
                 .show(ui, |left| {
                     left.visuals_mut().widgets.noninteractive.bg_stroke = saved_stroke;
-                    method_url_row(left, model, *editing);
+                    method_url_row(left, model, *editing, &defined);
                     left.add_space(12.0);
                     // One scroll per pane (distinct id) so the left
                     // and right panes scroll independently.
@@ -154,13 +155,13 @@ pub(crate) fn central_body(
                         .auto_shrink([false, false])
                         .show(left, |ui| {
                             section_heading(ui, "Headers");
-                            headers(ui, model, *editing);
+                            headers(ui, model, *editing, &defined);
                             ui.add_space(16.0);
                             section_heading(ui, "Query");
-                            query_section(ui, model, *editing);
+                            query_section(ui, model, *editing, &defined);
                             ui.add_space(16.0);
                             section_heading(ui, "Request");
-                            if let Some(a) = request_body(ui, model, *editing) {
+                            if let Some(a) = request_body(ui, model, *editing, &defined) {
                                 action = Some(a);
                             }
                         });

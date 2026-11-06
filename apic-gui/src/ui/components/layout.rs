@@ -26,25 +26,45 @@ pub(crate) fn url_bar<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R
         .inner
 }
 
-/// Lays out `url` in `font`, with every `{{...}}` variable span in
-/// `syntax_number` and the rest in `on_surface`. A span runs from `{{` to the
-/// next `}}` inclusive, and an unclosed `{{` runs to the end.
-pub(crate) fn url_layout_job(url: &str, p: &Palette, font: egui::FontId) -> egui::text::LayoutJob {
+/// Lays out `text` in `font` with every variable reference found by
+/// [`apic_core::vars::tokens`] coloured: `$name`, `${name}`, `{{name}}` and
+/// `{name}`. A reference whose name `defined` accepts is drawn in
+/// `syntax_number`, one it rejects in `warning`, and the rest of the text in
+/// `on_surface`. Only the text itself is drawn, never a variable's value.
+///
+/// # Arguments
+///
+/// * `text` - the URL or value to lay out
+/// * `p` - the palette to colour from
+/// * `font` - the font of every section
+/// * `defined` - whether the selected environment defines a name
+///
+/// # Returns
+///
+/// The coloured layout job.
+pub(crate) fn url_layout_job(
+    text: &str,
+    p: &Palette,
+    font: egui::FontId,
+    defined: &dyn Fn(&str) -> bool,
+) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     let format = |color| egui::TextFormat::simple(font.clone(), color);
-    let mut rest = url;
-    while !rest.is_empty() {
-        let Some(open) = rest.find("{{") else {
-            job.append(rest, 0.0, format(p.on_surface));
-            break;
-        };
-        if open > 0 {
-            job.append(&rest[..open], 0.0, format(p.on_surface));
+    let mut at = 0;
+    for token in apic_core::vars::tokens(text) {
+        if token.range.start > at {
+            job.append(&text[at..token.range.start], 0.0, format(p.on_surface));
         }
-        let var = &rest[open..];
-        let end = var.find("}}").map_or(var.len(), |close| close + 2);
-        job.append(&var[..end], 0.0, format(p.syntax_number));
-        rest = &var[end..];
+        let color = if defined(&token.name) {
+            p.syntax_number
+        } else {
+            p.warning
+        };
+        job.append(&text[token.range.clone()], 0.0, format(color));
+        at = token.range.end;
+    }
+    if at < text.len() {
+        job.append(&text[at..], 0.0, format(p.on_surface));
     }
     job
 }
@@ -66,24 +86,48 @@ pub(crate) fn empty_state(ui: &mut egui::Ui, title: &str, hint: &str) {
 mod tests {
     use super::*;
 
+    /// The colour of the section covering `needle`, the first match in the
+    /// job's text.
+    fn color_of(job: &egui::text::LayoutJob, needle: &str) -> egui::Color32 {
+        let start = job.text.find(needle).expect("needle is in the job text");
+        let section = job
+            .sections
+            .iter()
+            .find(|s| s.byte_range.contains(&egui::text::ByteIndex(start)))
+            .expect("a section covers the needle");
+        assert!(
+            section.byte_range.end >= egui::text::ByteIndex(start + needle.len()),
+            "{needle}"
+        );
+        section.format.color
+    }
+
     #[test]
-    fn url_layout_job_colours_variables_apart_from_the_path() {
+    fn every_variable_form_is_coloured_when_defined() {
         let p = &crate::ui::theme::TOKYO_NIGHT_STORM;
-        let job = url_layout_job("{{baseUrl}}/auth/login", p, egui::FontId::monospace(12.0));
-        let color_of = |needle: &str| {
-            let start = job.text.find(needle).expect("needle is in the job text");
-            let section = job
-                .sections
-                .iter()
-                .find(|s| s.byte_range.contains(&egui::text::ByteIndex(start)))
-                .expect("a section covers the needle");
-            assert!(
-                section.byte_range.end >= egui::text::ByteIndex(start + needle.len()),
-                "{needle}"
-            );
-            section.format.color
-        };
-        assert_eq!(color_of("{{baseUrl}}"), p.syntax_number);
-        assert_eq!(color_of("/auth/login"), p.on_surface);
+        let job = url_layout_job(
+            "$a/${b}/{{c}}/{d}/auth/login",
+            p,
+            egui::FontId::monospace(12.0),
+            &|_: &str| true,
+        );
+        for needle in ["$a", "${b}", "{{c}}", "{d}"] {
+            assert_eq!(color_of(&job, needle), p.syntax_number, "{needle}");
+        }
+        assert_eq!(color_of(&job, "/auth/login"), p.on_surface);
+    }
+
+    #[test]
+    fn an_undefined_name_is_drawn_in_the_warning_colour() {
+        let p = &crate::ui::theme::TOKYO_NIGHT_STORM;
+        let job = url_layout_job(
+            "{{baseUrl}}/u/{id}",
+            p,
+            egui::FontId::monospace(12.0),
+            &|name: &str| name == "baseUrl",
+        );
+        assert_eq!(color_of(&job, "{{baseUrl}}"), p.syntax_number);
+        assert_eq!(color_of(&job, "{id}"), p.warning);
+        assert_eq!(color_of(&job, "/u/"), p.on_surface);
     }
 }
