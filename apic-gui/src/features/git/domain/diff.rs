@@ -381,8 +381,6 @@ pub(crate) fn strip_diff_header(raw: &str) -> &str {
 }
 
 /// Which side of a unified diff one line belongs to.
-// vibekit: used by the diff job and view from the next task
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LineKind {
     Context,
@@ -391,8 +389,6 @@ pub(crate) enum LineKind {
 }
 
 /// One line of the file in an inline diff.
-// vibekit: used by the diff job and view from the next task
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DiffLine {
     pub(crate) kind: LineKind,
@@ -410,8 +406,6 @@ pub(crate) struct DiffLine {
 }
 
 /// One row of an inline diff, built by [`parse_unified`].
-// vibekit: used by the diff job and view from the next task
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DiffRow {
     /// A whole `@@ ... @@` hunk header line.
@@ -427,8 +421,6 @@ pub(crate) enum DiffRow {
 /// from 1. Any other body with no hunk, such as `Binary files ... differ`,
 /// becomes unnumbered context with the `diff --git`, `index`, `---` and
 /// `+++` lines dropped.
-// vibekit: used by the diff job and view from the next task
-#[allow(dead_code)]
 pub(crate) fn parse_unified(raw: &str) -> Vec<DiffRow> {
     let body = strip_diff_header(raw);
     let has_hunk = body.lines().any(|line| line.starts_with("@@"));
@@ -478,8 +470,6 @@ pub(crate) fn parse_unified(raw: &str) -> Vec<DiffRow> {
 }
 
 /// Builds one `DiffRow::Line` with no emphasis.
-// vibekit: used by the diff job and view from the next task
-#[allow(dead_code)]
 fn line_row(kind: LineKind, old_no: Option<u32>, new_no: Option<u32>, text: &str) -> DiffRow {
     DiffRow::Line(DiffLine {
         kind,
@@ -491,8 +481,6 @@ fn line_row(kind: LineKind, old_no: Option<u32>, new_no: Option<u32>, text: &str
 }
 
 /// Whether `line` is part of git's per-file preamble rather than content.
-// vibekit: used by the diff job and view from the next task
-#[allow(dead_code)]
 fn is_file_header(line: &str) -> bool {
     ["diff --git ", "index ", "--- ", "+++ "]
         .iter()
@@ -501,8 +489,6 @@ fn is_file_header(line: &str) -> bool {
 
 /// The old and new start lines from a `@@ -a,b +c,d @@` header, 1 for any
 /// part that does not parse.
-// vibekit: used by the diff job and view from the next task
-#[allow(dead_code)]
 fn hunk_starts(header: &str) -> (u32, u32) {
     let mut parts = header.split_whitespace().skip(1);
     let mut start = |sign: char| {
@@ -519,8 +505,6 @@ fn hunk_starts(header: &str) -> (u32, u32) {
 }
 
 /// The kind of the row at `i`, `None` for a hunk header or past the end.
-// vibekit: used by the diff job and view from the next task
-#[allow(dead_code)]
 fn kind_at(rows: &[DiffRow], i: usize) -> Option<LineKind> {
     match rows.get(i) {
         Some(DiffRow::Line(line)) => Some(line.kind),
@@ -530,8 +514,6 @@ fn kind_at(rows: &[DiffRow], i: usize) -> Option<LineKind> {
 
 /// Sets `emphasis` on each removed line paired by position with an added
 /// line in the run directly after it.
-// vibekit: used by the diff job and view from the next task
-#[allow(dead_code)]
 fn emphasize(rows: &mut [DiffRow]) {
     let mut i = 0;
     while i < rows.len() {
@@ -566,8 +548,6 @@ fn emphasize(rows: &mut [DiffRow]) {
 /// The byte range of each line left after trimming the prefix and suffix
 /// the two share, compared by `char`. A side whose range is empty or the
 /// whole line gets `None`.
-// vibekit: used by the diff job and view from the next task
-#[allow(dead_code)]
 fn changed_spans(old: &str, new: &str) -> (Option<Range<usize>>, Option<Range<usize>>) {
     let prefix: usize = old
         .chars()

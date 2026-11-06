@@ -4,8 +4,9 @@
 use eframe::egui;
 use egui::RichText;
 
-use super::diff::raw_diff_view;
+use super::diff::inline_diff_view;
 use crate::features::git::domain::conflict::{self, Choice, Segment};
+use crate::features::git::domain::diff::parse_unified;
 use crate::features::git::ui::state::{GitAction, GitState, ResolveState};
 use crate::ui::components::text_button;
 use crate::ui::theme::*;
@@ -35,7 +36,7 @@ pub(super) fn conflict_resolver(
             ui.label(RichText::new(side).color(p.on_surface_variant));
         });
         ui.separator();
-        raw_diff_view(ui, raw);
+        inline_diff_view(ui, &parse_unified(raw));
         ui.add_space(SPACE_SMALL);
         ui.label(
             RichText::new(

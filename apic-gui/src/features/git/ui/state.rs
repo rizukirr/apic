@@ -132,10 +132,11 @@ pub(crate) struct GitState {
     /// first fetch for the current selection is still in flight.
     pub(crate) diff: Option<((String, bool), DiffData)>,
 
-    /// Whether the raw git diff is shown instead of the default field list.
-    /// Persists across selections: the panel keeps showing diffs until the
-    /// box is unchecked, rather than snapping back on every file clicked.
-    pub(crate) show_raw_diff: bool,
+    /// Whether a changed contract shows the field list instead of the
+    /// default inline diff. Persists across selections: the panel keeps
+    /// showing field lists until the box is unchecked, rather than snapping
+    /// back on every file clicked.
+    pub(crate) show_fields: bool,
 
     /// The commit message box, bound to the commit row's text field. Cleared
     /// after a successful commit.
@@ -748,7 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn selecting_another_file_keeps_the_raw_diff_toggle() {
+    fn selecting_another_file_keeps_the_field_list_toggle() {
         if !git_available() {
             return;
         }
@@ -756,7 +757,7 @@ mod tests {
         let (mut git, paths) = git_at(&root);
         let ctx = egui::Context::default();
 
-        git.show_raw_diff = true;
+        git.show_fields = true;
         git.handle(
             GitAction::Select {
                 path: "contracts/sample.json".to_string(),
@@ -770,7 +771,7 @@ mod tests {
         // The toggle is a panel mode now, not a per-file one. This is the
         // deleted reset in `apply` pinned, and it lives here rather than in
         // the view because the flag's lifetime is a view-model concern.
-        assert!(git.show_raw_diff);
+        assert!(git.show_fields);
     }
 
     /// Drives a commit through the dispatch and confirms it against the
