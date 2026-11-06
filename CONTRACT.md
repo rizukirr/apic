@@ -175,7 +175,7 @@ Strings in the URL, query, headers and body can hold variables. `$name`, `${name
 
 Values come from an environment and from `--var` flags, and the flags win. An environment is a TOML file of `name = "value"` pairs. `.apic/env/<name>.toml` is shared with the team. `.apic/env/<name>.local.toml` holds your own values and overrides the shared file. Local files are gitignored through `.apic/.gitignore`.
 
-In a multipart body, a file part sends the file at its `value`, resolved relative to the project root.
+In a multipart body, a file part sends the file at its `value`, resolved relative to the project root. [SENDING.md](SENDING.md) has the full guide.
 
 ## Configuration
 

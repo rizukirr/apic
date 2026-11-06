@@ -130,7 +130,7 @@ JSON example payloads:
 ```
 
 ## `apic send -f <query> [--env <name>] [--var <name=value>]... [-i] [--timeout <secs>]`
-Resolves `<query>` like `read`, fills the variables and sends the contract's request. The response body goes to stdout, pretty-printed and coloured on a terminal and raw when piped. The status summary and warnings about undefined variables go to stderr. Up to 5 redirects are followed. The exit code is 0 for any HTTP reply, including 4xx and 5xx, and 1 for a refusal or a network error.
+Resolves `<query>` like `read`, fills the variables and sends the contract's request. The response body goes to stdout, pretty-printed and coloured on a terminal and raw when piped. The status summary and warnings about undefined variables go to stderr. Up to 5 redirects are followed. The exit code is 0 for any HTTP reply, including 4xx and 5xx, and 1 for a refusal or a network error. Variables, environments and what gets sent are covered in [SENDING.md](SENDING.md).
 
 - `--env <name>` takes values from `.apic/env/<name>.toml`, overlaid by `<name>.local.toml`.
 - `--var <name=value>` sets a variable and overrides the environment. Repeatable.
