@@ -12,11 +12,14 @@ use crate::features::git::domain::status::{Branches, Status, parse_status};
 /// A spawn failure and a non-zero exit are distinguished: the first means git
 /// is not installed, the second means git ran and refused, and the two have
 /// different fixes.
+///
+/// GIT_TERMINAL_PROMPT=0 makes a command that needs credentials fail instead of waiting on a terminal the GUI does not have.
 fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(root)
         .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
         .output()
         .map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => "git not found on PATH".to_string(),
@@ -24,6 +27,17 @@ fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         })?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let err = if err.is_empty() {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .rev()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .unwrap_or_default()
+                .to_string()
+        } else {
+            err
+        };
         return Err(if err.is_empty() {
             format!("git {} failed", args.join(" "))
         } else {
@@ -175,7 +189,11 @@ pub(crate) fn branches(root: &Path) -> Result<Branches, String> {
         Some(current)
     };
 
-    Ok(Branches { current, all })
+    Ok(Branches {
+        current,
+        all,
+        remotes: remote_branches(root)?,
+    })
 }
 
 /// Checks out an existing branch. `git checkout`, not `git switch`, which
@@ -195,6 +213,35 @@ pub(crate) fn create_branch(root: &Path, name: &str) -> Result<(), String> {
 /// place, the panel never forces this past the refusal.
 pub(crate) fn delete_branch(root: &Path, name: &str) -> Result<(), String> {
     run(root, &["branch", "-d", name]).map(|_| ())
+}
+
+/// Remote-tracking branches as `remote/branch`, such as `origin/main`. The
+/// symbolic `refs/remotes/<remote>/HEAD` is left out: git prints it as the
+/// bare remote name, or as `<remote>/HEAD` on older versions.
+pub(crate) fn remote_branches(root: &Path) -> Result<Vec<String>, String> {
+    let out = run(
+        root,
+        &["for-each-ref", "--format=%(refname:short)", "refs/remotes/"],
+    )?;
+    Ok(String::from_utf8_lossy(&out)
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.contains('/') && !l.ends_with("/HEAD"))
+        .map(str::to_string)
+        .collect())
+}
+
+/// Fetches every configured remote.
+pub(crate) fn fetch_all(root: &Path) -> Result<(), String> {
+    run(root, &["fetch", "--all"]).map(|_| ())
+}
+
+/// Merges `source`, a local branch or a `remote/branch`, into the checked-out
+/// branch. `--no-edit` keeps git from opening an editor for a merge commit. A
+/// conflict exits non-zero and leaves the repository mid-merge for the
+/// resolver.
+pub(crate) fn merge(root: &Path, source: &str) -> Result<(), String> {
+    run(root, &["merge", "--no-edit", source]).map(|_| ())
 }
 
 #[cfg(test)]
@@ -461,5 +508,124 @@ mod tests {
         assert!(run(&dir, &["add", "--", "file.txt"]).is_ok());
         commit(&dir, "local only", false).unwrap();
         assert!(!head_is_on_upstream(&dir));
+    }
+
+    /// Commits `content` to `file.txt` on the checked-out branch.
+    fn commit_file(dir: &Path, content: &str, message: &str) {
+        fs::write(dir.join("file.txt"), content).unwrap();
+        assert!(run(dir, &["add", "--", "file.txt"]).is_ok());
+        assert!(commit(dir, message, false).is_ok());
+    }
+
+    #[test]
+    fn merge_fast_forwards_a_local_branch_into_the_current_one() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        let base = branches(&dir).unwrap().current.unwrap();
+        create_branch(&dir, "feature").unwrap();
+        switch_branch(&dir, "feature").unwrap();
+        commit_file(&dir, "feature\n", "feature work");
+        switch_branch(&dir, &base).unwrap();
+
+        merge(&dir, "feature").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.join("file.txt")).unwrap(),
+            "feature\n"
+        );
+    }
+
+    #[test]
+    fn checkout_then_merge_lands_on_the_target() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        let base = branches(&dir).unwrap().current.unwrap();
+        create_branch(&dir, "target").unwrap();
+        commit_file(&dir, "base moved\n", "base work");
+
+        switch_branch(&dir, "target").unwrap();
+        merge(&dir, &base).unwrap();
+
+        assert_eq!(branches(&dir).unwrap().current.as_deref(), Some("target"));
+        assert_eq!(
+            fs::read_to_string(dir.join("file.txt")).unwrap(),
+            "base moved\n"
+        );
+    }
+
+    #[test]
+    fn checkout_blocked_by_uncommitted_changes_is_refused() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        let base = branches(&dir).unwrap().current.unwrap();
+        create_branch(&dir, "other").unwrap();
+        switch_branch(&dir, "other").unwrap();
+        commit_file(&dir, "other\n", "other work");
+        switch_branch(&dir, &base).unwrap();
+        fs::write(dir.join("file.txt"), "uncommitted\n").unwrap();
+
+        assert!(switch_branch(&dir, "other").is_err());
+        assert_eq!(branches(&dir).unwrap().current, Some(base));
+    }
+
+    #[test]
+    fn conflicting_merge_fails_with_gits_message_and_leaves_the_conflict() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        let base = branches(&dir).unwrap().current.unwrap();
+        create_branch(&dir, "theirs").unwrap();
+        commit_file(&dir, "ours\n", "ours");
+        switch_branch(&dir, "theirs").unwrap();
+        commit_file(&dir, "theirs\n", "theirs");
+        switch_branch(&dir, &base).unwrap();
+
+        let err = merge(&dir, "theirs").unwrap_err();
+
+        assert!(err.to_lowercase().contains("conflict"), "got: {err}");
+        let st = status(&dir, &[]).unwrap();
+        assert!(st.find("file.txt").is_some());
+    }
+
+    #[test]
+    fn remote_branches_lists_origin_branches_without_head() {
+        if git_missing() {
+            return;
+        }
+        let src = tempdir();
+        init_repo(&src);
+        let remote = tempdir();
+        assert!(run(&remote, &["init", "--bare"]).is_ok());
+        let remote_path = remote.to_string_lossy().into_owned();
+        assert!(run(&src, &["remote", "add", "origin", &remote_path]).is_ok());
+        assert!(run(&src, &["push", "origin", "HEAD"]).is_ok());
+        let base = branches(&src).unwrap().current.unwrap();
+        let clone = tempdir();
+        assert!(run(&clone, &["clone", &remote_path, "."]).is_ok());
+
+        let remotes = remote_branches(&clone).unwrap();
+
+        assert!(
+            remotes.contains(&format!("origin/{base}")),
+            "got: {remotes:?}"
+        );
+        assert!(
+            remotes
+                .iter()
+                .all(|r| r.contains('/') && !r.ends_with("/HEAD")),
+            "got: {remotes:?}"
+        );
+        assert_eq!(branches(&clone).unwrap().remotes, remotes);
     }
 }
