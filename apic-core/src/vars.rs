@@ -149,6 +149,76 @@ pub fn path_params(url: &str) -> Vec<String> {
     names
 }
 
+/// One variable reference found by [`tokens`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Token {
+    /// Byte range of the whole reference in the text, delimiters included.
+    pub range: std::ops::Range<usize>,
+    /// The name the reference points at.
+    pub name: String,
+}
+
+/// Finds every variable reference in `text`, in order: `$name`, `${name}`,
+/// `{{name}}` and `{name}` path params. `$$` is an escaped dollar, not a
+/// reference. A `{{` that does not hold exactly one name is not a reference,
+/// and neither of its two braces starts a path param.
+///
+/// # Arguments
+///
+/// * `text` - a URL or a value, as written in the contract
+///
+/// # Returns
+///
+/// Each reference's byte range and name. A highlighter colours the ranges,
+/// so values are never needed.
+///
+/// # Examples
+///
+/// ```
+/// use apic_core::vars::tokens;
+/// let found = tokens("$host/u/{id}?k={{ key }}&p=$$5");
+/// let names: Vec<&str> = found.iter().map(|t| t.name.as_str()).collect();
+/// assert_eq!(names, ["host", "id", "key"]);
+/// assert_eq!(found[1].range, 8..12);
+/// ```
+pub fn tokens(text: &str) -> Vec<Token> {
+    let mut found = Vec::new();
+    let mut at = 0;
+    while let Some(i) = text[at..].find(['$', '{']) {
+        let start = at + i;
+        let tail = &text[start..];
+        let len = match token(tail) {
+            Some((len, None)) => len,
+            Some((len, Some(name))) => {
+                found.push(Token {
+                    range: start..start + len,
+                    name: name.to_string(),
+                });
+                len
+            }
+            None if tail.starts_with("{{") => 2,
+            None => match tail.strip_prefix('{') {
+                Some(body) => {
+                    let n = name_len(body);
+                    if n > 0 && body[n..].starts_with('}') {
+                        found.push(Token {
+                            range: start..start + n + 2,
+                            name: body[..n].to_string(),
+                        });
+                        n + 2
+                    } else {
+                        1
+                    }
+                }
+                // `$` and `{` are one byte each.
+                None => 1,
+            },
+        };
+        at = start + len;
+    }
+    found
+}
+
 /// Rewrites every `{{name}}` in `text` to `$name`, or to `${name}` when a name
 /// character follows. Returns the new text and how many were rewritten.
 pub fn convert_braces(text: &str) -> (String, usize) {
@@ -232,5 +302,36 @@ mod tests {
         let (out, n) = convert_braces("{{baseUrl}}/a {{ tok }}x {{not a name}} {x}");
         assert_eq!(out, "$baseUrl/a ${tok}x {{not a name}} {x}");
         assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn tokens_finds_every_form_with_its_range() {
+        let text = "$a ${b} {{ c }} {d}";
+        let pairs: Vec<(&str, String)> = tokens(text)
+            .into_iter()
+            .map(|t| (&text[t.range], t.name))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("$a", "a".to_string()),
+                ("${b}", "b".to_string()),
+                ("{{ c }}", "c".to_string()),
+                ("{d}", "d".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn tokens_skips_escapes_and_non_names() {
+        assert!(tokens("$$a costs $5, ${ a}, {{a b}}, {1}, { x}").is_empty());
+    }
+
+    #[test]
+    fn tokens_names_agree_with_substitute() {
+        let text = "$host/u/{id}/{{ tok }}?q=${q}&p={pid}";
+        let names: Vec<String> = tokens(text).into_iter().map(|t| t.name).collect();
+        assert_eq!(names, ["host", "id", "tok", "q", "pid"]);
+        assert_eq!(substitute(text, &Vars::new()).1, ["host", "tok", "q"]);
     }
 }

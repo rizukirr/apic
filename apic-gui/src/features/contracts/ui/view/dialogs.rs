@@ -1,5 +1,5 @@
 //! The contracts modals: new template, new request, new example, delete
-//! confirmation, unsaved changes and the body-type switch.
+//! confirmation, unsaved changes, the body-type switch and the path params.
 
 use eframe::egui;
 use egui::RichText;
@@ -19,8 +19,12 @@ pub(crate) const FOCUS_NEW_TEMPLATE: &str = "apic.focus.new_template";
 // field, so the focus lands only on the frame the popup opens.
 const NEW_EXAMPLE_FOCUSED: &str = "apic.new_example.focused";
 
+// egui temp-data key set once the path-param popup has focused its first
+// field, so the focus lands only on the frame the popup opens.
+const PARAMS_FOCUSED: &str = "apic.path_params.focused";
+
 /// Renders whichever of the new-template, new-request, new-example, delete,
-/// unsaved-changes and body-switch dialogs is open.
+/// unsaved-changes, body-switch and path-param dialogs is open.
 ///
 /// # Returns
 ///
@@ -32,12 +36,14 @@ pub(crate) fn dialogs(ctx: &egui::Context, state: &mut ContractsState) -> Option
     let delete = delete_dialog(ctx, state);
     let unsaved = unsaved_dialog(ctx, state);
     let body_switch = body_switch_dialog(ctx, state);
+    let params = params_dialog(ctx, state);
     template
         .or(request)
         .or(example)
         .or(delete)
         .or(unsaved)
         .or(body_switch)
+        .or(params)
 }
 
 /// Renders the "new template" dialog when open, and returns what was chosen.
@@ -313,6 +319,67 @@ fn body_switch_dialog(ctx: &egui::Context, state: &ContractsState) -> Option<Con
     }
 }
 
+/// Renders the path-param popup while a send waits for values, and returns
+/// what was chosen. Send stays disabled while any value is blank.
+fn params_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<ContractsAction> {
+    let focused_id = egui::Id::new(PARAMS_FOCUSED);
+    let Some(rows) = state.send.prompt.as_mut() else {
+        ctx.data_mut(|d| d.remove::<bool>(focused_id));
+        return None;
+    };
+    let p = palette(ctx);
+    let ready = rows.iter().all(|(_, value)| !value.trim().is_empty());
+    let mut enter = false;
+    let outcome = dialog(
+        ctx,
+        "path_params_modal",
+        "Path parameters",
+        |ui| {
+            ui.label(
+                RichText::new("The URL needs a value for each of these.")
+                    .color(p.on_surface_variant),
+            );
+            ui.add_space(SPACE_SMALL);
+            for (i, (name, value)) in rows.iter_mut().enumerate() {
+                let resp = ui
+                    .horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("{{{name}}}"))
+                                .color(p.syntax_number)
+                                .monospace(),
+                        );
+                        bordered_input(ui, value, f32::INFINITY, "")
+                    })
+                    .inner;
+                // Drop the caret into the first field the frame the popup opens.
+                if i == 0 && !ui.data(|d| d.get_temp::<bool>(focused_id).unwrap_or(false)) {
+                    resp.request_focus();
+                    ui.data_mut(|d| d.insert_temp(focused_id, true));
+                }
+                // Submit on Enter in any field, same as clicking Send.
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    enter = true;
+                }
+            }
+        },
+        &[
+            DialogButton::new("Cancel", ButtonKind::Secondary),
+            DialogButton {
+                label: "Send",
+                kind: ButtonKind::Primary,
+                enabled: ready,
+            },
+        ],
+    );
+    if ready && (enter || outcome.clicked == Some(1)) {
+        Some(ContractsAction::SubmitParams)
+    } else if outcome.clicked == Some(0) || outcome.closed {
+        Some(ContractsAction::CancelDialog)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +435,22 @@ mod tests {
                 };
                 assert!(dialogs(&ctx, &mut state).is_none());
                 assert_eq!(state.pending_discard, Some(Guarded::CloseWindow));
+            });
+        }
+    }
+
+    #[test]
+    fn path_params_popup_renders_in_both_themes() {
+        for preference in BOTH_THEMES {
+            run_in_theme(preference, |ui| {
+                let ctx = ui.ctx().clone();
+                let mut state = ContractsState::default();
+                state.send.prompt = Some(vec![
+                    ("id".to_string(), String::new()),
+                    ("pid".to_string(), "7".to_string()),
+                ]);
+                assert!(dialogs(&ctx, &mut state).is_none());
+                assert!(state.send.prompt.is_some());
             });
         }
     }

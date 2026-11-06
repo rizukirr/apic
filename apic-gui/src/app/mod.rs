@@ -20,7 +20,7 @@ use crate::features::contracts::ui::state::{
     ContractsAction, ContractsEvent, ContractsPaths, ContractsState, Guarded,
 };
 use crate::features::contracts::ui::view::{
-    FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, header_actions, sidebar_body,
+    FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, env_menu, header_actions, sidebar_body,
     templates_body,
 };
 use crate::features::git::ui::state::{GitAction, GitEvent, GitState};
@@ -109,6 +109,7 @@ impl App {
             app.project.project_root = Some(root);
         }
         app.reload_project();
+        app.restore_env();
         let autoedit = std::env::var("APIC_AUTOEDIT").ok().and_then(|sub| {
             app.contracts
                 .entries
@@ -201,9 +202,30 @@ impl App {
         self.apply_contracts_events(events, None);
     }
 
-    /// Top header: sidebar toggle, the project dropdown (new, open, import) and
-    /// the branch dropdown and the theme toggle. Returns an action when one of
-    /// those is chosen.
+    /// Remembers `name` as the open project's environment, or forgets the
+    /// project's choice for `None`. No open project remembers nothing.
+    fn remember_env(&self, name: Option<String>) {
+        let Some(root) = self.project.project_root.clone() else {
+            return;
+        };
+        self.update_settings(|s| s.remember_env(root, name));
+    }
+
+    /// Restores the open project's saved environment. The saved name is
+    /// untrusted, so it is kept only when `.apic/env` still lists it, and no
+    /// environment is selected otherwise.
+    fn restore_env(&mut self) {
+        let Some(apic_dir) = self.project.apic_dir.clone() else {
+            return;
+        };
+        let saved = match (&self.project.project_root, &self.settings_path) {
+            (Some(root), Some(path)) => Settings::load_from(path).env_of(root).map(str::to_string),
+            _ => None,
+        };
+        self.contracts.send.restore_env(saved.as_deref(), &apic_dir);
+    }
+
+    /// Top header: sidebar toggle, the project dropdown (new, open, import), the branch dropdown, the environment dropdown and the theme toggle. Returns an action when one of those is chosen.
     fn top_bar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         let p = palette(ui.ctx());
         let mut action = None;
@@ -246,6 +268,11 @@ impl App {
                             && let Some(a) = view::branch_menu(ui, &mut self.git)
                         {
                             action = Some(Action::Git(a));
+                        }
+                        if let Some(apic_dir) = self.project.apic_dir.as_deref()
+                            && let Some(a) = env_menu(ui, &mut self.contracts, apic_dir)
+                        {
+                            action = Some(Action::Contracts(a));
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let (next, icon, hover) = theme_toggle(ui.ctx().theme());
@@ -485,6 +512,7 @@ impl App {
                 ContractsEvent::Saved => self.git.request_refresh(),
                 ContractsEvent::ShowCentral => self.shell.central = CentralView::Contracts,
                 ContractsEvent::Opened(path) => self.remember_open_file(&path),
+                ContractsEvent::EnvChosen(name) => self.remember_env(name),
                 ContractsEvent::Continue(g) => {
                     if let Some(ctx) = ctx {
                         self.continue_guarded(g, ctx);
@@ -591,6 +619,7 @@ impl App {
                 ProjectEvent::Opened(folder) => {
                     self.contracts.close();
                     self.reload_project();
+                    self.restore_env();
                     self.update_settings(|s| s.last_project = Some(folder));
                     self.restore_last_file();
                 }
@@ -683,6 +712,7 @@ impl eframe::App for App {
         let events = self.project.poll(&ctx);
         self.apply_project_events(events);
         self.poll_git(&ctx);
+        self.contracts.send.poll(&ctx);
         let top = self.top_bar(ui);
         self.bottom_bar(ui);
         let side = self.sidebar(ui);
@@ -1439,5 +1469,73 @@ mod tests {
         );
         assert!(app.contracts.model.is_none());
         assert!(app.contracts.path.is_none());
+    }
+
+    /// An app on a project whose `.apic/env` holds `dev`, with `saved`
+    /// remembered as its environment, after the project loads and the
+    /// environment is restored.
+    fn app_with_saved_env(saved: &str) -> App {
+        let root = tempdir();
+        let env_dir = root.join(".apic").join("env");
+        std::fs::create_dir_all(&env_dir).expect("env dir creates");
+        std::fs::write(env_dir.join("dev.toml"), "base = \"http://127.0.0.1:1\"\n")
+            .expect("env file writes");
+        let mut app = app_at(root.clone());
+        let settings_path = app
+            .settings_path
+            .clone()
+            .expect("test app has a settings path");
+        Settings::update_at(&settings_path, |s| {
+            s.remember_env(root, Some(saved.to_string()))
+        });
+        app.reload_project();
+        app.restore_env();
+        app
+    }
+
+    #[test]
+    fn a_saved_env_that_still_exists_is_restored() {
+        let app = app_with_saved_env("dev");
+        assert_eq!(app.contracts.send.env.as_deref(), Some("dev"));
+        assert!(app.contracts.send.env_vars.contains_key("base"));
+    }
+
+    #[test]
+    fn a_saved_env_that_no_longer_exists_restores_as_none() {
+        let app = app_with_saved_env("gone");
+        assert_eq!(app.contracts.send.env, None);
+    }
+
+    #[test]
+    fn choosing_an_env_saves_it_for_the_project() {
+        let mut app = app_with_saved_env("dev");
+        let ctx = egui::Context::default();
+        let root = app.project.project_root.clone().expect("project is open");
+        let settings_path = app
+            .settings_path
+            .clone()
+            .expect("test app has a settings path");
+
+        app.apply(Action::Contracts(ContractsAction::ChooseEnv(None)), &ctx);
+        assert_eq!(Settings::load_from(&settings_path).env_of(&root), None);
+
+        app.apply(
+            Action::Contracts(ContractsAction::ChooseEnv(Some("dev".to_string()))),
+            &ctx,
+        );
+        assert_eq!(
+            Settings::load_from(&settings_path).env_of(&root),
+            Some("dev")
+        );
+    }
+
+    #[test]
+    fn top_bar_renders_the_env_menu_in_both_themes() {
+        for preference in crate::ui::theme::BOTH_THEMES {
+            let mut app = app_with_saved_env("dev");
+            crate::ui::theme::run_in_theme(preference, |ui| {
+                let _ = app.top_bar(ui);
+            });
+        }
     }
 }

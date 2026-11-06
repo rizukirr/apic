@@ -280,19 +280,19 @@ fn finish_ghost(ui: &egui::Ui, model: &mut EditModel, table: RowTable, mut texts
 }
 
 /// An editable text cell of `table`'s `column`, bound to `buf`. Value cells
-/// colour `{{var}}` spans (monospace for headers, body font for query
+/// colour their variable references by `defined` (monospace for headers, body font for query
 /// values). For a real row (`row` is `Some`) a pending focus for this cell is
 /// claimed and the caret put at the end of the text; the add row passes `None`.
 fn edit_cell(
     ui: &mut egui::Ui,
     table: RowTable,
-    row: Option<usize>,
-    column: RowColumn,
+    (row, column): (Option<usize>, RowColumn),
     buf: &mut String,
+    defined: &dyn Fn(&str) -> bool,
 ) {
     let hint = column.hint();
     let resp = match column {
-        RowColumn::Value => tcell_edit_vars(ui, buf, hint, table.monospace_values()),
+        RowColumn::Value => tcell_edit_vars(ui, buf, hint, table.monospace_values(), defined),
         RowColumn::Key | RowColumn::Name | RowColumn::ContentType | RowColumn::Description => {
             tcell_edit(ui, buf, hint)
         }
@@ -316,8 +316,15 @@ fn edit_cell(
 }
 
 /// A read-only text cell of `table`'s `column`: keys in `info`, values with
-/// their `{{var}}` spans coloured (monospace for headers), descriptions plain.
-fn read_cell(ui: &mut egui::Ui, table: RowTable, column: RowColumn, text: &str) {
+/// their variable references coloured by `defined` (monospace for headers),
+/// descriptions plain.
+fn read_cell(
+    ui: &mut egui::Ui,
+    table: RowTable,
+    column: RowColumn,
+    text: &str,
+    defined: &dyn Fn(&str) -> bool,
+) {
     let p = palette(ui.ctx());
     match column {
         RowColumn::Key | RowColumn::Name => {
@@ -330,12 +337,23 @@ fn read_cell(ui: &mut egui::Ui, table: RowTable, column: RowColumn, text: &str) 
                 egui::TextStyle::Body
             };
             let font = style.resolve(ui.style());
-            ui.label(url_layout_job(text, p, font));
+            ui.label(url_layout_job(text, p, font, defined));
         }
         RowColumn::ContentType | RowColumn::Description => {
             ui.label(RichText::new(text).color(p.on_surface));
         }
     }
+}
+
+/// How a table's text cells draw.
+#[derive(Clone, Copy)]
+struct Mode<'a> {
+    /// Whether the cells are editable.
+    editing: bool,
+
+    /// Whether the selected environment defines a variable name, for the
+    /// value colours.
+    defined: &'a dyn Fn(&str) -> bool,
 }
 
 /// A text cell of a real row: [`edit_cell`] while editing, else [`read_cell`].
@@ -344,14 +362,14 @@ fn text_cell(
     table: RowTable,
     (i, column): (usize, RowColumn),
     buf: &mut String,
-    editing: bool,
+    mode: Mode<'_>,
 ) {
     row.col(|ui| {
         grid_cell(ui, |ui| {
-            if editing {
-                edit_cell(ui, table, Some(i), column, buf);
+            if mode.editing {
+                edit_cell(ui, table, (Some(i), column), buf, mode.defined);
             } else {
-                read_cell(ui, table, column, buf);
+                read_cell(ui, table, column, buf, mode.defined);
             }
         });
     });
@@ -360,14 +378,19 @@ fn text_cell(
 /// The add row closing an editable table: empty fields bound to the scratch
 /// buffers `texts` (one per [`RowTable::columns`] entry), with the chip
 /// columns (see [`RowTable::spacer_before`]) and the delete cell left empty.
-fn ghost_row(row: &mut egui_extras::TableRow<'_, '_>, table: RowTable, texts: &mut [String]) {
+fn ghost_row(
+    row: &mut egui_extras::TableRow<'_, '_>,
+    table: RowTable,
+    texts: &mut [String],
+    defined: &dyn Fn(&str) -> bool,
+) {
     let mut texts = texts.iter_mut();
     for (n, column) in table.columns().iter().enumerate() {
         if table.spacer_before(n) {
             row.col(|ui| grid_cell(ui, |_| {}));
         }
         if let Some(buf) = texts.next() {
-            row.col(|ui| grid_cell(ui, |ui| edit_cell(ui, table, None, *column, buf)));
+            row.col(|ui| grid_cell(ui, |ui| edit_cell(ui, table, (None, *column), buf, defined)));
         }
     }
     row.col(|ui| grid_cell(ui, |_| {}));
@@ -426,9 +449,30 @@ pub(super) fn endpoint_title(ui: &mut egui::Ui, model: &mut EditModel, editing: 
     ui.add(egui::Label::new(job).truncate());
 }
 
-/// The `[ METHOD ] [ url................ ]` top row.
-pub(super) fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+/// The `[ METHOD ] [ url................ ] [ Send ]` top row. The button
+/// reads Cancel while a send is in flight.
+///
+/// # Arguments
+///
+/// * `ui` - the left pane
+/// * `model` - the open contract
+/// * `editing` - whether the method and URL are editable
+/// * `defined` - whether the selected environment defines a variable name
+/// * `pending` - whether a send is in flight
+///
+/// # Returns
+///
+/// [`ContractsAction::Send`] or [`ContractsAction::CancelSend`] when the
+/// button was clicked.
+pub(super) fn method_url_row(
+    ui: &mut egui::Ui,
+    model: &mut EditModel,
+    editing: bool,
+    defined: &dyn Fn(&str) -> bool,
+    pending: bool,
+) -> Option<ContractsAction> {
     let p = palette(ui.ctx());
+    let mut action = None;
     url_bar(ui, |ui| {
         let method = method_str(&model.method);
         if editing {
@@ -459,32 +503,59 @@ pub(super) fn method_url_row(ui: &mut egui::Ui, model: &mut EditModel, editing: 
             method_badge(ui, &method);
         }
         ui.add_space(SPACE_MEDIUM);
-        let font = egui::TextStyle::Monospace.resolve(ui.style());
-        if editing {
-            let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-                let mut job = url_layout_job(buf.as_str(), p, font.clone());
-                job.wrap.max_width = wrap_width;
-                ui.fonts_mut(|f| f.layout_job(job))
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (label, color) = if pending {
+                ("Cancel", p.error)
+            } else {
+                ("Send", p.primary)
             };
-            ui.add(
-                egui::TextEdit::singleline(&mut model.url)
-                    .font(egui::TextStyle::Monospace)
-                    .frame(egui::Frame::NONE)
-                    .hint_text("https://host/path/{id}")
-                    .layouter(&mut layouter)
-                    .desired_width(f32::INFINITY),
-            );
-        } else {
-            ui.label(url_layout_job(&model.url, p, font));
-        }
+            if text_button(ui, label, color) {
+                action = Some(if pending {
+                    ContractsAction::CancelSend
+                } else {
+                    ContractsAction::Send
+                });
+            }
+            // The URL fills the space left of the button.
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let font = egui::TextStyle::Monospace.resolve(ui.style());
+                if editing {
+                    let mut layouter =
+                        |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+                            let mut job = url_layout_job(buf.as_str(), p, font.clone(), defined);
+                            job.wrap.max_width = wrap_width;
+                            ui.fonts_mut(|f| f.layout_job(job))
+                        };
+                    ui.add(
+                        egui::TextEdit::singleline(&mut model.url)
+                            .font(egui::TextStyle::Monospace)
+                            .frame(egui::Frame::NONE)
+                            .hint_text("https://host/path/{id}")
+                            .layouter(&mut layouter)
+                            .desired_width(f32::INFINITY),
+                    );
+                } else {
+                    ui.add(
+                        egui::Label::new(url_layout_job(&model.url, p, font, defined)).truncate(),
+                    );
+                }
+            });
+        });
     });
+    action
 }
 
 /// Body of the QUERY PARAMS section. Uses the flat `{name, value, description}`
 /// query model; path variables now live inline in the URL string. While
 /// editing, the table ends in an empty add row.
-pub(super) fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+pub(super) fn query_section(
+    ui: &mut egui::Ui,
+    model: &mut EditModel,
+    editing: bool,
+    defined: &dyn Fn(&str) -> bool,
+) {
     let table = RowTable::Query;
+    let mode = Mode { editing, defined };
     let mut actions: Vec<EditAction> = Vec::new();
     let ids = ghost_ids(ui, table);
     let mut ghost = load_ghost(ui, &ids);
@@ -516,7 +587,7 @@ pub(super) fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: b
             for i in 0..model.query.len() {
                 body.row(TABLE_ROW_H, |mut row| {
                     let q = &mut model.query[i];
-                    text_cell(&mut row, table, (i, RowColumn::Key), &mut q.name, editing);
+                    text_cell(&mut row, table, (i, RowColumn::Key), &mut q.name, mode);
                     row.col(|ui| {
                         grid_cell(ui, |ui| {
                             if required_chip(ui, q.required, editing).is_some() {
@@ -526,19 +597,13 @@ pub(super) fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: b
                             }
                         });
                     });
-                    text_cell(
-                        &mut row,
-                        table,
-                        (i, RowColumn::Value),
-                        &mut q.value,
-                        editing,
-                    );
+                    text_cell(&mut row, table, (i, RowColumn::Value), &mut q.value, mode);
                     text_cell(
                         &mut row,
                         table,
                         (i, RowColumn::Description),
                         &mut q.description,
-                        editing,
+                        mode,
                     );
                     if editing {
                         row.col(|ui| {
@@ -555,7 +620,7 @@ pub(super) fn query_section(ui: &mut egui::Ui, model: &mut EditModel, editing: b
             }
             if editing {
                 body.row(TABLE_ROW_H, |mut row| {
-                    ghost_row(&mut row, table, &mut ghost)
+                    ghost_row(&mut row, table, &mut ghost, defined)
                 });
             }
         });
@@ -580,6 +645,10 @@ pub(super) fn response_headers(
         return;
     }
     let table = RowTable::ResponseHeader(idx);
+    // Response headers document the reply and are never sent, so every name
+    // counts as defined.
+    let defined: &dyn Fn(&str) -> bool = &|_: &str| true;
+    let mode = Mode { editing, defined };
     let mut actions: Vec<EditAction> = Vec::new();
     let ids = ghost_ids(ui, table);
     let mut ghost = load_ghost(ui, &ids);
@@ -611,7 +680,7 @@ pub(super) fn response_headers(
             for i in 0..len {
                 body.row(TABLE_ROW_H, |mut row| {
                     let h = &mut model.responses[idx].headers[i];
-                    text_cell(&mut row, table, (i, RowColumn::Key), &mut h.name, editing);
+                    text_cell(&mut row, table, (i, RowColumn::Key), &mut h.name, mode);
                     row.col(|ui| {
                         grid_cell(ui, |ui| {
                             // Response headers have no toggle action; flip directly.
@@ -620,13 +689,7 @@ pub(super) fn response_headers(
                             }
                         });
                     });
-                    text_cell(
-                        &mut row,
-                        table,
-                        (i, RowColumn::Value),
-                        &mut h.value,
-                        editing,
-                    );
+                    text_cell(&mut row, table, (i, RowColumn::Value), &mut h.value, mode);
                     if editing {
                         row.col(|ui| {
                             grid_cell(ui, |ui| {
@@ -642,7 +705,7 @@ pub(super) fn response_headers(
             }
             if editing {
                 body.row(TABLE_ROW_H, |mut row| {
-                    ghost_row(&mut row, table, &mut ghost)
+                    ghost_row(&mut row, table, &mut ghost, defined)
                 });
             }
         });
@@ -656,8 +719,14 @@ pub(super) fn response_headers(
 }
 
 /// The request headers table. While editing, it ends in an empty add row.
-pub(super) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
+pub(super) fn headers(
+    ui: &mut egui::Ui,
+    model: &mut EditModel,
+    editing: bool,
+    defined: &dyn Fn(&str) -> bool,
+) {
     let table = RowTable::Header;
+    let mode = Mode { editing, defined };
     let mut actions: Vec<EditAction> = Vec::new();
     let ids = ghost_ids(ui, table);
     let mut ghost = load_ghost(ui, &ids);
@@ -688,7 +757,7 @@ pub(super) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
             for i in 0..model.headers.len() {
                 body.row(TABLE_ROW_H, |mut row| {
                     let h = &mut model.headers[i];
-                    text_cell(&mut row, table, (i, RowColumn::Key), &mut h.name, editing);
+                    text_cell(&mut row, table, (i, RowColumn::Key), &mut h.name, mode);
                     row.col(|ui| {
                         grid_cell(ui, |ui| {
                             if required_chip(ui, h.required, editing).is_some() {
@@ -698,13 +767,7 @@ pub(super) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
                             }
                         });
                     });
-                    text_cell(
-                        &mut row,
-                        table,
-                        (i, RowColumn::Value),
-                        &mut h.value,
-                        editing,
-                    );
+                    text_cell(&mut row, table, (i, RowColumn::Value), &mut h.value, mode);
                     if editing {
                         row.col(|ui| {
                             grid_cell(ui, |ui| {
@@ -720,7 +783,7 @@ pub(super) fn headers(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
             }
             if editing {
                 body.row(TABLE_ROW_H, |mut row| {
-                    ghost_row(&mut row, table, &mut ghost)
+                    ghost_row(&mut row, table, &mut ghost, defined)
                 });
             }
         });
@@ -819,8 +882,10 @@ fn parts_table(
     model: &mut EditModel,
     loc: BodyLoc,
     editing: bool,
+    defined: &dyn Fn(&str) -> bool,
 ) -> Vec<EditAction> {
     let p = palette(ui.ctx());
+    let mode = Mode { editing, defined };
     let (table, salt) = match loc {
         BodyLoc::Request => (RowTable::RequestParts, "parts_request".to_string()),
         BodyLoc::Response(r) => (RowTable::ResponseParts(r), format!("parts_response_{r}")),
@@ -867,13 +932,7 @@ fn parts_table(
                     else {
                         return;
                     };
-                    text_cell(
-                        &mut row,
-                        table,
-                        (i, RowColumn::Name),
-                        &mut part.name,
-                        editing,
-                    );
+                    text_cell(&mut row, table, (i, RowColumn::Name), &mut part.name, mode);
                     let is_file = !part.filename.is_empty();
                     row.col(|ui| {
                         grid_cell(ui, |ui| {
@@ -903,14 +962,14 @@ fn parts_table(
                         } else {
                             &mut part.value
                         };
-                        text_cell(&mut row, table, (i, RowColumn::Value), value, editing);
+                        text_cell(&mut row, table, (i, RowColumn::Value), value, mode);
                     }
                     text_cell(
                         &mut row,
                         table,
                         (i, RowColumn::ContentType),
                         &mut part.content_type,
-                        editing,
+                        mode,
                     );
                     row.col(|ui| {
                         grid_cell(ui, |ui| {
@@ -926,7 +985,7 @@ fn parts_table(
                         table,
                         (i, RowColumn::Description),
                         &mut part.description,
-                        editing,
+                        mode,
                     );
                     if editing {
                         row.col(|ui| {
@@ -943,7 +1002,7 @@ fn parts_table(
             }
             if editing {
                 body.row(TABLE_ROW_H, |mut row| {
-                    ghost_row(&mut row, table, &mut ghost)
+                    ghost_row(&mut row, table, &mut ghost, defined)
                 });
             }
         });
@@ -965,6 +1024,7 @@ pub(super) fn request_body(
     ui: &mut egui::Ui,
     model: &mut EditModel,
     editing: bool,
+    defined: &dyn Fn(&str) -> bool,
 ) -> Option<ContractsAction> {
     let p = palette(ui.ctx());
     ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
@@ -979,7 +1039,7 @@ pub(super) fn request_body(
                 .horizontal(|ui| body_kind_row(ui, BodyLoc::Request, true))
                 .inner;
         }
-        for a in parts_table(ui, model, BodyLoc::Request, editing) {
+        for a in parts_table(ui, model, BodyLoc::Request, editing, defined) {
             apply(model, &a);
         }
     } else if editing {
@@ -1232,7 +1292,8 @@ pub(super) fn response_body(
                 .horizontal(|ui| body_kind_row(ui, loc.clone(), true))
                 .inner;
         }
-        for a in parts_table(ui, model, loc, editing) {
+        // A response body is never sent, so every name counts as defined.
+        for a in parts_table(ui, model, loc, editing, &|_: &str| true) {
             apply(model, &a);
         }
         ui.add_space(SPACE_MEDIUM);
@@ -1277,11 +1338,12 @@ mod tests {
                 let mut resp = 0usize;
                 endpoint_title(ui, &mut m, true);
                 endpoint_title(ui, &mut m, false);
-                method_url_row(ui, &mut m, true);
-                headers(ui, &mut m, true);
-                headers(ui, &mut m, false);
-                query_section(ui, &mut m, true);
-                request_body(ui, &mut m, true);
+                method_url_row(ui, &mut m, true, &|_: &str| true, false);
+                method_url_row(ui, &mut m, false, &|_: &str| false, true);
+                headers(ui, &mut m, true, &|_: &str| true);
+                headers(ui, &mut m, false, &|_: &str| true);
+                query_section(ui, &mut m, true, &|_: &str| true);
+                request_body(ui, &mut m, true, &|_: &str| true);
                 response_picker(ui, &m, &mut resp, true);
                 response_fields(ui, &mut m, resp);
                 response_body(ui, &mut m, 0, true);
@@ -1357,7 +1419,7 @@ mod tests {
                 events,
                 ..Default::default()
             };
-            let mut out = ctx.run_ui(input, |ui| headers(ui, m, true));
+            let mut out = ctx.run_ui(input, |ui| headers(ui, m, true, &|_: &str| true));
             out.textures_delta.clear();
         };
         let tab = egui::Event::Key {
@@ -1403,7 +1465,7 @@ mod tests {
             crate::ui::theme::run_in_theme(preference, |ui| {
                 let mut m = multipart_model();
                 for editing in [false, true] {
-                    assert!(request_body(ui, &mut m, editing).is_none());
+                    assert!(request_body(ui, &mut m, editing, &|_: &str| true).is_none());
                     assert!(response_body(ui, &mut m, 0, editing).is_none());
                 }
                 assert!(m.request.is_none(), "no JSON body appears");
@@ -1464,7 +1526,7 @@ mod tests {
                 .unwrap();
                 let mut m = EditModel::from_contract(c);
                 assert!(!m.multipart.is_empty());
-                request_body(ui, &mut m, true);
+                request_body(ui, &mut m, true, &|_: &str| true);
                 // Materializing one here is what makes the file unsavable the
                 // moment anything is typed into it.
                 assert!(m.request.is_none());

@@ -20,10 +20,14 @@ pub struct Settings {
     /// relative path is untrusted: whoever reads it checks it against the
     /// project before opening anything.
     pub last_file: Vec<(PathBuf, String)>,
+
+    /// Each project's chosen environment, as `(project root, env name)` pairs
+    /// with the most recent last. The name is untrusted: whoever reads it
+    /// keeps it only when the project still lists that environment.
+    pub env: Vec<(PathBuf, String)>,
 }
 
-/// How many projects keep a remembered last file. The oldest is dropped
-/// past this.
+/// How many projects keep a remembered last file, and how many keep a remembered environment. The oldest is dropped past this.
 const MAX_LAST_FILES: usize = 20;
 
 impl Settings {
@@ -87,9 +91,35 @@ impl Settings {
             .map(|(_, rel)| rel.as_str())
     }
 
+    /// Remembers `name` as the chosen environment of the project at `root`,
+    /// or forgets the project's choice for `None`, dropping the oldest
+    /// entries past [`MAX_LAST_FILES`].
+    ///
+    /// # Arguments
+    ///
+    /// * `root` - the project root
+    /// * `name` - the environment name, `None` for no environment
+    pub fn remember_env(&mut self, root: PathBuf, name: Option<String>) {
+        self.env.retain(|(r, _)| *r != root);
+        if let Some(name) = name {
+            self.env.push((root, name));
+        }
+        let excess = self.env.len().saturating_sub(MAX_LAST_FILES);
+        self.env.drain(..excess);
+    }
+
+    /// The remembered environment of the project at `root`.
+    pub fn env_of(&self, root: &Path) -> Option<&str> {
+        self.env
+            .iter()
+            .find(|(r, _)| r == root)
+            .map(|(_, name)| name.as_str())
+    }
+
     fn parse(text: &str) -> Settings {
         let mut top = String::new();
         let mut last_file = Vec::new();
+        let mut env = Vec::new();
         let mut section: Option<&str> = None;
         for line in text.lines() {
             let trimmed = line.trim();
@@ -107,6 +137,11 @@ impl Settings {
                         last_file.push(pair);
                     }
                 }
+                Some("[env]") => {
+                    if let Some(pair) = parse_last_file_line(trimmed) {
+                        env.push(pair);
+                    }
+                }
                 Some(_) => {}
             }
         }
@@ -114,6 +149,7 @@ impl Settings {
             last_project: parse_last_project(&top),
             theme: parse_theme(&top),
             last_file,
+            env,
         }
     }
 
@@ -126,6 +162,10 @@ impl Settings {
         body.push_str("\n[last_file]\n");
         for (root, rel) in &self.last_file {
             body.push_str(&format!("{:?} = {:?}\n", root.to_string_lossy(), rel));
+        }
+        body.push_str("\n[env]\n");
+        for (root, name) in &self.env {
+            body.push_str(&format!("{:?} = {:?}\n", root.to_string_lossy(), name));
         }
         body
     }
@@ -172,8 +212,7 @@ fn parse_theme(text: &str) -> ThemePreference {
         .unwrap_or_default()
 }
 
-/// Parses one `"<root>" = "<rel>"` line of the `[last_file]` section,
-/// or `None` when the line has any other shape.
+/// Parses one `"<root>" = "<value>"` line of the `[last_file]` or `[env]` section, or `None` when the line has any other shape.
 fn parse_last_file_line(line: &str) -> Option<(PathBuf, String)> {
     let (root, rest) = parse_quoted(line)?;
     let rest = rest.trim_start().strip_prefix('=')?.trim_start();
@@ -263,6 +302,7 @@ mod tests {
             last_project: Some(PathBuf::from("/home/u/proj")),
             theme: ThemePreference::Light,
             last_file: Vec::new(),
+            env: Vec::new(),
         };
         assert_eq!(Settings::parse(&settings.body()), settings);
     }
@@ -344,6 +384,32 @@ mod tests {
         let loaded = Settings::load_from(&path);
         assert_eq!(loaded.theme, ThemePreference::Light);
         assert_eq!(loaded.last_project, Some(PathBuf::from("/home/u/proj")));
+        let _ = std::fs::remove_dir_all(path.parent().expect("temp path has a parent"));
+    }
+
+    #[test]
+    fn env_round_trips_and_none_forgets_it() {
+        let path = temp_settings_path("env-round-trip");
+        Settings::update_at(&path, |s| {
+            s.remember_file(PathBuf::from("/home/u/proj"), "a.json".into());
+            s.remember_env(PathBuf::from("/home/u/proj"), Some("dev".into()));
+            s.remember_env(PathBuf::from("/home/u/other"), Some("staging".into()));
+        });
+        let loaded = Settings::load_from(&path);
+        assert_eq!(loaded.env_of(Path::new("/home/u/proj")), Some("dev"));
+        assert_eq!(loaded.env_of(Path::new("/home/u/other")), Some("staging"));
+        assert_eq!(
+            loaded.last_file_of(Path::new("/home/u/proj")),
+            Some("a.json")
+        );
+
+        Settings::update_at(&path, |s| {
+            s.remember_env(PathBuf::from("/home/u/proj"), None)
+        });
+
+        let loaded = Settings::load_from(&path);
+        assert_eq!(loaded.env_of(Path::new("/home/u/proj")), None);
+        assert_eq!(loaded.env_of(Path::new("/home/u/other")), Some("staging"));
         let _ = std::fs::remove_dir_all(path.parent().expect("temp path has a parent"));
     }
 }

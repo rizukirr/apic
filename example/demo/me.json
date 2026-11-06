@@ -1,0 +1,34 @@
+{
+    "name": "Current user",
+    "description": "Returns the logged-in user. Needs access_token from demo/login in .apic/env/demo.local.toml.",
+    "method": "GET",
+    "url": "$dummyjson/auth/me",
+    "query": [],
+    "headers": [
+        {
+            "name": "Authorization",
+            "value": "Bearer $access_token",
+            "required": true
+        }
+    ],
+    "request": null,
+    "responses": [
+        {
+            "code": 200,
+            "description": "OK",
+            "schema": {
+                "id": 1,
+                "firstName": "Emily",
+                "lastName": "Johnson",
+                "username": "emilys"
+            }
+        },
+        {
+            "code": 401,
+            "description": "Unauthorized",
+            "schema": {
+                "message": "Invalid/Expired Token!"
+            }
+        }
+    ]
+}

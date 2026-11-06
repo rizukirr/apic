@@ -44,7 +44,7 @@ New contracts start from the project template in `.apic/template/`, so the team'
 
 ## Desktop GUI
 
-`apic-gui` opens the same projects: browse and edit contracts in tables, edit JSON and multipart bodies, import Postman collections, and stage, commit, switch branches and resolve conflicts with git, all on the same files the CLI uses. See [GUI.md](GUI.md).
+`apic-gui` opens the same projects: browse and edit contracts in tables, edit JSON and multipart bodies, send requests with an environment and see the live response, import Postman collections, and stage, commit, switch branches and resolve conflicts with git, all on the same files the CLI uses. See [GUI.md](GUI.md).
 
 ## Contracts
 

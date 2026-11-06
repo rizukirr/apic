@@ -62,14 +62,15 @@ pub(crate) fn tcell_edit(ui: &mut egui::Ui, buf: &mut String, hint: &str) -> egu
 }
 
 /// `tcell_edit` whose text is laid out by [`super::url_layout_job`], so the
-/// `{{var}}` parts of a value show in the variable colour like the URL bar.
-/// `monospace` picks the monospace font (header values) over the body font
-/// (query values).
+/// variable references in a value are coloured like the URL bar, by
+/// `defined`. `monospace` picks the monospace font (header values) over the
+/// body font (query values).
 pub(crate) fn tcell_edit_vars(
     ui: &mut egui::Ui,
     buf: &mut String,
     hint: &str,
     monospace: bool,
+    defined: &dyn Fn(&str) -> bool,
 ) -> egui::Response {
     let p = crate::ui::theme::palette(ui.ctx());
     let style = if monospace {
@@ -79,7 +80,7 @@ pub(crate) fn tcell_edit_vars(
     };
     let font = style.resolve(ui.style());
     let mut layouter = |ui: &egui::Ui, buf: &dyn TextBuffer, wrap_width: f32| {
-        let mut job = super::url_layout_job(buf.as_str(), p, font.clone());
+        let mut job = super::url_layout_job(buf.as_str(), p, font.clone(), defined);
         job.wrap.max_width = wrap_width;
         ui.fonts_mut(|f| f.layout_job(job))
     };
