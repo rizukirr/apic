@@ -507,8 +507,9 @@ mod tests {
             let out = model
                 .to_json()
                 .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let had_multipart = text.contains("\"multipart\"");
             assert!(
-                !out.contains("multipart"),
+                had_multipart || !out.contains("multipart"),
                 "{} gained a multipart key",
                 path.display()
             );
