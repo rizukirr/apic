@@ -19,6 +19,8 @@ The app-bar branch dropdown (`apic-gui/src/features/git/ui/view/branches.rs`) le
 5. A conflicting merge leaves the repository mid-merge, puts git's message on the status line, and refreshes status and the branch list so the conflicted files appear in the existing resolver. Success: a temp-repo test of a conflicting merge returns `Err`, and a status read afterwards lists the conflicted path. A state test shows a failed merge mutation schedules a status and branch refresh.
 6. Delete always targets the right-clicked branch. Its confirmation popup shows that branch fixed, with no picker. Delete stays disabled in the menu for the current branch, which git refuses to delete. Success: the delete dialog code holds no ComboBox, and the menu items test shows Delete disabled on the current branch.
 7. The remote branch list leaves out the symbolic `remote/HEAD` alias. Success: a temp-repo test with a cloned repo lists `origin/main` and no `origin/HEAD`.
+8. Confirming Pull or Merge while the open contract has unsaved edits is refused the same way a branch switch is: nothing runs, and a message naming the contract reaches `git.error` and the status line. Success: an app test dirties the open contract, confirms a merge, and the current branch and HEAD are unchanged with `git.error` non-empty.
+9. Git never waits on a terminal prompt (a fetch needing credentials fails instead of hanging the job), and the merge never opens an editor. Success: `cli::run` sets `GIT_TERMINAL_PROMPT=0` and `cli::merge` passes `--no-edit`, both visible in the code.
 
 ## Non-goals
 
