@@ -9,6 +9,7 @@ pub mod edit;
 pub mod env;
 pub mod file;
 pub mod fuzzy;
+pub mod http;
 pub mod json;
 pub mod template;
 pub mod validate;
