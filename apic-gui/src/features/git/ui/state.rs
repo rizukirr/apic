@@ -211,6 +211,10 @@ pub(crate) enum GitEvent {
     /// A checkout succeeded, so the open contract must be reconciled with
     /// the new branch.
     BranchSwitched,
+
+    /// A resolve or discard rewrote files in the working tree, so anything
+    /// read from those files must be read again.
+    WorkingTreeChanged,
 }
 
 /// A repaint callback for a background job, so `data` never sees egui.
@@ -454,7 +458,10 @@ impl GitState {
                     MutateKind::CreateBranch | MutateKind::DeleteBranch => {
                         self.needs_branches = true;
                     }
-                    MutateKind::Unstage | MutateKind::Discard | MutateKind::Resolve => {}
+                    MutateKind::Discard | MutateKind::Resolve => {
+                        events.push(GitEvent::WorkingTreeChanged);
+                    }
+                    MutateKind::Unstage => {}
                 }
             }
             JobResult::Mutate(_, _, Err(e)) => {
@@ -575,7 +582,7 @@ mod tests {
             .rev()
             .find_map(|e| match e {
                 GitEvent::Status(s) => Some(s.clone()),
-                GitEvent::BranchSwitched => None,
+                GitEvent::BranchSwitched | GitEvent::WorkingTreeChanged => None,
             })
             .unwrap_or_default()
     }

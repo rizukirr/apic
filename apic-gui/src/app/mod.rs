@@ -618,6 +618,15 @@ impl App {
         }
     }
 
+    /// Rescans the contracts after a git resolve or discard rewrote files,
+    /// see `ContractsState::refresh_after_git_write`.
+    fn refresh_after_git_write(&mut self) {
+        if let Some(paths) = self.read_project() {
+            let events = self.contracts.refresh_after_git_write(&paths);
+            self.apply_contracts_events(events, None);
+        }
+    }
+
     /// Discovers contracts for the active project and reads each one's method for
     /// the sidebar badge. Resolves everything against `self.project.project_root`;
     /// never reads the process current directory.
@@ -691,6 +700,7 @@ impl App {
             match event {
                 GitEvent::Status(text) => self.shell.status = text,
                 GitEvent::BranchSwitched => self.reconcile_after_checkout(),
+                GitEvent::WorkingTreeChanged => self.refresh_after_git_write(),
             }
         }
     }
@@ -794,6 +804,91 @@ mod tests {
         app_at, conflict_fixture, current_branch, dirty, git_available, git_output,
         project_fixture, settle, tempdir,
     };
+
+    fn entry_index(app: &App, name: &str) -> usize {
+        app.contracts
+            .entries
+            .iter()
+            .position(|e| e.path.ends_with(name))
+            .expect("contract is listed")
+    }
+
+    #[test]
+    fn resolving_a_conflict_refreshes_the_contracts_list() {
+        if !git_available() {
+            return;
+        }
+        let mut app = app_at(conflict_fixture());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        app.poll_git(&ctx);
+        settle(&mut app, &ctx);
+        let sample = entry_index(&app, "sample.json");
+        assert!(app.contracts.entries[sample].error.is_some());
+        app.apply(Action::Contracts(ContractsAction::Load(sample)), &ctx);
+        settle(&mut app, &ctx);
+
+        app.apply(
+            Action::Git(GitAction::ResolveConflict {
+                path: "contracts/sample.json".to_string(),
+                text: apic_core::template::DEFAULT.to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        let sample = entry_index(&app, "sample.json");
+        assert!(
+            app.contracts.entries[sample].error.is_none(),
+            "the resolved file must no longer be listed as invalid"
+        );
+        assert!(app.contracts.repair.is_none());
+        assert!(app.contracts.model.is_some());
+    }
+
+    #[test]
+    fn resolving_a_conflict_keeps_unsaved_edits_to_another_contract() {
+        if !git_available() {
+            return;
+        }
+        let root = conflict_fixture();
+        std::fs::write(
+            root.join("contracts").join("other.json"),
+            apic_core::template::DEFAULT,
+        )
+        .unwrap();
+        let mut app = app_at(root);
+        let ctx = egui::Context::default();
+        app.reload_project();
+        app.poll_git(&ctx);
+        settle(&mut app, &ctx);
+        let other = entry_index(&app, "other.json");
+        app.apply(Action::Contracts(ContractsAction::Load(other)), &ctx);
+        app.contracts.editing = true;
+        app.contracts
+            .model
+            .as_mut()
+            .expect("other.json is open")
+            .name
+            .push('x');
+
+        app.apply(
+            Action::Git(GitAction::ResolveConflict {
+                path: "contracts/sample.json".to_string(),
+                text: apic_core::template::DEFAULT.to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        assert!(app.contracts.has_unsaved_edits());
+        let sample = entry_index(&app, "sample.json");
+        assert!(app.contracts.entries[sample].error.is_none());
+        assert_eq!(
+            app.contracts.selected,
+            Some(entry_index(&app, "other.json"))
+        );
+    }
 
     /// A minimal but valid contract, loaded the same way `load()` does.
     fn sample_model() -> EditModel {
