@@ -94,6 +94,50 @@ enum Commands {
         template: bool,
     },
 
+    /// Send a contract's request over the network and print the response.
+    ///
+    /// `$name`, `${name}` and `{{name}}` in the URL, query, headers and body
+    /// are filled from `--env` (`.apic/env/<name>.toml`, overlaid by
+    /// `<name>.local.toml`) and `--var`; `{name}` path params too. The body
+    /// goes to stdout, the status line and warnings to stderr.
+    Send {
+        /// Contract to send — path, extensionless path, or fuzzy fragment.
+        #[arg(long, short = 'f', value_name = "QUERY")]
+        find: String,
+
+        /// Environment to take variable values from.
+        #[arg(long, value_name = "NAME")]
+        env: Option<String>,
+
+        /// Set a variable, overriding the environment. Repeatable.
+        #[arg(long = "var", value_name = "NAME=VALUE")]
+        vars: Vec<String>,
+
+        /// Print the status line and response headers before the body.
+        #[arg(long, short = 'i')]
+        include: bool,
+
+        /// Give up after this many seconds.
+        #[arg(long, value_name = "SECS", default_value_t = 30)]
+        timeout: u64,
+    },
+
+    /// List the environments in `.apic/env`, marking those with a local file.
+    /// Values are never printed.
+    Env,
+
+    /// Work with `$name` variables in contracts.
+    Vars {
+        /// Show each `{{name}}` to `$name` rewrite across contracts and
+        /// templates.
+        #[arg(long)]
+        convert: bool,
+
+        /// With `--convert`, apply the rewrites.
+        #[arg(long, requires = "convert")]
+        write: bool,
+    },
+
     /// Create a new contract, or with `--template` a new project template.
     ///
     /// Seeds the contract from the project template, applies the curl-style
@@ -584,7 +628,7 @@ fn ambiguous_template_error(name: &str, candidates: &[PathBuf], root: &Path) -> 
 }
 
 /// A contract reference resolved down to a single decision.
-enum Resolved {
+pub(crate) enum Resolved {
     /// Exactly one contract — proceed.
     Path(PathBuf),
 
@@ -607,7 +651,7 @@ fn cancelled() -> Result<(), String> {
 ///
 /// An ambiguous reference is an error listing every candidate, best match
 /// first, so a script fails loudly instead of guessing.
-fn resolve_one(filename: &str) -> Result<Resolved, String> {
+pub(crate) fn resolve_one(filename: &str) -> Result<Resolved, String> {
     let files = match list(true) {
         Some(files) => files,
         None => return Ok(Resolved::NotFound),
@@ -1368,6 +1412,21 @@ pub(crate) fn run() {
             status,
             template,
         } => read_cmd(find.as_deref(), status, template),
+        Commands::Send {
+            find,
+            env,
+            vars,
+            include,
+            timeout,
+        } => crate::send::send_cmd(&crate::send::SendArgs {
+            find,
+            env,
+            vars,
+            include,
+            timeout,
+        }),
+        Commands::Env => crate::send::env_cmd(),
+        Commands::Vars { convert, write } => crate::send::vars_cmd(convert, write),
         Commands::Validate { find, template } => validate_cmd(template, find.as_deref()),
         Commands::Open {
             find,

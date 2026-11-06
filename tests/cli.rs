@@ -957,3 +957,146 @@ fn remove_yes_deletes_without_asking() {
         .stdout(predicate::str::contains("Removed"));
     assert!(!dir.join("contracts/a.json").exists());
 }
+
+/// Serves one request on 127.0.0.1 with the raw `reply`, handing back the raw
+/// request bytes.
+fn serve_once(reply: &'static str) -> (String, std::sync::mpsc::Receiver<Vec<u8>>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = stream.read(&mut chunk).unwrap();
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&buf[..end]).to_ascii_lowercase();
+                let len = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("content-length:"))
+                    .map_or(0, |v| v.trim().parse::<usize>().unwrap());
+                if buf.len() >= end + 4 + len {
+                    break;
+                }
+            }
+        }
+        stream.write_all(reply.as_bytes()).unwrap();
+        tx.send(buf).unwrap();
+    });
+    (format!("http://{addr}"), rx)
+}
+
+const SEND_OK: &str = "HTTP/1.1 201 Created\r\nX-Test: yes\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}";
+
+fn send_project(tag: &str) -> PathBuf {
+    let dir = init_project(tag);
+    fs::write(
+        dir.join("contracts/get_user.json"),
+        r#"{"name":"get user","method":"GET","url":"$base/users/{id}",
+            "headers":[{"name":"Authorization","value":"Bearer $token"}],"responses":[]}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(dir.join(".apic/env")).unwrap();
+    dir
+}
+
+#[test]
+fn send_fills_env_with_local_override_and_var_flag() {
+    let dir = send_project("send_env");
+    let (base, rx) = serve_once(SEND_OK);
+    fs::write(
+        dir.join(".apic/env/dev.toml"),
+        format!("base = \"{base}\"\ntoken = \"shared\"\nid = \"1\"\n"),
+    )
+    .unwrap();
+    fs::write(dir.join(".apic/env/dev.local.toml"), "token = \"secret\"\n").unwrap();
+    apic(&dir)
+        .args([
+            "send", "-f", "get_user", "--env", "dev", "--var", "id=5", "-i",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("HTTP 201 Created"))
+        .stdout(predicate::str::contains("x-test: yes"))
+        .stdout(predicate::str::contains("{\"ok\":true}"))
+        .stderr(predicate::str::contains("201"));
+    let raw = String::from_utf8(rx.recv().unwrap()).unwrap();
+    assert!(raw.starts_with("GET /users/5 HTTP/1.1\r\n"), "{raw}");
+    assert!(
+        raw.to_ascii_lowercase()
+            .contains("authorization: bearer secret\r\n"),
+        "{raw}"
+    );
+    let ignore = fs::read_to_string(dir.join(".apic/.gitignore")).unwrap();
+    assert!(ignore.lines().any(|l| l == "env/*.local.toml"));
+}
+
+#[test]
+fn send_refuses_unfilled_path_param_and_warns_on_undefined() {
+    let dir = send_project("send_refuse");
+    fs::write(
+        dir.join(".apic/env/dev.toml"),
+        "base = \"http://127.0.0.1:9\"\n",
+    )
+    .unwrap();
+    apic(&dir)
+        .args(["send", "-f", "get_user", "--env", "dev"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--var id="))
+        .stderr(predicate::str::contains("$token"));
+}
+
+#[test]
+fn send_unknown_env_lists_available() {
+    let dir = send_project("send_unknown_env");
+    fs::write(dir.join(".apic/env/dev.toml"), "").unwrap();
+    apic(&dir)
+        .args(["send", "-f", "get_user", "--env", "prod"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("dev"));
+}
+
+#[test]
+fn env_lists_names_with_local_flag_and_no_values() {
+    let dir = init_project("env_list");
+    fs::create_dir_all(dir.join(".apic/env")).unwrap();
+    fs::write(dir.join(".apic/env/dev.toml"), "token = \"shh\"\n").unwrap();
+    fs::write(dir.join(".apic/env/dev.local.toml"), "token = \"shh2\"\n").unwrap();
+    fs::write(dir.join(".apic/env/prod.toml"), "").unwrap();
+    apic(&dir)
+        .args(["env"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dev (+local)"))
+        .stdout(predicate::str::contains("prod"))
+        .stdout(predicate::str::contains("shh").not());
+}
+
+#[test]
+fn vars_convert_is_dry_until_write() {
+    let dir = init_project("vars_convert");
+    let file = dir.join("contracts/a.json");
+    let original = r#"{"name":"a","method":"GET","url":"{{baseUrl}}/x","headers":[{"name":"A","value":"Bearer {{tok}}"}],"responses":[]}"#;
+    fs::write(&file, original).unwrap();
+    apic(&dir)
+        .args(["vars", "--convert"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("a.json"));
+    assert_eq!(fs::read_to_string(&file).unwrap(), original);
+    apic(&dir)
+        .args(["vars", "--convert", "--write"])
+        .assert()
+        .success();
+    let converted = fs::read_to_string(&file).unwrap();
+    assert!(converted.contains("\"$baseUrl/x\""), "{converted}");
+    assert!(converted.contains("Bearer $tok"), "{converted}");
+}

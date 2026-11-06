@@ -129,6 +129,34 @@ JSON example payloads:
  }
 ```
 
+## `apic send -f <query> [--env <name>] [--var <name=value>]... [-i] [--timeout <secs>]`
+Resolves `<query>` like `read`, fills the variables and sends the contract's request. The response body goes to stdout, pretty-printed and coloured on a terminal and raw when piped. The status summary and warnings about undefined variables go to stderr. Up to 5 redirects are followed. The exit code is 0 for any HTTP reply, including 4xx and 5xx, and 1 for a refusal or a network error. Variables, environments and what gets sent are covered in [SENDING.md](SENDING.md).
+
+- `--env <name>` takes values from `.apic/env/<name>.toml`, overlaid by `<name>.local.toml`.
+- `--var <name=value>` sets a variable and overrides the environment. Repeatable.
+- `-i` prints the status line and response headers before the body.
+- `--timeout <secs>` gives up after that many seconds, 30 by default.
+
+```bash
+apic send -f auth/login --env dev
+apic send -f login --env dev --var tok=abc -i | head
+```
+
+## `apic env`
+Lists the environments in `.apic/env`. A name followed by `(+local)` has a local file next to it. Values are never printed.
+
+```bash
+apic env
+```
+
+## `apic vars --convert [--write]`
+Finds `{{name}}` variables in every contract and template and shows the file and the count for each. Without `--write` nothing changes. With `--write` each `{{name}}` becomes `$name`.
+
+```bash
+apic vars --convert           # dry run
+apic vars --convert --write   # apply
+```
+
 ## `apic open (-f <query> | --template) [-e <editor>]`
 Resolves `<query>` exactly like `read` (path, extensionless, or fuzzy) and
 opens the matching contract in your external editor. An ambiguous query fails

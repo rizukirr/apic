@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`apic send`, environments and variables.** `apic send -f <query>` sends a contract's request and prints the response body, with `--env <name>`, `--var NAME=VALUE`, `-i` and `--timeout`. `$name`, `${name}` and `{{name}}` are filled from `.apic/env/<name>.toml`, overlaid by the gitignored `<name>.local.toml`. `apic env` lists the environments without printing values, and `apic vars --convert [--write]` rewrites `{{name}}` to `$name`.
 - **JSON syntax highlighting in `apic read`.** Request and response bodies are coloured by token on a terminal: keys blue, string values green, numbers yellow, `true`, `false` and `null` magenta, and punctuation dim, using the terminal's own basic colours. Piped or redirected output stays plain.
 - `apic read` and `apic list` honour `NO_COLOR`: when it is set and not empty, no colour is written even on a terminal.
 

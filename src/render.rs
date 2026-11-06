@@ -264,7 +264,7 @@ impl Printer {
 /// The input comes from `serde_json::to_string_pretty`, which escapes every
 /// control character, so no escape sequence from a contract can survive into
 /// the colored output.
-fn highlight_json_line(line: &str) -> String {
+pub(crate) fn highlight_json_line(line: &str) -> String {
     let bytes = line.as_bytes();
     let mut out = String::new();
     let mut i = 0;

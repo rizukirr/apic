@@ -37,9 +37,10 @@ apic create -f auth/login -X POST https://api.example.com/auth/login \
 apic edit -f login -H 'X-Trace: 1'          # change only what you pass
 apic read -f login                          # print it as colored tables
 apic open -f login                          # open it in your editor
+apic send -f login --env dev                # send it with values from .apic/env/dev.toml
 ```
 
-New contracts start from the project template in `.apic/template/`, so the team's base URL, standing headers and response envelope come for free. Everything else is in [COMMAND.md](COMMAND.md).
+New contracts start from the project template in `.apic/template/`, so the team's base URL, standing headers and response envelope come for free. Everything else is in [COMMAND.md](COMMAND.md), and environments and variables for `apic send` are in [SENDING.md](SENDING.md).
 
 ## Desktop GUI
 
@@ -63,6 +64,9 @@ A contract is one JSON file per endpoint: name, method, URL, query params, heade
 | `apic remove` | Delete a contract or template. |
 | `apic validate` | Check contracts against the schema, for CI or a pre-commit hook. |
 | `apic convert` | Import a Postman collection as contracts. |
+| `apic send` | Send a contract's request and print the response. |
+| `apic env` | List the environments in `.apic/env`. |
+| `apic vars` | Convert `{{name}}` variables to `$name`. |
 
 Every command, flag and example is documented in [COMMAND.md](COMMAND.md).
 
@@ -75,6 +79,9 @@ against contracts from any source:
   names) are stripped of control characters before printing.
 - **Path-confined**, `apic create` refuses paths that escape the working
   directory via `..` or an absolute path elsewhere.
+- **Secrets stay local**, `.apic/env/*.local.toml` is gitignored through
+  `.apic/.gitignore`, `apic env` never prints values, and env parse errors
+  name the line, never its text.
 - **Bounded**, contract files larger than 5 MiB are rejected before reading,
   and pathologically nested JSON is rejected rather than overflowing the stack.
 

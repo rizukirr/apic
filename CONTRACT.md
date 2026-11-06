@@ -169,6 +169,14 @@ resistance, drift shows up as a diff in review, and adding an endpoint is "edit
 what's different" instead of "remember every convention". When the convention
 itself changes, you edit one file and every *new* contract picks it up.
 
+## Variables and environments
+
+Strings in the URL, query, headers and body can hold variables. `$name`, `${name}` and `{{name}}` are all replaced by the variable's value, and `$$` stands for a literal `$`. A name with no value is left as written, and `apic send` warns about it on stderr. Path params written `{name}` are filled from the same values.
+
+Values come from an environment and from `--var` flags, and the flags win. An environment is a TOML file of `name = "value"` pairs. `.apic/env/<name>.toml` is shared with the team. `.apic/env/<name>.local.toml` holds your own values and overrides the shared file. Local files are gitignored through `.apic/.gitignore`.
+
+In a multipart body, a file part sends the file at its `value`, resolved relative to the project root. [SENDING.md](SENDING.md) has the full guide.
+
 ## Configuration
 
 `apic init` writes `.apic/config.toml`:
