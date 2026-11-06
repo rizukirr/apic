@@ -736,7 +736,7 @@ Add `BranchOp, BranchOpKind` to the tests module's imports from `crate::features
 **Files:**
 - Modify: `apic-gui/src/app/mod.rs` (the `Action::Git(GitAction::SwitchBranch { .. }) if self.contracts.has_unsaved_edits()` arm in `apply`, tests module)
 
-- [ ] Step 1: Replace the arm that starts `Action::Git(GitAction::SwitchBranch { .. }) if self.contracts.has_unsaved_edits() => {` with:
+- [x] Step 1: Replace the arm that starts `Action::Git(GitAction::SwitchBranch { .. }) if self.contracts.has_unsaved_edits() => {` with:
 
 ```rust
             Action::Git(action @ (GitAction::SwitchBranch { .. } | GitAction::ConfirmBranchOp))
@@ -762,7 +762,7 @@ Add `BranchOp, BranchOpKind` to the tests module's imports from `crate::features
 
 Add `BranchOpKind` to the existing import of `GitAction` in `app/mod.rs` (read the `use` lines first).
 
-- [ ] Step 2: In `app/mod.rs` tests module, after `switch_branch_is_refused_with_unsaved_edits`, add a test that copies that test's setup (fixture, `app_at`, `reload_project`, `settle`, load `sample.json`, `ToggleEdit`, rename the model to `dirtied`), records `let head = git_output(&root, &["rev-parse", "HEAD"]);`, then:
+- [x] Step 2: In `app/mod.rs` tests module, after `switch_branch_is_refused_with_unsaved_edits`, add a test that copies that test's setup (fixture, `app_at`, `reload_project`, `settle`, load `sample.json`, `ToggleEdit`, rename the model to `dirtied`), records `let head = git_output(&root, &["rev-parse", "HEAD"]);`, then:
 
 ```rust
         app.git.pending_branch_op = Some(BranchOp {
@@ -781,7 +781,7 @@ Add `BranchOpKind` to the existing import of `GitAction` in `app/mod.rs` (read t
 
 Name it `merge_is_refused_with_unsaved_edits`. Import `BranchOp, BranchOpKind` in the tests module.
 
-- [ ] Step 3: Run `cargo fmt --all`.
-- [ ] Step 4: Run `cargo test -p apic-gui`.
-- [ ] Step 5: Run `cargo clippy --workspace --all-targets -- -D warnings`.
-- [ ] Step 6: Commit: `feat(gui): refuse pull and merge while the open contract has unsaved edits`.
+- [x] Step 3: Run `cargo fmt --all`.
+- [x] Step 4: Run `cargo test -p apic-gui`.
+- [x] Step 5: Run `cargo clippy --workspace --all-targets -- -D warnings`.
+- [x] Step 6: Commit: `feat(gui): refuse pull and merge while the open contract has unsaved edits`.
