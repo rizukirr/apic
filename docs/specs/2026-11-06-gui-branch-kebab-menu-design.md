@@ -1,7 +1,7 @@
 ---
 title: gui branch kebab menu
 date: 2026-11-06
-status: draft
+status: approved
 ---
 
 # gui branch kebab menu: Design
@@ -32,6 +32,7 @@ The pull and merge flow also asks the user to close the menu and pick the source
 - egui 0.35, eframe 0.35, `egui-phosphor` 0.13, as already in `apic-gui/Cargo.toml`. No new dependency.
 - The confirmation uses the shared `dialog` popup layout and theme palette.
 - CI runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace`.
+- Run limits: at most 3 verify rounds, at most $0 on paid runs.
 
 ## Approach
 
