@@ -218,11 +218,11 @@ fn conflict_block_view(ui: &mut egui::Ui, sides: &Sides, json: bool, choice: &mu
                 if lens(ui, "Accept Current") {
                     *choice = Some(Choice::Ours);
                 }
-                ui.label(RichText::new("|").color(p.on_surface_variant).small());
+                ui.label(RichText::new("|").color(p.on_surface_variant));
                 if lens(ui, "Accept Incoming") {
                     *choice = Some(Choice::Theirs);
                 }
-                ui.label(RichText::new("|").color(p.on_surface_variant).small());
+                ui.label(RichText::new("|").color(p.on_surface_variant));
                 if lens(ui, "Accept Both") {
                     *choice = Some(Choice::Both);
                 }
@@ -242,11 +242,7 @@ fn conflict_block_view(ui: &mut egui::Ui, sides: &Sides, json: bool, choice: &mu
         }
         Some(chosen) => {
             ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(accepted_label(chosen))
-                        .color(p.on_surface_variant)
-                        .small(),
-                );
+                ui.label(RichText::new(accepted_label(chosen)).color(p.on_surface_variant));
                 if lens(ui, "Undo") {
                     *choice = None;
                 }
@@ -277,11 +273,9 @@ fn accepted_label(choice: Choice) -> &'static str {
 /// CodeLens links above a conflict.
 fn lens(ui: &mut egui::Ui, label: &str) -> bool {
     let p = palette(ui.ctx());
-    ui.add(
-        egui::Label::new(RichText::new(label).color(p.primary).small()).sense(egui::Sense::click()),
-    )
-    .on_hover_cursor(egui::CursorIcon::PointingHand)
-    .clicked()
+    ui.add(egui::Label::new(RichText::new(label).color(p.primary)).sense(egui::Sense::click()))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
 }
 
 /// A full-width header band naming one side of a conflict.
