@@ -1,11 +1,13 @@
-//! The git central pane's merge conflict resolver: per-block choices, the live
-//! preview of what Resolve writes, and the Resolve action.
+//! The git central pane's merge conflict resolver, shaped like VS Code's
+//! inline merge view: per-block Accept links, the chosen text in place once
+//! decided, and the Resolve action.
 
 use eframe::egui;
 use egui::RichText;
 
-use super::diff::raw_diff_view;
+use super::diff::inline_diff_view;
 use crate::features::git::domain::conflict::{self, Choice, Segment};
+use crate::features::git::domain::diff::parse_unified;
 use crate::features::git::ui::state::{GitAction, GitState, ResolveState};
 use crate::ui::components::text_button;
 use crate::ui::theme::*;
@@ -35,7 +37,7 @@ pub(super) fn conflict_resolver(
             ui.label(RichText::new(side).color(p.on_surface_variant));
         });
         ui.separator();
-        raw_diff_view(ui, raw);
+        inline_diff_view(ui, &parse_unified(raw));
         ui.add_space(SPACE_SMALL);
         ui.label(
             RichText::new(
@@ -48,16 +50,13 @@ pub(super) fn conflict_resolver(
     resolve_view(ui, path, staged, resolve)
 }
 
-/// The conflict resolver: take-all shortcuts, a 50:50 split with the picker
-/// on the left (every block with its two named sides, the unconflicted text
-/// between them so the file still reads in order) and a live preview of what
-/// Resolve would write on the right, then Resolve.
+/// The conflict resolver: take-all shortcuts and Resolve in the header, then
+/// one full-width scroll of the file in order, its text between conflicts
+/// and each conflict block either undecided or showing its chosen text.
 ///
-/// The preview is `conflict::render` called with the current choices, the
-/// same function Resolve calls with the same choices, so nothing shown here
-/// can drift from what actually reaches disk. Split shape matches
-/// `features::contracts::ui::view`: `horizontal_top` with `allocate_ui_with_layout`
-/// and a reserved divider width, rather than a second way to split a panel.
+/// Resolve writes `conflict::render` with the current choices, and a
+/// decided block shows exactly the text `render` puts there, so what is on
+/// screen is what reaches disk.
 ///
 /// The whole-file actions live in this header row rather than a pinned bar
 /// below the panes: the header is laid out first, at the top of the body, so
@@ -140,91 +139,44 @@ fn resolve_view(
     });
     ui.separator();
 
-    ui.horizontal_top(|ui| {
-        let gap = ui.spacing().item_spacing.x;
-        let divider_w = 6.0;
-        let col_w = ((ui.available_width() - divider_w - gap * 2.0) / 2.0).max(0.0);
-        let col_h = ui.available_height();
-
-        // Left pane: the picker, one block at a time.
-        ui.allocate_ui_with_layout(
-            egui::vec2(col_w, col_h),
-            egui::Layout::top_down(egui::Align::Min),
-            |left| {
-                egui::ScrollArea::vertical()
-                    .id_salt("resolve_picker_scroll")
-                    .auto_shrink([false, false])
-                    .show(left, |ui| {
-                        let mut block = 0;
-                        for segment in &resolve.file.segments {
-                            match segment {
-                                Segment::Text(text) => {
-                                    if !text.trim().is_empty() {
-                                        ui.label(RichText::new(text).color(p.on_surface_variant).monospace());
-                                    }
-                                }
-                                Segment::Conflict {
-                                    ours_label,
-                                    theirs_label,
-                                    ours,
-                                    theirs,
-                                } => {
-                                    conflict_block_view(
-                                        ui,
-                                        ours_label,
-                                        theirs_label,
-                                        ours,
-                                        theirs,
-                                        &mut resolve.choices[block],
-                                    );
-                                    block += 1;
-                                }
-                            }
-                        }
-                    });
-            },
+    let json = path.ends_with(".json");
+    if json && all_chosen && apic_core::json::validate(&rendered).is_err() {
+        ui.label(
+            RichText::new(
+                "This resolution is not valid JSON. You can still resolve it and fix it in the repair editor.",
+            )
+            .color(p.warning),
         );
+        ui.add_space(SPACE_EXTRA_SMALL);
+    }
 
-        ui.separator();
-
-        // Right pane: the live preview of what Resolve would write.
-        ui.allocate_ui_with_layout(
-            egui::vec2(col_w, col_h),
-            egui::Layout::top_down(egui::Align::Min),
-            |right| {
-                right.label(RichText::new("PREVIEW").color(p.on_surface_variant).size(11.0));
-                egui::ScrollArea::vertical()
-                    .id_salt("resolve_preview_scroll")
-                    .auto_shrink([false, false])
-                    .show(right, |ui| {
-                        if path.ends_with(".json") {
-                            // A partially decided preview still carries
-                            // conflict markers and is not valid JSON;
-                            // `highlight_json` handles non-JSON text without
-                            // panicking, so this stays safe for every state.
-                            let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-                            let job = crate::ui::syntax_highlighting::highlight_json(
-                                &rendered,
-                                font_id,
-                                crate::ui::theme::palette(ui.ctx()),
-                            );
-                            ui.label(job);
-                        } else {
-                            ui.label(RichText::new(&rendered).monospace());
-                        }
-                    });
-                if path.ends_with(".json") && apic_core::json::validate(&rendered).is_err() {
-                    right.add_space(SPACE_EXTRA_SMALL);
-                    right.label(
-                        RichText::new(
-                            "This resolution is not valid JSON. You can still resolve it and fix it in the repair editor.",
-                        )
-                        .color(p.warning),
-                    );
+    egui::ScrollArea::vertical()
+        .id_salt("resolve_inline_scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let mut block = 0;
+            for segment in &resolve.file.segments {
+                match segment {
+                    Segment::Text(text) => code_text(ui, text, json),
+                    Segment::Conflict {
+                        ours_label,
+                        theirs_label,
+                        ours,
+                        theirs,
+                    } => {
+                        let sides = Sides {
+                            ours_label,
+                            theirs_label,
+                            ours,
+                            theirs,
+                        };
+                        conflict_block_view(ui, &sides, json, &mut resolve.choices[block]);
+                        block += 1;
+                    }
                 }
-            },
-        );
-    });
+            }
+        });
 
     action
 }
@@ -242,107 +194,131 @@ pub(super) fn resolve_label(choices: &[Option<Choice>]) -> String {
     }
 }
 
-/// One conflict block, shaped like VS Code's inline merge view: a row of
-/// named actions, a line stating what the current choice will write, then
-/// the block stacked in file order with the real `<<<<<<<`, `=======` and
-/// `>>>>>>>` marker lines still visible so the pane reads like the file on
-/// disk. Ours is tinted green, theirs is tinted cyan.
-fn conflict_block_view(
-    ui: &mut egui::Ui,
-    ours_label: &str,
-    theirs_label: &str,
-    ours: &str,
-    theirs: &str,
-    choice: &mut Option<Choice>,
-) {
-    let p = palette(ui.ctx());
-    ui.group(|ui| {
-        ui.horizontal(|ui| {
-            if text_button(ui, "Accept ours", p.primary) {
-                *choice = Some(Choice::Ours);
-            }
-            if text_button(ui, "Accept theirs", p.info) {
-                *choice = Some(Choice::Theirs);
-            }
-            if text_button(ui, "Accept both", p.on_surface_variant) {
-                *choice = Some(Choice::Both);
-            }
-        });
-        ui.label(
-            RichText::new(current_choice_summary(*choice, ours_label, theirs_label))
-                .color(p.on_surface_variant),
-        );
-        ui.add_space(SPACE_EXTRA_SMALL);
-
-        conflict_side_view(
-            ui,
-            p.success,
-            &format!("<<<<<<< {ours_label}"),
-            ours,
-            MarkerPosition::Before,
-        );
-        ui.label(
-            RichText::new("=======")
-                .color(p.on_surface_variant)
-                .monospace(),
-        );
-        conflict_side_view(
-            ui,
-            p.info,
-            &format!(">>>>>>> {theirs_label}"),
-            theirs,
-            MarkerPosition::After,
-        );
-    });
-    ui.add_space(SPACE_SMALL);
+/// The two labelled sides of one conflict block, borrowed from its
+/// `Segment::Conflict`.
+struct Sides<'a> {
+    ours_label: &'a str,
+    theirs_label: &'a str,
+    ours: &'a str,
+    theirs: &'a str,
 }
 
-/// States what Resolve will write for this block, so a decided block looks
-/// decided instead of leaving the choice only visible in the button state.
-fn current_choice_summary(choice: Option<Choice>, ours_label: &str, theirs_label: &str) -> String {
+/// One conflict block in place. Undecided: a row of Accept links, then the
+/// Current side under its header band in the success tint and the Incoming
+/// side under its header band in the info tint. Decided: what was accepted
+/// with an Undo link, then the chosen text, ours then theirs for Both, the
+/// same text `conflict::render` writes, on a faint primary tint with a
+/// left bar.
+fn conflict_block_view(ui: &mut egui::Ui, sides: &Sides, json: bool, choice: &mut Option<Choice>) {
+    let p = palette(ui.ctx());
+    ui.add_space(SPACE_EXTRA_SMALL);
+    match *choice {
+        None => {
+            ui.horizontal(|ui| {
+                if lens(ui, "Accept Current") {
+                    *choice = Some(Choice::Ours);
+                }
+                ui.label(RichText::new("|").color(p.on_surface_variant));
+                if lens(ui, "Accept Incoming") {
+                    *choice = Some(Choice::Theirs);
+                }
+                ui.label(RichText::new("|").color(p.on_surface_variant));
+                if lens(ui, "Accept Both") {
+                    *choice = Some(Choice::Both);
+                }
+            });
+            band(
+                ui,
+                &format!("{} (Current Change)", sides.ours_label),
+                p.success.gamma_multiply(0.35),
+            );
+            tinted(ui, sides.ours, json, p.success.gamma_multiply(0.15));
+            band(
+                ui,
+                &format!("{} (Incoming Change)", sides.theirs_label),
+                p.info.gamma_multiply(0.35),
+            );
+            tinted(ui, sides.theirs, json, p.info.gamma_multiply(0.15));
+        }
+        Some(chosen) => {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(accepted_label(chosen)).color(p.on_surface_variant));
+                if lens(ui, "Undo") {
+                    *choice = None;
+                }
+            });
+            let text = match chosen {
+                Choice::Ours => sides.ours.to_string(),
+                Choice::Theirs => sides.theirs.to_string(),
+                Choice::Both => format!("{}{}", sides.ours, sides.theirs),
+            };
+            let rect = tinted(ui, &text, json, p.primary.gamma_multiply(0.10)).rect;
+            let bar = egui::Rect::from_min_size(rect.min, egui::vec2(3.0, rect.height()));
+            ui.painter().rect_filled(bar, 0.0, p.primary);
+        }
+    }
+    ui.add_space(SPACE_EXTRA_SMALL);
+}
+
+/// What a decided block's link row says was accepted.
+fn accepted_label(choice: Choice) -> &'static str {
     match choice {
-        Some(Choice::Ours) => format!("Resolve will write {ours_label}"),
-        Some(Choice::Theirs) => format!("Resolve will write {theirs_label}"),
-        Some(Choice::Both) => format!("Resolve will write both {ours_label} and {theirs_label}"),
-        None => "Not decided yet".to_string(),
+        Choice::Ours => "Accepted Current",
+        Choice::Theirs => "Accepted Incoming",
+        Choice::Both => "Accepted Both",
     }
 }
 
-/// Where the marker line sits relative to a side's content, matching where
-/// git placed `<<<<<<<` (before ours) and `>>>>>>>` (after theirs).
-enum MarkerPosition {
-    Before,
-    After,
+/// A small borderless clickable text in the primary colour, like VS Code's
+/// CodeLens links above a conflict.
+fn lens(ui: &mut egui::Ui, label: &str) -> bool {
+    let p = palette(ui.ctx());
+    ui.add(egui::Label::new(RichText::new(label).color(p.primary)).sense(egui::Sense::click()))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
 }
 
-/// One tinted side of a conflict block: the marker line plus the side's text,
-/// painted in `color` over a background derived from the same token via
-/// `gamma_multiply` rather than a new colour, so the panel keeps one
-/// palette.
-fn conflict_side_view(
-    ui: &mut egui::Ui,
-    color: egui::Color32,
-    marker: &str,
-    text: &str,
-    marker_position: MarkerPosition,
-) {
-    let background = color.gamma_multiply(0.15);
+/// A full-width header band naming one side of a conflict.
+fn band(ui: &mut egui::Ui, title: &str, fill: egui::Color32) {
+    let p = palette(ui.ctx());
     egui::Frame::new()
-        .fill(background)
+        .fill(fill)
         .inner_margin(SPACE_EXTRA_SMALL)
         .show(ui, |ui| {
-            ui.vertical(|ui| {
-                if matches!(marker_position, MarkerPosition::Before) {
-                    ui.label(RichText::new(marker).color(color).monospace());
-                }
-                for line in text.lines() {
-                    ui.label(RichText::new(line).color(color).monospace());
-                }
-                if matches!(marker_position, MarkerPosition::After) {
-                    ui.label(RichText::new(marker).color(color).monospace());
-                }
-            });
+            ui.set_min_width(ui.available_width());
+            ui.label(RichText::new(title).color(p.on_surface).small());
         });
+}
+
+/// `text` as code on a full-width `fill` band.
+fn tinted(ui: &mut egui::Ui, text: &str, json: bool, fill: egui::Color32) -> egui::Response {
+    egui::Frame::new()
+        .fill(fill)
+        .inner_margin(SPACE_EXTRA_SMALL)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            code_text(ui, text, json);
+        })
+        .response
+}
+
+/// Text from the conflicted file, monospace, JSON-highlighted for a `.json`
+/// path. One trailing newline is dropped so a segment does not end in an
+/// extra blank row, and a segment that is only a newline still renders as
+/// its one blank line.
+fn code_text(ui: &mut egui::Ui, text: &str, json: bool) {
+    if text.is_empty() {
+        return;
+    }
+    let text = text.strip_suffix('\n').unwrap_or(text);
+    let p = palette(ui.ctx());
+    if json {
+        let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+        let job = crate::ui::syntax_highlighting::highlight_json(text, font_id, p);
+        ui.label(job);
+    } else {
+        ui.label(RichText::new(text).color(p.on_surface).monospace());
+    }
 }
 
 #[cfg(test)]
@@ -350,35 +326,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn current_choice_summary_names_the_undecided_state() {
-        assert_eq!(
-            current_choice_summary(None, "HEAD", "feature"),
-            "Not decided yet"
-        );
+    fn accepted_label_names_current_for_ours() {
+        assert_eq!(accepted_label(Choice::Ours), "Accepted Current");
     }
 
     #[test]
-    fn current_choice_summary_names_what_resolve_will_write_for_ours() {
-        assert_eq!(
-            current_choice_summary(Some(Choice::Ours), "HEAD", "feature"),
-            "Resolve will write HEAD"
-        );
+    fn accepted_label_names_incoming_for_theirs() {
+        assert_eq!(accepted_label(Choice::Theirs), "Accepted Incoming");
     }
 
     #[test]
-    fn current_choice_summary_names_what_resolve_will_write_for_theirs() {
-        assert_eq!(
-            current_choice_summary(Some(Choice::Theirs), "HEAD", "feature"),
-            "Resolve will write feature"
-        );
-    }
-
-    #[test]
-    fn current_choice_summary_names_both_sides_when_both_are_taken() {
-        assert_eq!(
-            current_choice_summary(Some(Choice::Both), "HEAD", "feature"),
-            "Resolve will write both HEAD and feature"
-        );
+    fn accepted_label_names_both() {
+        assert_eq!(accepted_label(Choice::Both), "Accepted Both");
     }
 
     #[test]

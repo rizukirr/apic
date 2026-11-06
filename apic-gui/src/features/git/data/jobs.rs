@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 
 use crate::features::git::data::cli;
+use crate::features::git::domain::diff::{DiffRow, parse_unified};
 use crate::features::git::domain::status::{Branches, Status};
 
 /// fetched only for a `.json` path since that is the only shape `diff::parse`
@@ -17,6 +18,10 @@ pub(crate) struct DiffData {
     /// `git diff` output for the selected path and side, `--cached` for
     /// staged.
     pub(crate) raw: String,
+
+    /// `raw` parsed into inline diff rows, done here on the job thread so
+    /// the view never parses on a frame.
+    pub(crate) rows: Vec<DiffRow>,
 
     /// The old side's content: `HEAD` for staged, the index for unstaged.
     /// `None` when the path did not exist at that revision, the normal case
@@ -109,8 +114,10 @@ pub(crate) fn diff_job(
     } else {
         (None, None)
     };
+    let rows = parse_unified(&raw);
     Ok(DiffData {
         raw,
+        rows,
         old_blob,
         new_blob,
     })
@@ -415,6 +422,11 @@ mod tests {
             "an untracked file's diff must carry its own content, got: {:?}",
             data.raw
         );
+        assert!(!data.rows.is_empty());
+        assert!(data.rows.iter().all(|row| matches!(
+            row,
+            DiffRow::Line(line) if line.kind == crate::features::git::domain::diff::LineKind::Added
+        )));
     }
 
     /// `project_root` reaches the fixture through a symlink while
