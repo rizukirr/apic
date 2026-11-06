@@ -122,6 +122,22 @@ enum Commands {
         timeout: u64,
     },
 
+    /// List the environments in `.apic/env`, marking those with a local file.
+    /// Values are never printed.
+    Env,
+
+    /// Work with `$name` variables in contracts.
+    Vars {
+        /// Show each `{{name}}` to `$name` rewrite across contracts and
+        /// templates.
+        #[arg(long)]
+        convert: bool,
+
+        /// With `--convert`, apply the rewrites.
+        #[arg(long, requires = "convert")]
+        write: bool,
+    },
+
     /// Create a new contract, or with `--template` a new project template.
     ///
     /// Seeds the contract from the project template, applies the curl-style
@@ -1409,6 +1425,8 @@ pub(crate) fn run() {
             include,
             timeout,
         }),
+        Commands::Env => crate::send::env_cmd(),
+        Commands::Vars { convert, write } => crate::send::vars_cmd(convert, write),
         Commands::Validate { find, template } => validate_cmd(template, find.as_deref()),
         Commands::Open {
             find,

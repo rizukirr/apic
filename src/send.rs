@@ -138,3 +138,59 @@ pub(crate) fn send_cmd(args: &SendArgs) -> Result<(), String> {
     }
     print_body(&reply.body)
 }
+
+/// Handles `apic env`.
+pub(crate) fn env_cmd() -> Result<(), String> {
+    let apic_dir = find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
+    let envs = apic_core::env::list(&apic_dir);
+    if envs.is_empty() {
+        println!("No environments. Create .apic/env/<name>.toml");
+        return Ok(());
+    }
+    for e in envs {
+        if e.has_local {
+            println!("{} (+local)", sanitize(&e.name));
+        } else {
+            println!("{}", sanitize(&e.name));
+        }
+    }
+    Ok(())
+}
+
+/// Handles `apic vars`: with `convert`, rewrites `{{name}}` to `$name` in
+/// every contract and template, printing each file and count, and writes only
+/// with `write`.
+pub(crate) fn vars_cmd(convert: bool, write: bool) -> Result<(), String> {
+    if !convert {
+        return Err("Nothing to do: pass --convert".to_string());
+    }
+    let apic_dir = find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
+    let root = apic_dir.parent().unwrap_or(&apic_dir).to_path_buf();
+    let mut files = crate::cli::list(true).unwrap_or_default();
+    files.extend(apic_core::template::list_templates(&apic_dir));
+
+    let mut total = 0;
+    for path in files {
+        let content = read_file(&path)
+            .map_err(|err| format!("Failed to read {}: {}", path.display(), err))?;
+        let (converted, count) = apic_core::vars::convert_braces(&content);
+        if count == 0 {
+            continue;
+        }
+        total += count;
+        println!(
+            "{}: {count}",
+            sanitize(&apic_core::file::relative_slash(&path, &root))
+        );
+        if write {
+            std::fs::write(&path, converted)
+                .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
+        }
+    }
+    if total == 0 {
+        println!("No {{{{name}}}} variables found");
+    } else if !write {
+        println!("Dry run: pass --write to apply");
+    }
+    Ok(())
+}

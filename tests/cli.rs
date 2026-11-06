@@ -1063,3 +1063,40 @@ fn send_unknown_env_lists_available() {
         .failure()
         .stderr(predicate::str::contains("dev"));
 }
+
+#[test]
+fn env_lists_names_with_local_flag_and_no_values() {
+    let dir = init_project("env_list");
+    fs::create_dir_all(dir.join(".apic/env")).unwrap();
+    fs::write(dir.join(".apic/env/dev.toml"), "token = \"shh\"\n").unwrap();
+    fs::write(dir.join(".apic/env/dev.local.toml"), "token = \"shh2\"\n").unwrap();
+    fs::write(dir.join(".apic/env/prod.toml"), "").unwrap();
+    apic(&dir)
+        .args(["env"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dev (+local)"))
+        .stdout(predicate::str::contains("prod"))
+        .stdout(predicate::str::contains("shh").not());
+}
+
+#[test]
+fn vars_convert_is_dry_until_write() {
+    let dir = init_project("vars_convert");
+    let file = dir.join("contracts/a.json");
+    let original = r#"{"name":"a","method":"GET","url":"{{baseUrl}}/x","headers":[{"name":"A","value":"Bearer {{tok}}"}],"responses":[]}"#;
+    fs::write(&file, original).unwrap();
+    apic(&dir)
+        .args(["vars", "--convert"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("a.json"));
+    assert_eq!(fs::read_to_string(&file).unwrap(), original);
+    apic(&dir)
+        .args(["vars", "--convert", "--write"])
+        .assert()
+        .success();
+    let converted = fs::read_to_string(&file).unwrap();
+    assert!(converted.contains("\"$baseUrl/x\""), "{converted}");
+    assert!(converted.contains("Bearer $tok"), "{converted}");
+}
