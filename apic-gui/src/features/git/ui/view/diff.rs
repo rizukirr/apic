@@ -78,6 +78,8 @@ pub(super) fn inline_diff_view(ui: &mut egui::Ui, rows: &[DiffRow]) {
         .len();
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
+        // vibekit: the floor only matters in the fontless test harness, where the
+        // row height is 0 and show_rows overflows. Real fonts are far above 1.0.
         let row_h = ui.text_style_height(&egui::TextStyle::Monospace).max(1.0);
         egui::ScrollArea::both()
             .auto_shrink([false, false])
