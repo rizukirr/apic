@@ -23,7 +23,7 @@ use crate::features::contracts::ui::view::{
     FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, env_menu, header_actions, sidebar_body,
     templates_body,
 };
-use crate::features::git::ui::state::{GitAction, GitEvent, GitState};
+use crate::features::git::ui::state::{BranchOpKind, GitAction, GitEvent, GitState};
 use crate::features::git::ui::view;
 use crate::features::project::data::project_root_of;
 use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
@@ -680,14 +680,24 @@ impl App {
                 self.shell.templates_open = !self.shell.templates_open;
             }
             Action::Contracts(action) => self.handle_contracts(action, ctx),
-            Action::Git(GitAction::SwitchBranch { .. }) if self.contracts.has_unsaved_edits() => {
+            Action::Git(action @ (GitAction::SwitchBranch { .. } | GitAction::ConfirmBranchOp))
+                if self.contracts.has_unsaved_edits() =>
+            {
                 let open = self
                     .contracts
                     .path
                     .as_deref()
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|| "the open contract".to_string());
-                let msg = format!("cannot switch branch, {open} has unsaved edits");
+                let what = match (&action, &self.git.pending_branch_op) {
+                    (GitAction::ConfirmBranchOp, Some(op)) if op.kind == BranchOpKind::Pull => {
+                        "pull"
+                    }
+                    (GitAction::ConfirmBranchOp, _) => "merge",
+                    _ => "switch branch",
+                };
+                self.git.pending_branch_op = None;
+                let msg = format!("cannot {what}, {open} has unsaved edits");
                 self.git.error = msg.clone();
                 self.shell.status = msg;
             }
@@ -735,6 +745,7 @@ impl eframe::App for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::git::ui::state::BranchOp;
     use apic_core::edit::EditModel;
 
     use crate::app::test_support::{
@@ -1193,6 +1204,41 @@ mod tests {
             !app.git.error.is_empty(),
             "the refusal must be surfaced in git.error"
         );
+    }
+
+    #[test]
+    fn merge_is_refused_with_unsaved_edits() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        settle(&mut app, &ctx);
+        let i = app
+            .contracts
+            .entries
+            .iter()
+            .position(|e| e.rel == "sample.json")
+            .expect("sample.json is in the fixture");
+        app.apply(Action::Contracts(ContractsAction::Load(i)), &ctx);
+        app.apply(Action::Contracts(ContractsAction::ToggleEdit), &ctx);
+        app.contracts.model.as_mut().unwrap().name = "dirtied".to_string();
+        let head = git_output(&root, &["rev-parse", "HEAD"]);
+
+        app.git.pending_branch_op = Some(BranchOp {
+            kind: BranchOpKind::Merge,
+            target: "apic-test".into(),
+            source: "apic-second".into(),
+        });
+        app.apply(Action::Git(GitAction::ConfirmBranchOp), &ctx);
+        settle(&mut app, &ctx);
+
+        assert_eq!(current_branch(&root), "apic-test");
+        assert_eq!(git_output(&root, &["rev-parse", "HEAD"]), head);
+        assert!(!app.git.error.is_empty());
+        assert!(app.git.pending_branch_op.is_none());
     }
 
     /// A contract that parses but fails validation, such as one declaring
