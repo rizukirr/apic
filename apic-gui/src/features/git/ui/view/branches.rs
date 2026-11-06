@@ -49,9 +49,27 @@ pub(crate) fn branch_menu(ui: &mut egui::Ui, state: &mut GitState) -> Option<Git
         p.warning
     };
     ui.menu_button(RichText::new(title).color(color), |ui| {
+        // Every name gets the widest name's width, so the ⋮ buttons that
+        // follow line up in one column.
+        let font = egui::TextStyle::Button.resolve(ui.style());
+        let name_width = branches
+            .all
+            .iter()
+            .map(|name| {
+                ui.fonts_mut(|f| {
+                    f.layout_no_wrap(name.clone(), font.clone(), egui::Color32::PLACEHOLDER)
+                        .size()
+                        .x
+                })
+            })
+            .fold(0.0, f32::max)
+            + ui.spacing().button_padding.x * 2.0;
         for name in &branches.all {
             ui.horizontal(|ui| {
-                let row = ui.selectable_label(Some(name.as_str()) == current.as_deref(), name);
+                let row = ui.add(
+                    egui::Button::selectable(Some(name.as_str()) == current.as_deref(), name)
+                        .min_size(egui::vec2(name_width, 0.0)),
+                );
                 if row.clicked() {
                     if let Some(a) = branch_select_action(name, current.as_deref()) {
                         action = Some(a);

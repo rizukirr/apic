@@ -953,6 +953,40 @@ mod tests {
         );
     }
 
+    /// The ⋮ buttons line up in one column at the right edge of the
+    /// dropdown, whatever the branch name lengths.
+    #[test]
+    fn kebab_buttons_share_one_column() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut state = GitState {
+            branches: Branches {
+                current: Some("main".into()),
+                all: vec!["main".into(), "feature/a-much-longer-branch-name".into()],
+                remotes: Vec::new(),
+            },
+            branches_loaded: true,
+            ..GitState::default()
+        };
+        let mut action = None;
+
+        let nodes = menu_frame(&ctx, &mut state, vec![], &mut action);
+        let title = node(&nodes, egui_phosphor::regular::GIT_BRANCH);
+        let nodes = click_at(&ctx, &mut state, title, &mut action);
+
+        let kebabs: Vec<egui::Rect> = nodes
+            .iter()
+            .filter(|(l, _)| l.starts_with(egui_phosphor::regular::DOTS_THREE_VERTICAL))
+            .map(|(_, r)| *r)
+            .collect();
+        assert!(kebabs.len() >= 2, "one ⋮ per branch: {kebabs:?}");
+        let new_branch = node(&nodes, egui_phosphor::regular::PLUS);
+        for r in &kebabs {
+            assert!((r.min.x - kebabs[0].min.x).abs() < 0.5, "{kebabs:?}");
+            assert!(r.max.x <= new_branch.max.x + 0.5, "{r:?} vs {new_branch:?}");
+        }
+    }
+
     #[test]
     fn amend_popup_renders_in_both_themes() {
         for preference in BOTH_THEMES {
