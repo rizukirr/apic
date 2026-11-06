@@ -96,17 +96,9 @@ pub(crate) enum GitAction {
     ConfirmBranchDelete,
 
     /// Open the pull or merge popup for this branch.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "constructed by the branch menu in a later task")
-    )]
     RequestBranchOp { kind: BranchOpKind, target: String },
 
     /// The pending pull or merge was confirmed, run it.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "constructed by the branch popup in a later task")
-    )]
     ConfirmBranchOp,
 
     /// Write the rendered resolution `text` for this conflicted path and
@@ -122,10 +114,6 @@ pub(crate) enum BranchOpKind {
     Pull,
 
     /// Merge a local or remote branch, no fetch.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "constructed by the branch menu in a later task")
-    )]
     Merge,
 }
 

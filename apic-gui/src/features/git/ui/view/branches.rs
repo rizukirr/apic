@@ -4,21 +4,40 @@
 use eframe::egui;
 use egui::RichText;
 
-use crate::features::git::domain::status::{DiscardTarget, discard_target};
-use crate::features::git::ui::state::{GitAction, GitState};
+use crate::features::git::domain::status::{Branches, DiscardTarget, discard_target};
+use crate::features::git::ui::state::{BranchOpKind, GitAction, GitState};
 use crate::ui::components::{ButtonKind, DialogButton, bordered_input, detail_box, dialog};
 use crate::ui::theme::*;
 
-/// The menu entries for one branch: delete it, enabled unless it is the
-/// current branch, which git refuses to delete.
+/// The menu entries for one branch: pull into it, merge into it, and delete
+/// it. Delete is enabled unless it is the current branch, which git refuses
+/// to delete.
 fn branch_menu_items(name: &str, current: Option<&str>) -> Vec<(&'static str, bool, GitAction)> {
-    vec![(
-        "Delete branch",
-        Some(name) != current,
-        GitAction::RequestBranchDelete {
-            name: name.to_string(),
-        },
-    )]
+    vec![
+        (
+            "Pull",
+            true,
+            GitAction::RequestBranchOp {
+                kind: BranchOpKind::Pull,
+                target: name.to_string(),
+            },
+        ),
+        (
+            "Merge",
+            true,
+            GitAction::RequestBranchOp {
+                kind: BranchOpKind::Merge,
+                target: name.to_string(),
+            },
+        ),
+        (
+            "Delete",
+            Some(name) != current,
+            GitAction::RequestBranchDelete {
+                name: name.to_string(),
+            },
+        ),
+    ]
 }
 
 /// The app-bar branch dropdown: every local branch (click to switch,
@@ -128,45 +147,21 @@ pub(super) fn create_branch_dialog(ctx: &egui::Context, state: &mut GitState) ->
     }
 }
 
-/// Delete confirmation for a branch. The `x` button no longer names a fixed
-/// target, since there is no highlight left to read one from, so this single
-/// dialog carries its own picker: every branch except the current one,
-/// defaulting to whichever branch it was opened for.
+/// Delete confirmation for the right-clicked branch. The target is fixed:
+/// the dialog names it and offers no picker.
 pub(super) fn delete_branch_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
     let p = palette(ctx);
-    state.pending_branch_delete.as_ref()?;
-    let current = state.branches.current.clone();
-    let eligible: Vec<String> = state
-        .branches
-        .all
-        .iter()
-        .filter(|name| Some(name.as_str()) != current.as_deref())
-        .cloned()
-        .collect();
-    if eligible.is_empty() {
-        // Defensively close rather than show an empty picker: the branch
-        // list can change under the dialog, e.g. after a refresh.
-        state.pending_branch_delete = None;
-        return None;
-    }
-    let picked = state.pending_branch_delete.as_mut().expect("checked above");
-    if !eligible.contains(picked) {
-        *picked = eligible[0].clone();
-    }
-
+    let name = state.pending_branch_delete.clone()?;
     let outcome = dialog(
         ctx,
         "delete_branch_modal",
         "Delete branch",
         |ui| {
             ui.label(RichText::new("Delete branch").color(p.on_surface_variant));
-            egui::ComboBox::from_id_salt("delete_branch_combo")
-                .selected_text(picked.clone())
-                .show_ui(ui, |ui| {
-                    for name in &eligible {
-                        ui.selectable_value(picked, name.clone(), name);
-                    }
-                });
+            ui.add_space(SPACE_SMALL);
+            detail_box(ui, |ui| {
+                ui.label(RichText::new(&name).color(p.on_surface).strong());
+            });
         },
         &[
             DialogButton::new("Cancel", ButtonKind::Secondary),
@@ -177,6 +172,84 @@ pub(super) fn delete_branch_dialog(ctx: &egui::Context, state: &mut GitState) ->
         Some(GitAction::ConfirmBranchDelete)
     } else if outcome.clicked == Some(0) || outcome.closed {
         state.pending_branch_delete = None;
+        None
+    } else {
+        None
+    }
+}
+
+/// The branches a pull or merge into `target` may bring in: remote branches
+/// for a pull, every other local branch then every remote branch for a merge.
+pub(super) fn branch_op_sources(
+    kind: BranchOpKind,
+    target: &str,
+    branches: &Branches,
+) -> Vec<String> {
+    match kind {
+        BranchOpKind::Pull => branches.remotes.clone(),
+        BranchOpKind::Merge => branches
+            .all
+            .iter()
+            .filter(|name| name.as_str() != target)
+            .chain(branches.remotes.iter())
+            .cloned()
+            .collect(),
+    }
+}
+
+/// The pull or merge popup: the right-clicked branch shown fixed, and a
+/// picker for the branch to bring into it. The confirm button is disabled
+/// when there is nothing to pick.
+pub(super) fn branch_op_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
+    let p = palette(ctx);
+    let op = state.pending_branch_op.as_ref()?;
+    let sources = branch_op_sources(op.kind, &op.target, &state.branches);
+    let (title, empty) = match op.kind {
+        BranchOpKind::Pull => ("Pull", "no branches to pull from"),
+        BranchOpKind::Merge => ("Merge", "no branches to merge"),
+    };
+    let op = state.pending_branch_op.as_mut().expect("checked above");
+    if !sources.contains(&op.source) {
+        op.source = sources.first().cloned().unwrap_or_default();
+    }
+    let target = op.target.clone();
+    let outcome = dialog(
+        ctx,
+        "branch_op_modal",
+        title,
+        |ui| {
+            ui.label(RichText::new("into branch").color(p.on_surface_variant));
+            ui.add_space(SPACE_SMALL);
+            detail_box(ui, |ui| {
+                ui.label(RichText::new(&target).color(p.on_surface).strong());
+            });
+            ui.add_space(SPACE_SMALL);
+            ui.label(RichText::new("from").color(p.on_surface_variant));
+            if sources.is_empty() {
+                ui.label(RichText::new(empty).color(p.on_surface_variant));
+            } else {
+                egui::ComboBox::from_id_salt("branch_op_combo")
+                    .selected_text(op.source.clone())
+                    .show_ui(ui, |ui| {
+                        for name in &sources {
+                            ui.selectable_value(&mut op.source, name.clone(), name);
+                        }
+                    });
+            }
+        },
+        &[
+            DialogButton::new("Cancel", ButtonKind::Secondary),
+            DialogButton {
+                label: title,
+                kind: ButtonKind::Primary,
+                enabled: !sources.is_empty(),
+            },
+        ],
+    );
+    if outcome.clicked == Some(1) {
+        Some(GitAction::ConfirmBranchOp)
+    } else if outcome.clicked == Some(0) || outcome.closed {
+        state.pending_branch_op = None;
         None
     } else {
         None
@@ -249,11 +322,56 @@ mod tests {
     }
 
     #[test]
-    fn branch_menu_offers_delete_for_other_branches_only() {
+    fn branch_menu_offers_pull_merge_and_delete() {
         let other = branch_menu_items("feature", Some("main"));
-        assert!(other.iter().any(|(_, enabled, a)| *enabled
-            && matches!(a, GitAction::RequestBranchDelete { name } if name == "feature")));
+        let labels: Vec<&str> = other.iter().map(|(l, _, _)| *l).collect();
+        assert_eq!(labels, ["Pull", "Merge", "Delete"]);
+        assert!(other.iter().all(|(_, enabled, _)| *enabled));
+        assert!(other.iter().any(|(_, _, a)| matches!(
+            a,
+            GitAction::RequestBranchOp { kind: BranchOpKind::Pull, target } if target == "feature"
+        )));
+        assert!(other.iter().any(|(_, _, a)| matches!(
+            a,
+            GitAction::RequestBranchOp { kind: BranchOpKind::Merge, target } if target == "feature"
+        )));
+        assert!(other.iter().any(|(_, _, a)| matches!(
+            a,
+            GitAction::RequestBranchDelete { name } if name == "feature"
+        )));
+    }
+
+    #[test]
+    fn delete_is_disabled_on_the_current_branch_only() {
         let current = branch_menu_items("main", Some("main"));
-        assert!(current.iter().all(|(_, enabled, _)| !*enabled));
+        for (label, enabled, _) in current {
+            assert_eq!(enabled, label != "Delete", "{label}");
+        }
+    }
+
+    #[test]
+    fn pull_sources_are_remote_branches() {
+        let b = Branches {
+            current: Some("main".into()),
+            all: vec!["main".into(), "feature".into()],
+            remotes: vec!["origin/main".into()],
+        };
+        assert_eq!(
+            branch_op_sources(BranchOpKind::Pull, "main", &b),
+            ["origin/main"]
+        );
+    }
+
+    #[test]
+    fn merge_sources_are_other_locals_then_remotes() {
+        let b = Branches {
+            current: Some("main".into()),
+            all: vec!["main".into(), "feature".into()],
+            remotes: vec!["origin/main".into()],
+        };
+        assert_eq!(
+            branch_op_sources(BranchOpKind::Merge, "main", &b),
+            ["feature", "origin/main"]
+        );
     }
 }

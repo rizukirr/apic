@@ -13,7 +13,9 @@ use eframe::egui;
 use egui::RichText;
 
 pub(crate) use self::branches::branch_menu;
-use self::branches::{create_branch_dialog, delete_branch_dialog, discard_dialog};
+use self::branches::{
+    branch_op_dialog, create_branch_dialog, delete_branch_dialog, discard_dialog,
+};
 use self::diff::{raw_diff_view, semantic_diff_view};
 use self::files::{FileTree, RowMode, file_row};
 use self::resolver::conflict_resolver;
@@ -202,6 +204,9 @@ pub(crate) fn dialogs(ctx: &egui::Context, state: &mut GitState) -> Option<GitAc
     if let Some(a) = delete_branch_dialog(ctx, state) {
         action = Some(a);
     }
+    if let Some(a) = branch_op_dialog(ctx, state) {
+        action = Some(a);
+    }
     action
 }
 
@@ -320,6 +325,7 @@ mod tests {
     use crate::features::git::domain::conflict::{self, Choice};
     use crate::features::git::domain::status::fixtures::{file, untracked};
     use crate::features::git::domain::status::{Branches, Change, FileStatus};
+    use crate::features::git::ui::state::{BranchOp, BranchOpKind};
 
     const CONTRACT_GET: &str =
         r#"{"name":"x","method":"GET","url":"http://a","headers":[],"responses":[]}"#;
@@ -788,6 +794,32 @@ mod tests {
             // The dialog stays open until the user confirms or cancels: a bare
             // render must not clear it.
             assert!(state.pending_branch_delete.is_some());
+        }
+    }
+
+    #[test]
+    fn branch_op_popup_renders_and_picks_a_source() {
+        for preference in BOTH_THEMES {
+            for kind in [BranchOpKind::Pull, BranchOpKind::Merge] {
+                let mut state = GitState {
+                    branches: Branches {
+                        current: Some("main".into()),
+                        all: vec!["main".into(), "feature".into()],
+                        remotes: vec!["origin/main".into()],
+                    },
+                    pending_branch_op: Some(BranchOp {
+                        kind,
+                        target: "main".into(),
+                        source: String::new(),
+                    }),
+                    ..GitState::default()
+                };
+                run_in_theme(preference, |ui| {
+                    dialogs(ui.ctx(), &mut state);
+                });
+                let op = state.pending_branch_op.as_ref().expect("stays open");
+                assert!(!op.source.is_empty(), "a source is preselected");
+            }
         }
     }
 
