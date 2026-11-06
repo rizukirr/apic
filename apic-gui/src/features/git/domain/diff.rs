@@ -513,7 +513,9 @@ fn kind_at(rows: &[DiffRow], i: usize) -> Option<LineKind> {
 }
 
 /// Sets `emphasis` on each removed line paired by position with an added
-/// line in the run directly after it.
+/// line in the run after it. Unnumbered notice rows, such as
+/// `\ No newline at end of file`, between the two runs do not break the
+/// pairing.
 fn emphasize(rows: &mut [DiffRow]) {
     let mut i = 0;
     while i < rows.len() {
@@ -521,33 +523,46 @@ fn emphasize(rows: &mut [DiffRow]) {
             i += 1;
             continue;
         }
-        let mut j = i;
-        while kind_at(rows, j) == Some(LineKind::Removed) {
-            j += 1;
+        let mut removed = Vec::new();
+        while kind_at(rows, i) == Some(LineKind::Removed) {
+            removed.push(i);
+            i += 1;
         }
-        let mut k = j;
-        while kind_at(rows, k) == Some(LineKind::Added) {
-            k += 1;
+        while is_notice(rows, i) {
+            i += 1;
         }
-        for n in 0..(j - i).min(k - j) {
-            let (old_span, new_span) = match (&rows[i + n], &rows[j + n]) {
+        let mut added = Vec::new();
+        while kind_at(rows, i) == Some(LineKind::Added) {
+            added.push(i);
+            i += 1;
+        }
+        for (&o, &n) in removed.iter().zip(&added) {
+            let (old_span, new_span) = match (&rows[o], &rows[n]) {
                 (DiffRow::Line(old), DiffRow::Line(new)) => changed_spans(&old.text, &new.text),
                 _ => (None, None),
             };
-            if let DiffRow::Line(old) = &mut rows[i + n] {
+            if let DiffRow::Line(old) = &mut rows[o] {
                 old.emphasis = old_span;
             }
-            if let DiffRow::Line(new) = &mut rows[j + n] {
+            if let DiffRow::Line(new) = &mut rows[n] {
                 new.emphasis = new_span;
             }
         }
-        i = k;
     }
 }
 
+/// Whether the row at `i` is an unnumbered context notice.
+fn is_notice(rows: &[DiffRow], i: usize) -> bool {
+    matches!(
+        rows.get(i),
+        Some(DiffRow::Line(line))
+            if line.kind == LineKind::Context && line.old_no.is_none() && line.new_no.is_none()
+    )
+}
+
 /// The byte range of each line left after trimming the prefix and suffix
-/// the two share, compared by `char`. A side whose range is empty or the
-/// whole line gets `None`.
+/// the two share, compared by `char`, then widened to whole words. A side
+/// whose range is empty or the whole line gets `None`.
 fn changed_spans(old: &str, new: &str) -> (Option<Range<usize>>, Option<Range<usize>>) {
     let prefix: usize = old
         .chars()
@@ -562,11 +577,53 @@ fn changed_spans(old: &str, new: &str) -> (Option<Range<usize>>, Option<Range<us
         .take_while(|(a, b)| a == b)
         .map(|(a, _)| a.len_utf8())
         .sum();
+    let prefix = widen_prefix(old, new, prefix);
+    let suffix = widen_suffix(old, new, suffix);
     let span = |s: &str| {
         let range = prefix..s.len() - suffix;
         (!range.is_empty() && range.len() < s.len()).then_some(range)
     };
     (span(old), span(new))
+}
+
+/// A letter, digit or `_`: what a word is made of for emphasis.
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Moves the shared prefix's end back to the start of the word it cuts, if
+/// it cuts one: a word character just before the cut and, on either side,
+/// just after it.
+fn widen_prefix(old: &str, new: &str, mut prefix: usize) -> usize {
+    let after = |s: &str| s[prefix..].chars().next().is_some_and(is_word);
+    if after(old) || after(new) {
+        while let Some(c) = old[..prefix].chars().next_back().filter(|&c| is_word(c)) {
+            prefix -= c.len_utf8();
+        }
+    }
+    prefix
+}
+
+/// Moves the shared suffix's start forward to the end of the word it cuts,
+/// if it cuts one: a word character just after the cut and, on either side,
+/// just before it.
+fn widen_suffix(old: &str, new: &str, mut suffix: usize) -> usize {
+    let before = |s: &str| {
+        s[..s.len() - suffix]
+            .chars()
+            .next_back()
+            .is_some_and(is_word)
+    };
+    if before(old) || before(new) {
+        while let Some(c) = old[old.len() - suffix..]
+            .chars()
+            .next()
+            .filter(|&c| is_word(c))
+        {
+            suffix -= c.len_utf8();
+        }
+    }
+    suffix
 }
 
 /// The field-level changes between two revisions of a contract, or `None`
@@ -962,8 +1019,8 @@ mod tests {
         let rows = parse_unified("@@ -1 +1 @@\n-café au lait\n+cafe au lait\n");
         let old = line(&rows, 1);
         let new = line(&rows, 2);
-        assert_eq!(&old.text[old.emphasis.clone().unwrap()], "é");
-        assert_eq!(&new.text[new.emphasis.clone().unwrap()], "e");
+        assert_eq!(&old.text[old.emphasis.clone().unwrap()], "café");
+        assert_eq!(&new.text[new.emphasis.clone().unwrap()], "cafe");
     }
 
     #[test]
@@ -975,12 +1032,38 @@ mod tests {
 
     #[test]
     fn parse_unified_pairs_by_position_and_leaves_extra_lines_alone() {
-        let rows = parse_unified("@@ -1,2 +1 @@\n-a1\n-a2\n+a1x\n");
-        // a1 -> a1x: nothing removed on the old side, `x` added on the new.
-        assert_eq!(line(&rows, 1).emphasis, None);
-        assert_eq!(line(&rows, 2).emphasis, None);
+        let rows = parse_unified("@@ -1,2 +1 @@\n-a b\n-c\n+a x\n");
+        let old = line(&rows, 1);
         let new = line(&rows, 3);
+        assert_eq!(&old.text[old.emphasis.clone().unwrap()], "b");
         assert_eq!(&new.text[new.emphasis.clone().unwrap()], "x");
+        assert_eq!(line(&rows, 2).emphasis, None);
+    }
+
+    #[test]
+    fn parse_unified_widens_emphasis_to_whole_words() {
+        let rows = parse_unified(
+            "@@ -1,2 +1,2 @@\n-\"method\": \"GET\",\n-count: 10\n+\"method\": \"POST\",\n+count: 12\n",
+        );
+        let span = |i: usize| {
+            let l = line(&rows, i);
+            l.text[l.emphasis.clone().unwrap()].to_string()
+        };
+        assert_eq!(span(1), "GET");
+        assert_eq!(span(3), "POST");
+        assert_eq!(span(2), "10");
+        assert_eq!(span(4), "12");
+    }
+
+    #[test]
+    fn parse_unified_pairs_across_a_no_newline_notice() {
+        let rows = parse_unified(
+            "@@ -1,2 +1,2 @@\n-café au lait\n-end\n\\ No newline at end of file\n+cafe au lait\n+end\n",
+        );
+        let old = line(&rows, 1);
+        let new = line(&rows, 4);
+        assert_eq!(&old.text[old.emphasis.clone().unwrap()], "café");
+        assert_eq!(&new.text[new.emphasis.clone().unwrap()], "cafe");
     }
 
     #[test]
