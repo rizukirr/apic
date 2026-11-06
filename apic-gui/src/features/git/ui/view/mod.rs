@@ -622,9 +622,46 @@ mod tests {
             run_in_theme(preference, |ui| {
                 central_body(ui, &mut state);
             });
+            state
+                .resolve
+                .as_mut()
+                .expect("markers must parse")
+                .choices
+                .fill(Some(Choice::Ours));
+            run_in_theme(preference, |ui| {
+                central_body(ui, &mut state);
+            });
             let resolve = state.resolve.as_ref().expect("markers must parse");
             let rendered = conflict::render(&resolve.file, &resolve.choices);
             assert!(apic_core::json::validate(&rendered).is_err());
+        }
+    }
+
+    #[test]
+    fn central_renders_the_conflict_resolver_with_a_mix_of_decided_and_undecided_blocks() {
+        for preference in BOTH_THEMES {
+            let mut state = conflict_state("contracts/sample.json", CONFLICT_TEXT);
+            run_in_theme(preference, |ui| {
+                central_body(ui, &mut state);
+            });
+            let resolve = state.resolve.as_mut().expect("markers must parse");
+            resolve.choices[0] = Some(Choice::Both);
+            run_in_theme(preference, |ui| {
+                central_body(ui, &mut state);
+            });
+            let resolve = state.resolve.as_ref().expect("markers must parse");
+            assert_eq!(resolve.choices, vec![Some(Choice::Both), None]);
+        }
+    }
+
+    #[test]
+    fn central_renders_the_conflict_resolver_for_a_non_json_file() {
+        for preference in BOTH_THEMES {
+            let mut state = conflict_state("notes.txt", CONFLICT_TEXT);
+            run_in_theme(preference, |ui| {
+                central_body(ui, &mut state);
+            });
+            assert!(state.resolve.is_some());
         }
     }
 
