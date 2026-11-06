@@ -491,18 +491,17 @@ impl App {
         if matches!(action, ContractsAction::OpenNewTemplate) {
             ctx.data_mut(|d| d.insert_temp(egui::Id::new(FOCUS_NEW_TEMPLATE), "open".to_string()));
         }
-        let repairing_before = self.contracts.repair.as_ref().map(|rep| rep.index);
+        let is_load = matches!(action, ContractsAction::Load(_));
         let paths = self.contracts_paths();
         let events = self.contracts.handle(action, paths.as_ref());
         self.apply_contracts_events(events, Some(ctx));
-        let repairing_after = self.contracts.repair.as_ref().map(|rep| rep.index);
-        if repairing_after.is_some() && repairing_after != repairing_before {
+        if is_load {
             self.open_conflict_in_changes(ctx);
         }
     }
 
-    /// When a contracts action just opened the repair editor for a contract
-    /// git lists as conflicted, shows it in the inline conflict resolver
+    /// When the contract a `Load` just opened went to the repair editor and
+    /// git lists it as conflicted, shows it in the inline conflict resolver
     /// under Changes instead. Anything else, including git status not yet
     /// loaded, leaves the repair editor in place.
     fn open_conflict_in_changes(&mut self, ctx: &egui::Context) {
@@ -1646,51 +1645,5 @@ mod tests {
         assert_eq!(app.shell.central, CentralView::Contracts);
         assert_eq!(app.shell.sidebar_view, SidebarView::Contracts);
         assert!(app.contracts.repair.is_some());
-    }
-
-    #[test]
-    fn discarding_edits_to_open_a_conflicted_contract_opens_the_resolver() {
-        if !git_available() {
-            return;
-        }
-        let root = conflict_fixture();
-        std::fs::write(
-            root.join("contracts").join("other.json"),
-            apic_core::template::DEFAULT,
-        )
-        .unwrap();
-        let mut app = app_at(root);
-        let ctx = egui::Context::default();
-        app.reload_project();
-        app.poll_git(&ctx);
-        settle(&mut app, &ctx);
-        let position = |app: &App, name: &str| {
-            app.contracts
-                .entries
-                .iter()
-                .position(|e| e.path.ends_with(name))
-                .expect("contract is listed")
-        };
-        let other = position(&app, "other.json");
-        let sample = position(&app, "sample.json");
-        app.apply(Action::Contracts(ContractsAction::Load(other)), &ctx);
-        app.contracts.editing = true;
-        app.contracts
-            .model
-            .as_mut()
-            .expect("other.json is open")
-            .name
-            .push('x');
-        assert!(app.contracts.has_unsaved_edits());
-
-        app.apply(Action::Contracts(ContractsAction::Load(sample)), &ctx);
-        app.apply(Action::Contracts(ContractsAction::DiscardAndContinue), &ctx);
-
-        assert_eq!(app.shell.central, CentralView::Git);
-        assert_eq!(app.shell.sidebar_view, SidebarView::Changes);
-        assert_eq!(
-            app.git.selected,
-            Some(("contracts/sample.json".to_string(), false))
-        );
     }
 }
