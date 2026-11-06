@@ -20,6 +20,8 @@ apic send -f auth/login --env dev
 
 With a contract whose URL is `$baseUrl/auth/login` and a header `Authorization: Bearer $access_token`, this sends `POST https://api.dev.example.com/auth/login` with your token, prints the response body on stdout, and prints a line such as `HTTP 200 OK · 143 ms` on stderr.
 
+To try it without a server of your own, this repository has a `demo` environment and contracts in `example/demo/` that call the public mock APIs dummyjson.com and httpbin.org. From the repository root, run `apic send -f demo/login --env demo`, then put the returned `accessToken` in `.apic/env/demo.local.toml` as `access_token = "..."` to make `demo/me` work. `demo/get_product` needs `--var id=1`, and `demo/echo_upload` sends a multipart file.
+
 ## Variables
 
 Any string in a contract's URL, query, headers or body can hold variables.
