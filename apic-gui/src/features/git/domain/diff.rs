@@ -1,4 +1,4 @@
-//! Field-level comparison of two contract revisions.
+//! Field-level comparison of two contract revisions, and the parse of a git diff into inline rows.
 //!
 //! This is the reason the panel exists: `git diff` can say a line changed,
 //! this can say a required query parameter was added. Knows nothing about git.
@@ -6,6 +6,7 @@
 //! Consumed by `view`.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
 use apic_core::edit::{EditHeader, EditModel, EditPart, EditQuery, EditResponse};
 use apic_core::json::{method_str, pretty_json};
@@ -379,6 +380,215 @@ pub(crate) fn strip_diff_header(raw: &str) -> &str {
     raw
 }
 
+/// Which side of a unified diff one line belongs to.
+// vibekit: used by the diff job and view from the next task
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LineKind {
+    Context,
+    Removed,
+    Added,
+}
+
+/// One line of the file in an inline diff.
+// vibekit: used by the diff job and view from the next task
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DiffLine {
+    pub(crate) kind: LineKind,
+    /// The line's number in the old file. `None` for an added line and for a
+    /// notice such as `\ No newline at end of file`.
+    pub(crate) old_no: Option<u32>,
+    /// The line's number in the new file. `None` for a removed line and for
+    /// a notice.
+    pub(crate) new_no: Option<u32>,
+    /// The line without its `-`, `+` or space marker.
+    pub(crate) text: String,
+    /// The byte range of `text` that differs from the paired line on the
+    /// other side, drawn in a stronger tint. Always on `char` boundaries.
+    pub(crate) emphasis: Option<Range<usize>>,
+}
+
+/// One row of an inline diff, built by [`parse_unified`].
+// vibekit: used by the diff job and view from the next task
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DiffRow {
+    /// A whole `@@ ... @@` hunk header line.
+    Hunk(String),
+    /// One line of the file.
+    Line(DiffLine),
+}
+
+/// Parses `git diff` output into inline rows, numbering lines from each
+/// hunk header and marking the changed span of each removed line paired
+/// with an added one. A body with no hunk whose lines all start with `+`
+/// is the untracked file `diff_job` builds: every line is added, numbered
+/// from 1. Any other body with no hunk, such as `Binary files ... differ`,
+/// becomes unnumbered context with the `diff --git`, `index`, `---` and
+/// `+++` lines dropped.
+// vibekit: used by the diff job and view from the next task
+#[allow(dead_code)]
+pub(crate) fn parse_unified(raw: &str) -> Vec<DiffRow> {
+    let body = strip_diff_header(raw);
+    let has_hunk = body.lines().any(|line| line.starts_with("@@"));
+    let mut rows = Vec::new();
+
+    if !has_hunk {
+        let untracked = body.lines().all(|line| line.starts_with('+'));
+        let mut new_no = 0;
+        for line in body.lines() {
+            if untracked {
+                new_no += 1;
+                rows.push(line_row(LineKind::Added, None, Some(new_no), &line[1..]));
+            } else if !is_file_header(line) {
+                rows.push(line_row(LineKind::Context, None, None, line));
+            }
+        }
+        return rows;
+    }
+
+    let (mut old_no, mut new_no) = (1, 1);
+    for line in body.lines() {
+        if line.starts_with("@@") {
+            (old_no, new_no) = hunk_starts(line);
+            rows.push(DiffRow::Hunk(line.to_string()));
+        } else if let Some(text) = line.strip_prefix('-') {
+            rows.push(line_row(LineKind::Removed, Some(old_no), None, text));
+            old_no += 1;
+        } else if let Some(text) = line.strip_prefix('+') {
+            rows.push(line_row(LineKind::Added, None, Some(new_no), text));
+            new_no += 1;
+        } else if line.is_empty() || line.starts_with(' ') {
+            let text = line.get(1..).unwrap_or("");
+            rows.push(line_row(
+                LineKind::Context,
+                Some(old_no),
+                Some(new_no),
+                text,
+            ));
+            old_no += 1;
+            new_no += 1;
+        } else {
+            rows.push(line_row(LineKind::Context, None, None, line));
+        }
+    }
+    emphasize(&mut rows);
+    rows
+}
+
+/// Builds one `DiffRow::Line` with no emphasis.
+// vibekit: used by the diff job and view from the next task
+#[allow(dead_code)]
+fn line_row(kind: LineKind, old_no: Option<u32>, new_no: Option<u32>, text: &str) -> DiffRow {
+    DiffRow::Line(DiffLine {
+        kind,
+        old_no,
+        new_no,
+        text: text.to_string(),
+        emphasis: None,
+    })
+}
+
+/// Whether `line` is part of git's per-file preamble rather than content.
+// vibekit: used by the diff job and view from the next task
+#[allow(dead_code)]
+fn is_file_header(line: &str) -> bool {
+    ["diff --git ", "index ", "--- ", "+++ "]
+        .iter()
+        .any(|prefix| line.starts_with(prefix))
+}
+
+/// The old and new start lines from a `@@ -a,b +c,d @@` header, 1 for any
+/// part that does not parse.
+// vibekit: used by the diff job and view from the next task
+#[allow(dead_code)]
+fn hunk_starts(header: &str) -> (u32, u32) {
+    let mut parts = header.split_whitespace().skip(1);
+    let mut start = |sign: char| {
+        parts
+            .next()
+            .and_then(|part| part.strip_prefix(sign))
+            .and_then(|part| part.split(',').next())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(1)
+    };
+    let old = start('-');
+    let new = start('+');
+    (old, new)
+}
+
+/// The kind of the row at `i`, `None` for a hunk header or past the end.
+// vibekit: used by the diff job and view from the next task
+#[allow(dead_code)]
+fn kind_at(rows: &[DiffRow], i: usize) -> Option<LineKind> {
+    match rows.get(i) {
+        Some(DiffRow::Line(line)) => Some(line.kind),
+        _ => None,
+    }
+}
+
+/// Sets `emphasis` on each removed line paired by position with an added
+/// line in the run directly after it.
+// vibekit: used by the diff job and view from the next task
+#[allow(dead_code)]
+fn emphasize(rows: &mut [DiffRow]) {
+    let mut i = 0;
+    while i < rows.len() {
+        if kind_at(rows, i) != Some(LineKind::Removed) {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        while kind_at(rows, j) == Some(LineKind::Removed) {
+            j += 1;
+        }
+        let mut k = j;
+        while kind_at(rows, k) == Some(LineKind::Added) {
+            k += 1;
+        }
+        for n in 0..(j - i).min(k - j) {
+            let (old_span, new_span) = match (&rows[i + n], &rows[j + n]) {
+                (DiffRow::Line(old), DiffRow::Line(new)) => changed_spans(&old.text, &new.text),
+                _ => (None, None),
+            };
+            if let DiffRow::Line(old) = &mut rows[i + n] {
+                old.emphasis = old_span;
+            }
+            if let DiffRow::Line(new) = &mut rows[j + n] {
+                new.emphasis = new_span;
+            }
+        }
+        i = k;
+    }
+}
+
+/// The byte range of each line left after trimming the prefix and suffix
+/// the two share, compared by `char`. A side whose range is empty or the
+/// whole line gets `None`.
+// vibekit: used by the diff job and view from the next task
+#[allow(dead_code)]
+fn changed_spans(old: &str, new: &str) -> (Option<Range<usize>>, Option<Range<usize>>) {
+    let prefix: usize = old
+        .chars()
+        .zip(new.chars())
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a.len_utf8())
+        .sum();
+    let suffix: usize = old[prefix..]
+        .chars()
+        .rev()
+        .zip(new[prefix..].chars().rev())
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a.len_utf8())
+        .sum();
+    let span = |s: &str| {
+        let range = prefix..s.len() - suffix;
+        (!range.is_empty() && range.len() < s.len()).then_some(range)
+    };
+    (span(old), span(new))
+}
+
 /// The field-level changes between two revisions of a contract, or `None`
 /// when either side is absent, either side is not a contract, or the change
 /// is formatting only. `None` is the caller's cue to show the raw diff.
@@ -716,5 +926,120 @@ mod tests {
         let post = r#"{"name":"x","method":"POST","url":"http://a","headers":[],"responses":[]}"#;
         let changes = semantic_changes(Some(get), Some(post)).expect("a method change is semantic");
         assert!(!changes.is_empty());
+    }
+
+    type Shape = (LineKind, Option<u32>, Option<u32>, String);
+
+    /// `(kind, old_no, new_no, text)` of every line row, `None` for a hunk.
+    fn shape(rows: &[DiffRow]) -> Vec<Option<Shape>> {
+        rows.iter()
+            .map(|row| match row {
+                DiffRow::Hunk(_) => None,
+                DiffRow::Line(l) => Some((l.kind, l.old_no, l.new_no, l.text.clone())),
+            })
+            .collect()
+    }
+
+    fn line(rows: &[DiffRow], i: usize) -> &DiffLine {
+        match &rows[i] {
+            DiffRow::Line(l) => l,
+            DiffRow::Hunk(h) => panic!("row {i} is a hunk: {h}"),
+        }
+    }
+
+    #[test]
+    fn parse_unified_numbers_lines_across_two_hunks() {
+        let raw = "diff --git a/f b/f\nindex 1..2 100644\n--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n@@ -10,2 +10,3 @@\n x\n+y\n z\n";
+        use LineKind::{Added, Context, Removed};
+        let s = |k, o, n, t: &str| Some((k, o, n, t.to_string()));
+        assert_eq!(
+            shape(&parse_unified(raw)),
+            vec![
+                None,
+                s(Context, Some(1), Some(1), "a"),
+                s(Removed, Some(2), None, "b"),
+                s(Added, None, Some(2), "B"),
+                s(Context, Some(3), Some(3), "c"),
+                None,
+                s(Context, Some(10), Some(10), "x"),
+                s(Added, None, Some(11), "y"),
+                s(Context, Some(11), Some(12), "z"),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_unified_emphasizes_one_changed_word() {
+        let rows = parse_unified("@@ -1 +1 @@\n-\"method\": \"GET\",\n+\"method\": \"HEAD\",\n");
+        let old = line(&rows, 1);
+        let new = line(&rows, 2);
+        assert_eq!(&old.text[old.emphasis.clone().unwrap()], "GET");
+        assert_eq!(&new.text[new.emphasis.clone().unwrap()], "HEAD");
+    }
+
+    #[test]
+    fn parse_unified_emphasis_lands_on_char_boundaries() {
+        let rows = parse_unified("@@ -1 +1 @@\n-café au lait\n+cafe au lait\n");
+        let old = line(&rows, 1);
+        let new = line(&rows, 2);
+        assert_eq!(&old.text[old.emphasis.clone().unwrap()], "é");
+        assert_eq!(&new.text[new.emphasis.clone().unwrap()], "e");
+    }
+
+    #[test]
+    fn parse_unified_gives_no_emphasis_to_a_whole_line_change() {
+        let rows = parse_unified("@@ -1 +1 @@\n-foo\n+bar\n");
+        assert_eq!(line(&rows, 1).emphasis, None);
+        assert_eq!(line(&rows, 2).emphasis, None);
+    }
+
+    #[test]
+    fn parse_unified_pairs_by_position_and_leaves_extra_lines_alone() {
+        let rows = parse_unified("@@ -1,2 +1 @@\n-a1\n-a2\n+a1x\n");
+        // a1 -> a1x: nothing removed on the old side, `x` added on the new.
+        assert_eq!(line(&rows, 1).emphasis, None);
+        assert_eq!(line(&rows, 2).emphasis, None);
+        let new = line(&rows, 3);
+        assert_eq!(&new.text[new.emphasis.clone().unwrap()], "x");
+    }
+
+    #[test]
+    fn parse_unified_numbers_an_untracked_body_from_one() {
+        let rows = parse_unified("+hello\n+world\n");
+        assert_eq!(
+            shape(&rows),
+            vec![
+                Some((LineKind::Added, None, Some(1), "hello".to_string())),
+                Some((LineKind::Added, None, Some(2), "world".to_string())),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_unified_leaves_no_newline_notices_unnumbered() {
+        let rows = parse_unified(
+            "@@ -1 +1 @@\n-a\n\\ No newline at end of file\n+b\n\\ No newline at end of file\n",
+        );
+        for i in [2, 4] {
+            let notice = line(&rows, i);
+            assert_eq!(notice.kind, LineKind::Context);
+            assert_eq!((notice.old_no, notice.new_no), (None, None));
+        }
+    }
+
+    #[test]
+    fn parse_unified_shows_a_binary_notice_as_one_unnumbered_row() {
+        let rows = parse_unified(
+            "diff --git a/i.png b/i.png\nindex 1..2 100644\nBinary files a/i.png and b/i.png differ\n",
+        );
+        assert_eq!(
+            shape(&rows),
+            vec![Some((
+                LineKind::Context,
+                None,
+                None,
+                "Binary files a/i.png and b/i.png differ".to_string()
+            ))]
+        );
     }
 }
