@@ -19,7 +19,7 @@
 - Modify: `apic-gui/src/features/git/ui/view/branches.rs` (imports, `branch_menu_items`, `branch_menu`, `branch_op_dialog`, tests module)
 - Modify: `apic-gui/src/features/git/ui/view/mod.rs` (tests module)
 
-- [ ] Step 1: In `state.rs`, change the variant and its doc comment to:
+- [x] Step 1: In `state.rs`, change the variant and its doc comment to:
 
 ```rust
     /// Open the confirmation for pulling or merging `source` into `target`,
@@ -51,7 +51,7 @@ Change the `handle` arm to:
 
 In the state test `confirm_merge_into_another_branch_switches_to_it`, add `source: "apic-test".into(),` to its `GitAction::RequestBranchOp { .. }` literal and delete the following line `git.pending_branch_op.as_mut().unwrap().source = "apic-test".into();`. Find the literal with `grep -n "RequestBranchOp" apic-gui/src/features/git/ui/state.rs`.
 
-- [ ] Step 2: In `branches.rs`, replace `branch_menu_items` and its doc comment with:
+- [x] Step 2: In `branches.rs`, replace `branch_menu_items` and its doc comment with:
 
 ```rust
 /// Whether the menu may offer deleting `name`: not the current branch, which
@@ -69,7 +69,7 @@ fn op_label(kind: BranchOpKind) -> &'static str {
 }
 ```
 
-- [ ] Step 3: In `branches.rs` `branch_menu`, replace `let branches = state.branches.all.clone();` with `let branches = state.branches.clone();`, and replace the whole `for name in &branches { .. }` loop inside the `ui.menu_button` closure with:
+- [x] Step 3: In `branches.rs` `branch_menu`, replace `let branches = state.branches.all.clone();` with `let branches = state.branches.clone();`, and replace the whole `for name in &branches { .. }` loop inside the `ui.menu_button` closure with:
 
 ```rust
         for name in &branches.all {
@@ -120,7 +120,7 @@ fn op_label(kind: BranchOpKind) -> &'static str {
 
 Add `use egui::containers::menu::SubMenuButton;` to the imports. Update `branch_menu`'s doc comment: replace `(click to switch, right-click for its menu)` with `(click the name to switch, ⋮ for pull, merge and delete)`.
 
-- [ ] Step 4: In `branches.rs`, replace `branch_op_dialog` and its doc comment with:
+- [x] Step 4: In `branches.rs`, replace `branch_op_dialog` and its doc comment with:
 
 ```rust
 /// The pull or merge confirmation: names the source and the target branch,
@@ -162,7 +162,7 @@ pub(super) fn branch_op_dialog(ctx: &egui::Context, state: &mut GitState) -> Opt
 }
 ```
 
-- [ ] Step 5: In the `branches.rs` tests module, delete the tests `branch_menu_offers_pull_merge_and_delete` and `delete_is_disabled_on_the_current_branch_only` (they test the removed `branch_menu_items`) and add:
+- [x] Step 5: In the `branches.rs` tests module, delete the tests `branch_menu_offers_pull_merge_and_delete` and `delete_is_disabled_on_the_current_branch_only` (they test the removed `branch_menu_items`) and add:
 
 ```rust
     #[test]
@@ -173,7 +173,7 @@ pub(super) fn branch_op_dialog(ctx: &egui::Context, state: &mut GitState) -> Opt
     }
 ```
 
-- [ ] Step 6: In the `view/mod.rs` tests module, replace the test `branch_op_popup_renders_and_picks_a_source` with:
+- [x] Step 6: In the `view/mod.rs` tests module, replace the test `branch_op_popup_renders_and_picks_a_source` with:
 
 ```rust
     #[test]
@@ -331,7 +331,7 @@ pub(super) fn branch_op_dialog(ctx: &egui::Context, state: &mut GitState) -> Opt
 
 If `GitAction` must be imported in the tests module, extend the existing `use crate::features::git::ui::state::{BranchOp, BranchOpKind};` line.
 
-- [ ] Step 7: Run `cargo fmt --all`.
-- [ ] Step 8: Run `cargo test -p apic-gui`.
-- [ ] Step 9: Run `cargo clippy --workspace --all-targets -- -D warnings`.
-- [ ] Step 10: Commit: `fix(gui): branch actions behind a ⋮ menu, source picked in the menu`.
+- [x] Step 7: Run `cargo fmt --all`.
+- [x] Step 8: Run `cargo test -p apic-gui`.
+- [x] Step 9: Run `cargo clippy --workspace --all-targets -- -D warnings`.
+- [x] Step 10: Commit: `fix(gui): branch actions behind a ⋮ menu, source picked in the menu`.
