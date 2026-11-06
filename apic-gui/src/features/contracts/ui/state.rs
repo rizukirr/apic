@@ -144,7 +144,7 @@ pub(crate) enum ContractsAction {
     RequestDelete(DeleteTarget),
     /// The pending delete was confirmed.
     ConfirmDelete,
-    /// Close whichever of the new-request, new-template, new-example or delete dialogs is open.
+    /// Close whichever of the new-request, new-template, new-example, delete or path-param dialogs is open.
     CancelDialog,
     /// Enter edit mode, or leave it restoring the pre-edit model.
     ToggleEdit,
@@ -172,10 +172,12 @@ pub(crate) enum ContractsAction {
     ConfirmBodySwitch,
     /// Drop the pending body switch, keeping the body as it is.
     CancelBodySwitch,
-    /// Send the open contract as shown.
+    /// Send the open contract as shown, or ask for its path params first.
     Send,
     /// Drop the request in flight and its reply.
     CancelSend,
+    /// Send with the values the path-param popup holds.
+    SubmitParams,
     /// Show the live reply (`true`) or the documented examples (`false`) in
     /// the right pane.
     SetLive(bool),
@@ -377,6 +379,7 @@ impl ContractsState {
                 self.new_example = None;
                 self.pending_delete = None;
                 self.pending_body_switch = None;
+                self.send.prompt = None;
             }
             ContractsAction::ToggleEdit => {
                 if self.editing {
@@ -416,7 +419,20 @@ impl ContractsState {
             ContractsAction::CancelBodySwitch => self.pending_body_switch = None,
             ContractsAction::Send => {
                 if let Some(model) = self.model.as_ref() {
-                    events.extend(self.send.send(model, paths.map(|p| p.apic_dir.as_path())));
+                    events.extend(self.send.send(
+                        model,
+                        self.path.as_deref(),
+                        paths.map(|p| p.apic_dir.as_path()),
+                    ));
+                }
+            }
+            ContractsAction::SubmitParams => {
+                if let Some(model) = self.model.as_ref() {
+                    events.extend(self.send.submit_params(
+                        model,
+                        self.path.as_deref(),
+                        paths.map(|p| p.apic_dir.as_path()),
+                    ));
                 }
             }
             ContractsAction::CancelSend => self.send.cancel(),

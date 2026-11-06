@@ -1,14 +1,15 @@
 //! The contracts feature's send state: the selected environment, the request
 //! in flight and the live reply. `ContractsState` holds one [`SendState`].
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 use apic_core::edit::EditModel;
 use apic_core::http::Reply;
 use apic_core::json::JsonContent;
-use apic_core::vars::{Vars, substitute};
+use apic_core::vars::{Vars, fill_path_params, path_params, substitute};
 use eframe::egui;
 
 use crate::features::contracts::data::send as send_job;
@@ -107,6 +108,13 @@ pub(crate) struct SendState {
 
     /// The in-flight send's channel, `None` when nothing is in flight.
     pub(crate) pending: Option<Receiver<Result<Reply, String>>>,
+
+    /// The path-param popup's `(name, value)` rows while it is open.
+    pub(crate) prompt: Option<Vec<(String, String)>>,
+
+    /// Path-param values typed this session, by contract path, to prefill
+    /// the popup next time.
+    pub(crate) params: HashMap<PathBuf, Vars>,
 }
 
 impl SendState {
@@ -155,12 +163,16 @@ impl SendState {
     }
 
     /// Starts sending `model` as shown, unsaved edits included, and shows the
-    /// Live pane. The file is never written. A request that cannot be built,
-    /// or an environment that does not load, becomes the Live pane's error.
+    /// Live pane. The file is never written. When the URL still has `{name}`
+    /// path params once the environment is applied, opens the path-param
+    /// popup instead, prefilled with the values typed for `key` earlier this
+    /// session. A request that cannot be built, or an environment that does
+    /// not load, becomes the Live pane's error.
     ///
     /// # Arguments
     ///
     /// * `model` - the open contract
+    /// * `key` - the open contract's path, which keys the remembered values
     /// * `apic_dir` - the project's `.apic` directory, `None` with no project
     ///
     /// # Returns
@@ -170,7 +182,54 @@ impl SendState {
     pub(crate) fn send(
         &mut self,
         model: &EditModel,
+        key: Option<&Path>,
         apic_dir: Option<&Path>,
+    ) -> Vec<ContractsEvent> {
+        self.send_with(model, key, apic_dir, Vars::new())
+    }
+
+    /// Sends with the popup's values and remembers them for `key`. A blank
+    /// value keeps the popup open and sends nothing.
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - the open contract
+    /// * `key` - the open contract's path
+    /// * `apic_dir` - the project's `.apic` directory, `None` with no project
+    ///
+    /// # Returns
+    ///
+    /// What [`SendState::send`] returns.
+    pub(crate) fn submit_params(
+        &mut self,
+        model: &EditModel,
+        key: Option<&Path>,
+        apic_dir: Option<&Path>,
+    ) -> Vec<ContractsEvent> {
+        let Some(values) = self.prompt.take() else {
+            return Vec::new();
+        };
+        if values.iter().any(|(_, value)| value.trim().is_empty()) {
+            self.prompt = Some(values);
+            return Vec::new();
+        }
+        let extra: Vars = values.into_iter().collect();
+        if let Some(key) = key {
+            self.params
+                .entry(key.to_path_buf())
+                .or_default()
+                .extend(extra.clone());
+        }
+        self.send_with(model, key, apic_dir, extra)
+    }
+
+    /// [`SendState::send`] with `extra` values laid over the environment.
+    fn send_with(
+        &mut self,
+        model: &EditModel,
+        key: Option<&Path>,
+        apic_dir: Option<&Path>,
+        extra: Vars,
     ) -> Vec<ContractsEvent> {
         let mut events = Vec::new();
         if self.is_pending() {
@@ -180,11 +239,34 @@ impl SendState {
             events.push(ContractsEvent::Status("no project".into()));
             return events;
         };
-        self.show_live = true;
-        match self.build(model, apic_dir) {
-            Ok((contract, vars)) => self.start(contract, vars, apic_dir, &mut events),
-            Err(err) => self.live = Some(Err(err)),
+        let (contract, mut vars) = match self.build(model, apic_dir) {
+            Ok(built) => built,
+            Err(err) => {
+                self.show_live = true;
+                self.live = Some(Err(err));
+                return events;
+            }
+        };
+        vars.extend(extra);
+        let url = fill_path_params(&substitute(&contract.url, &vars).0, &vars);
+        let missing = path_params(&url);
+        if !missing.is_empty() {
+            let saved = key.and_then(|k| self.params.get(k));
+            let rows = missing
+                .into_iter()
+                .map(|name| {
+                    let value = saved
+                        .and_then(|s| s.get(&name))
+                        .cloned()
+                        .unwrap_or_default();
+                    (name, value)
+                })
+                .collect();
+            self.prompt = Some(rows);
+            return events;
         }
+        self.show_live = true;
+        self.start(contract, vars, apic_dir, &mut events);
         events
     }
 
@@ -450,5 +532,40 @@ mod tests {
         assert!(live.truncated);
         assert_eq!(live.size, DISPLAY_LIMIT + 10);
         assert_eq!(live.body, LiveBody::Text("a".repeat(DISPLAY_LIMIT)));
+    }
+
+    /// `GET $base/users/{id}`.
+    const CALL_WITH_ID: &str = r#"{ "name": "user", "method": "GET", "url": "$base/users/{id}",
+        "headers": [], "responses": [] }"#;
+
+    #[test]
+    fn an_unfilled_path_param_asks_first_then_sends() {
+        let (url, rx) = serve_once(OK);
+        let (mut state, paths) = open_contract(&url, CALL_WITH_ID);
+
+        state.handle(ContractsAction::Send, Some(&paths));
+
+        assert!(!state.send.is_pending(), "no request starts");
+        assert_eq!(
+            state.send.prompt,
+            Some(vec![("id".to_string(), String::new())])
+        );
+        state.handle(ContractsAction::SubmitParams, Some(&paths));
+        assert!(state.send.prompt.is_some(), "a blank value keeps the popup");
+        assert!(!state.send.is_pending());
+
+        state.send.prompt = Some(vec![("id".to_string(), "42".to_string())]);
+        state.handle(ContractsAction::SubmitParams, Some(&paths));
+
+        assert!(state.send.prompt.is_none());
+        settle_send(&mut state);
+        assert!(received(&rx).starts_with("get /users/42 "));
+
+        state.handle(ContractsAction::Send, Some(&paths));
+        assert_eq!(
+            state.send.prompt,
+            Some(vec![("id".to_string(), "42".to_string())]),
+            "the value is prefilled next time"
+        );
     }
 }

@@ -48,6 +48,7 @@ pub(crate) fn central_body(
         repair,
         entries,
         send,
+        path,
         ..
     } = state;
     if no_project {
@@ -103,7 +104,11 @@ pub(crate) fn central_body(
     // With no environment selected nothing can be undefined, so every
     // variable keeps the normal variable colour.
     let no_env = send.env.is_none();
-    let names: std::collections::BTreeSet<String> = send.env_vars.keys().cloned().collect();
+    let mut names: std::collections::BTreeSet<String> = send.env_vars.keys().cloned().collect();
+    // Path params typed into the popup for this contract count as defined.
+    if let Some(saved) = path.as_deref().and_then(|p| send.params.get(p)) {
+        names.extend(saved.keys().cloned());
+    }
     let defined = |name: &str| no_env || names.contains(name);
     // COMMAND is Ctrl on Linux and Windows and Cmd on macOS.
     if !pending && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)) {
