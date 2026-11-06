@@ -181,6 +181,8 @@ pub(crate) enum ContractsAction {
     /// Show the live reply (`true`) or the documented examples (`false`) in
     /// the right pane.
     SetLive(bool),
+    /// Select this environment, `None` for no environment.
+    ChooseEnv(Option<String>),
 }
 
 /// Something a contracts action asks the app shell to do.
@@ -197,6 +199,8 @@ pub(crate) enum ContractsEvent {
     Continue(Guarded),
     /// This contract or template is now open.
     Opened(PathBuf),
+    /// This environment is now selected for the project, `None` for none.
+    EnvChosen(Option<String>),
 }
 
 impl ContractsState {
@@ -437,6 +441,12 @@ impl ContractsState {
             }
             ContractsAction::CancelSend => self.send.cancel(),
             ContractsAction::SetLive(live) => self.send.show_live = live,
+            ContractsAction::ChooseEnv(name) => {
+                events.extend(
+                    self.send
+                        .choose_env(name, paths.map(|p| p.apic_dir.as_path())),
+                );
+            }
         }
         events
     }

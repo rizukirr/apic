@@ -99,6 +99,9 @@ pub(crate) struct SendState {
     /// are used, for the variable colours. Never drawn.
     pub(crate) env_vars: Vars,
 
+    /// The environment names listed the last time the menu was opened.
+    pub(crate) envs: Vec<String>,
+
     /// Whether the right pane shows the live reply instead of the examples.
     pub(crate) show_live: bool,
 
@@ -118,6 +121,60 @@ pub(crate) struct SendState {
 }
 
 impl SendState {
+    /// Re-reads the environment names in `apic_dir`.
+    pub(crate) fn refresh_envs(&mut self, apic_dir: &Path) {
+        self.envs = apic_core::env::list(apic_dir)
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+    }
+
+    /// Selects `name` and loads its values for the variable colours.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - the environment, `None` for no environment
+    /// * `apic_dir` - the project's `.apic` directory, `None` with no project
+    ///
+    /// # Returns
+    ///
+    /// [`ContractsEvent::EnvChosen`], after the load error when the
+    /// environment does not load.
+    pub(crate) fn choose_env(
+        &mut self,
+        name: Option<String>,
+        apic_dir: Option<&Path>,
+    ) -> Vec<ContractsEvent> {
+        let mut events = Vec::new();
+        self.env_vars = match (name.as_deref(), apic_dir) {
+            (Some(name), Some(dir)) => match apic_core::env::load(dir, name) {
+                Ok(vars) => vars,
+                Err(err) => {
+                    events.push(ContractsEvent::Status(err));
+                    Vars::new()
+                }
+            },
+            _ => Vars::new(),
+        };
+        self.env = name.clone();
+        events.push(ContractsEvent::EnvChosen(name));
+        events
+    }
+
+    /// Selects the saved environment `saved` when `apic_dir` still lists it,
+    /// and no environment otherwise.
+    pub(crate) fn restore_env(&mut self, saved: Option<&str>, apic_dir: &Path) {
+        self.refresh_envs(apic_dir);
+        let name = saved
+            .filter(|saved| self.envs.iter().any(|e| e == saved))
+            .map(str::to_string);
+        self.env_vars = name
+            .as_deref()
+            .and_then(|name| apic_core::env::load(apic_dir, name).ok())
+            .unwrap_or_default();
+        self.env = name;
+    }
+
     /// Whether a send is in flight.
     pub(crate) fn is_pending(&self) -> bool {
         self.pending.is_some()
@@ -567,5 +624,26 @@ mod tests {
             Some(vec![("id".to_string(), "42".to_string())]),
             "the value is prefilled next time"
         );
+    }
+
+    #[test]
+    fn choose_env_emits_env_chosen_and_loads_the_names() {
+        let (mut state, paths) = open_contract("http://127.0.0.1:1", CALL);
+
+        let events = state.handle(
+            ContractsAction::ChooseEnv(Some("dev".to_string())),
+            Some(&paths),
+        );
+
+        assert!(events.contains(&ContractsEvent::EnvChosen(Some("dev".to_string()))));
+        assert!(
+            state.send.env_vars.contains_key("base") && state.send.env_vars.contains_key("token")
+        );
+
+        let events = state.handle(ContractsAction::ChooseEnv(None), Some(&paths));
+
+        assert!(events.contains(&ContractsEvent::EnvChosen(None)));
+        assert_eq!(state.send.env, None);
+        assert!(state.send.env_vars.is_empty());
     }
 }

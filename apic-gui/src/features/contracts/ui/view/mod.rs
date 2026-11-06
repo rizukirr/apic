@@ -5,9 +5,11 @@
 mod central;
 mod dialogs;
 mod editor;
+mod env_menu;
 mod live;
 mod sidebar;
 
 pub(crate) use self::central::central_body;
 pub(crate) use self::dialogs::{FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, dialogs};
+pub(crate) use self::env_menu::env_menu;
 pub(crate) use self::sidebar::{header_actions, sidebar_body, templates_body};
