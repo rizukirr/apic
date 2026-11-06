@@ -473,7 +473,7 @@ Replace the `pending_branch_delete` doc comment with: `/// The right-clicked bra
 - Modify: `apic-gui/src/features/git/ui/view/mod.rs` (`use self::branches::...` line, `dialogs`, tests module)
 - Modify: `apic-gui/src/features/git/ui/state.rs` (remove the `expect(dead_code)` attributes task 1 added)
 
-- [ ] Step 1: In `branches.rs`, change the imports to:
+- [x] Step 1: In `branches.rs`, change the imports to:
 
 ```rust
 use crate::features::git::domain::status::{Branches, DiscardTarget, discard_target};
@@ -482,7 +482,7 @@ use crate::features::git::ui::state::{BranchOp, BranchOpKind, GitAction, GitStat
 
 Drop `BranchOp` from the import if clippy reports it unused.
 
-- [ ] Step 2: Replace `branch_menu_items` and its doc comment with:
+- [x] Step 2: Replace `branch_menu_items` and its doc comment with:
 
 ```rust
 /// The menu entries for one branch: pull into it, merge into it, and delete
@@ -517,7 +517,7 @@ fn branch_menu_items(name: &str, current: Option<&str>) -> Vec<(&'static str, bo
 }
 ```
 
-- [ ] Step 3: Replace `delete_branch_dialog` and its doc comment with:
+- [x] Step 3: Replace `delete_branch_dialog` and its doc comment with:
 
 ```rust
 /// Delete confirmation for the right-clicked branch. The target is fixed:
@@ -552,7 +552,7 @@ pub(super) fn delete_branch_dialog(ctx: &egui::Context, state: &mut GitState) ->
 }
 ```
 
-- [ ] Step 4: After `delete_branch_dialog`, add:
+- [x] Step 4: After `delete_branch_dialog`, add:
 
 ```rust
 /// The branches a pull or merge into `target` may bring in: remote branches
@@ -630,7 +630,7 @@ pub(super) fn branch_op_dialog(ctx: &egui::Context, state: &mut GitState) -> Opt
 }
 ```
 
-- [ ] Step 5: In `branches.rs` tests module, replace `branch_menu_offers_delete_for_other_branches_only` with:
+- [x] Step 5: In `branches.rs` tests module, replace `branch_menu_offers_delete_for_other_branches_only` with:
 
 ```rust
     #[test]
@@ -685,7 +685,7 @@ pub(super) fn branch_op_dialog(ctx: &egui::Context, state: &mut GitState) -> Opt
     }
 ```
 
-- [ ] Step 6: In `view/mod.rs`, change the import to `use self::branches::{branch_op_dialog, create_branch_dialog, delete_branch_dialog, discard_dialog};` and in `dialogs`, after the `delete_branch_dialog` block, add:
+- [x] Step 6: In `view/mod.rs`, change the import to `use self::branches::{branch_op_dialog, create_branch_dialog, delete_branch_dialog, discard_dialog};` and in `dialogs`, after the `delete_branch_dialog` block, add:
 
 ```rust
     if let Some(a) = branch_op_dialog(ctx, state) {
@@ -693,7 +693,7 @@ pub(super) fn branch_op_dialog(ctx: &egui::Context, state: &mut GitState) -> Opt
     }
 ```
 
-- [ ] Step 7: In `view/mod.rs` tests module, after `sidebar_renders_the_delete_branch_confirmation_without_panicking`, add:
+- [x] Step 7: In `view/mod.rs` tests module, after `sidebar_renders_the_delete_branch_confirmation_without_panicking`, add:
 
 ```rust
     #[test]
@@ -725,11 +725,11 @@ pub(super) fn branch_op_dialog(ctx: &egui::Context, state: &mut GitState) -> Opt
 
 Add `BranchOp, BranchOpKind` to the tests module's imports from `crate::features::git::ui::state` (read the module's `use` lines first and extend the existing one).
 
-- [ ] Step 8: In `apic-gui/src/features/git/ui/state.rs`, delete every `#[cfg_attr(not(test), expect(dead_code, reason = ...))]` attribute (task 1 added them on `GitAction::RequestBranchOp`, `GitAction::ConfirmBranchOp` and `BranchOpKind::Merge` because nothing outside tests built them yet). Find them with `grep -n "expect(dead_code" apic-gui/src/features/git/ui/state.rs`. Then run `cargo clippy --workspace -- -D warnings` and confirm it exits 0.
-- [ ] Step 9: Run `cargo fmt --all`.
-- [ ] Step 10: Run `cargo test -p apic-gui`.
-- [ ] Step 11: Run `cargo clippy --workspace --all-targets -- -D warnings`.
-- [ ] Step 12: Commit: `feat(gui): pull, merge and delete in the branch right-click menu`.
+- [x] Step 8: In `apic-gui/src/features/git/ui/state.rs`, delete every `#[cfg_attr(not(test), expect(dead_code, reason = ...))]` attribute (task 1 added them on `GitAction::RequestBranchOp`, `GitAction::ConfirmBranchOp` and `BranchOpKind::Merge` because nothing outside tests built them yet). Find them with `grep -n "expect(dead_code" apic-gui/src/features/git/ui/state.rs`. Then run `cargo clippy --workspace -- -D warnings` and confirm it exits 0.
+- [x] Step 9: Run `cargo fmt --all`.
+- [x] Step 10: Run `cargo test -p apic-gui`.
+- [x] Step 11: Run `cargo clippy --workspace --all-targets -- -D warnings`.
+- [x] Step 12: Commit: `feat(gui): pull, merge and delete in the branch right-click menu`.
 
 ### Task 3: unsaved-edits guard for pull and merge → verify: `cargo test -p apic-gui` exits 0 and `cargo clippy --workspace --all-targets -- -D warnings` exits 0
 
