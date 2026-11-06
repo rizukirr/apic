@@ -12,6 +12,7 @@
 mod cli;
 mod flags;
 mod render;
+mod send;
 mod tree;
 
 /// Restores the default `SIGPIPE` disposition on Unix.
