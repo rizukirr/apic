@@ -95,8 +95,13 @@ pub(crate) enum GitAction {
     /// The pending branch delete was confirmed, delete it.
     ConfirmBranchDelete,
 
-    /// Open the pull or merge popup for this branch.
-    RequestBranchOp { kind: BranchOpKind, target: String },
+    /// Open the confirmation for pulling or merging `source` into `target`,
+    /// both picked in the branch menu.
+    RequestBranchOp {
+        kind: BranchOpKind,
+        target: String,
+        source: String,
+    },
 
     /// The pending pull or merge was confirmed, run it.
     ConfirmBranchOp,
@@ -117,9 +122,7 @@ pub(crate) enum BranchOpKind {
     Merge,
 }
 
-/// A pull or merge awaiting confirmation: bring `source` into `target`.
-/// `target` is the right-clicked branch and never changes. `source` is empty
-/// until the popup picks one.
+/// A pull or merge awaiting confirmation: bring `source` into `target`, both picked in the branch menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BranchOp {
     pub(crate) kind: BranchOpKind,
@@ -380,11 +383,15 @@ impl GitState {
                     self.start_mutation(paths, ctx, Mutation::DeleteBranch { name });
                 }
             }
-            GitAction::RequestBranchOp { kind, target } => {
+            GitAction::RequestBranchOp {
+                kind,
+                target,
+                source,
+            } => {
                 self.pending_branch_op = Some(BranchOp {
                     kind,
                     target,
-                    source: String::new(),
+                    source,
                 })
             }
             GitAction::ConfirmBranchOp => {
@@ -1299,11 +1306,11 @@ mod tests {
             GitAction::RequestBranchOp {
                 kind: BranchOpKind::Merge,
                 target: "apic-second".into(),
+                source: "apic-test".into(),
             },
             Some(&paths),
             &ctx,
         );
-        git.pending_branch_op.as_mut().unwrap().source = "apic-test".into();
         git.handle(GitAction::ConfirmBranchOp, Some(&paths), &ctx);
         let events = settle_git(&mut git, &paths, &ctx);
 
