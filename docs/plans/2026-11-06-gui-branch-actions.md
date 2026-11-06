@@ -23,7 +23,7 @@
 - Modify: `apic-gui/src/features/git/ui/state.rs` (`GitAction`, `GitState`, `handle`, `apply_result`, tests module)
 - Modify: `apic-gui/src/features/git/ui/view/mod.rs` (tests module: every `Branches { .. }` struct literal)
 
-- [ ] Step 1: In `status.rs`, add a field to `Branches` after `all`, and extend its doc comment:
+- [x] Step 1: In `status.rs`, add a field to `Branches` after `all`, and extend its doc comment:
 
 ```rust
 /// The local branches, which one is checked out, and the remote-tracking
@@ -42,7 +42,7 @@ pub(crate) struct Branches {
 }
 ```
 
-- [ ] Step 2: In `cli.rs` `run`, add `.env("GIT_TERMINAL_PROMPT", "0")` before `.output()`, and make the error fall back to the last stdout line when stderr is empty (git prints merge conflicts to stdout). Replace the error block:
+- [x] Step 2: In `cli.rs` `run`, add `.env("GIT_TERMINAL_PROMPT", "0")` before `.output()`, and make the error fall back to the last stdout line when stderr is empty (git prints merge conflicts to stdout). Replace the error block:
 
 ```rust
     if !out.status.success() {
@@ -68,7 +68,7 @@ pub(crate) struct Branches {
 
 Add one line to `run`'s doc comment: `GIT_TERMINAL_PROMPT=0 makes a command that needs credentials fail instead of waiting on a terminal the GUI does not have.`
 
-- [ ] Step 3: In `cli.rs` `branches`, replace `Ok(Branches { current, all })` with:
+- [x] Step 3: In `cli.rs` `branches`, replace `Ok(Branches { current, all })` with:
 
 ```rust
     Ok(Branches {
@@ -78,7 +78,7 @@ Add one line to `run`'s doc comment: `GIT_TERMINAL_PROMPT=0 makes a command that
     })
 ```
 
-- [ ] Step 4: In `cli.rs`, after `delete_branch`, add:
+- [x] Step 4: In `cli.rs`, after `delete_branch`, add:
 
 ```rust
 /// Remote-tracking branches as `remote/branch`, such as `origin/main`. The
@@ -111,7 +111,7 @@ pub(crate) fn merge(root: &Path, source: &str) -> Result<(), String> {
 }
 ```
 
-- [ ] Step 5: In `cli.rs` tests module, add these tests at the end:
+- [x] Step 5: In `cli.rs` tests module, add these tests at the end:
 
 ```rust
     /// Commits `content` to `file.txt` on the checked-out branch.
@@ -220,7 +220,7 @@ pub(crate) fn merge(root: &Path, source: &str) -> Result<(), String> {
     }
 ```
 
-- [ ] Step 6: In `jobs.rs`, add `Merge` as the last variant of `MutateKind`. Add to `Mutation`, after `DeleteBranch`:
+- [x] Step 6: In `jobs.rs`, add `Merge` as the last variant of `MutateKind`. Add to `Mutation`, after `DeleteBranch`:
 
 ```rust
     /// Brings `source` into `target`: checks out `target` first when
@@ -274,7 +274,7 @@ In `run`:
 
 Update the `JobResult::Mutate` doc comment's list of mutations to include a pull or merge.
 
-- [ ] Step 7: In `jobs.rs` tests module, add:
+- [x] Step 7: In `jobs.rs` tests module, add:
 
 ```rust
     /// A pull fetches a commit another clone pushed, then merges it.
@@ -312,7 +312,7 @@ Update the `JobResult::Mutate` doc comment's list of mutations to include a pull
     }
 ```
 
-- [ ] Step 8: In `state.rs`, after the `GitAction` enum, add:
+- [x] Step 8: In `state.rs`, after the `GitAction` enum, add:
 
 ```rust
 /// Which branch operation the pull/merge popup runs.
@@ -355,7 +355,7 @@ Add a `GitState` field after `pending_branch_delete`:
 
 Replace the `pending_branch_delete` doc comment with: `/// The right-clicked branch a delete would remove, while its confirmation is open.`
 
-- [ ] Step 9: In `state.rs` `handle`, after the `ConfirmBranchDelete` arm, add:
+- [x] Step 9: In `state.rs` `handle`, after the `ConfirmBranchDelete` arm, add:
 
 ```rust
             GitAction::RequestBranchOp { kind, target } => {
@@ -384,7 +384,7 @@ Replace the `pending_branch_delete` doc comment with: `/// The right-clicked bra
             }
 ```
 
-- [ ] Step 10: In `state.rs` `apply_result`, change the success arm `MutateKind::SwitchBranch => {` to `MutateKind::SwitchBranch | MutateKind::Merge => {` (a merge rewrites files, so the open contract is reconciled like after a switch). Replace the error arm:
+- [x] Step 10: In `state.rs` `apply_result`, change the success arm `MutateKind::SwitchBranch => {` to `MutateKind::SwitchBranch | MutateKind::Merge => {` (a merge rewrites files, so the open contract is reconciled like after a switch). Replace the error arm:
 
 ```rust
             JobResult::Mutate(kind, _, Err(e)) => {
@@ -401,7 +401,7 @@ Replace the `pending_branch_delete` doc comment with: `/// The right-clicked bra
             }
 ```
 
-- [ ] Step 11: In `state.rs` tests module, add:
+- [x] Step 11: In `state.rs` tests module, add:
 
 ```rust
     #[test]
@@ -459,12 +459,12 @@ Replace the `pending_branch_delete` doc comment with: `/// The right-clicked bra
     }
 ```
 
-- [ ] Step 12: In `view/mod.rs` tests module, add `remotes: Vec::new(),` after the `all: ...` line of every `Branches { .. }` struct literal. Find them with `grep -n "Branches {" apic-gui/src/features/git/ui/view/mod.rs`.
+- [x] Step 12: In `view/mod.rs` tests module, add `remotes: Vec::new(),` after the `all: ...` line of every `Branches { .. }` struct literal. Find them with `grep -n "Branches {" apic-gui/src/features/git/ui/view/mod.rs`.
 
-- [ ] Step 13: Run `cargo fmt --all`.
-- [ ] Step 14: Run `cargo test -p apic-gui`.
-- [ ] Step 15: Run `cargo clippy --workspace --all-targets -- -D warnings`.
-- [ ] Step 16: Commit: `feat(gui): pull and merge job with remote branch listing`.
+- [x] Step 13: Run `cargo fmt --all`.
+- [x] Step 14: Run `cargo test -p apic-gui`.
+- [x] Step 15: Run `cargo clippy --workspace --all-targets -- -D warnings`.
+- [x] Step 16: Commit: `feat(gui): pull and merge job with remote branch listing`.
 
 ### Task 2: right-click menu and popups → verify: `cargo test -p apic-gui` exits 0, `cargo clippy --workspace --all-targets -- -D warnings` exits 0, and `grep -c ComboBox apic-gui/src/features/git/ui/view/branches.rs` prints a count below 2
 
