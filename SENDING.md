@@ -2,6 +2,8 @@
 
 `apic send` fires the request a contract describes and prints the real response. Values that change between servers or people, such as the base URL or an access token, live in environments and fill the contract's variables at send time.
 
+The desktop GUI can send too, see the Sending section of [GUI.md](GUI.md#sending).
+
 ## Your first request
 
 ```bash

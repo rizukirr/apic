@@ -20,11 +20,21 @@ apic-gui
 - **Browse.** The sidebar lists every contract as a folder tree with its method badge. The search icon filters the tree, and `+` starts a new request. Hover a row for its `⋮` menu, or right-click it: a folder offers New request here and Delete folder, and a contract offers Delete. Templates live in the collapsible Templates section at the bottom.
 - **Read and edit.** Selecting a contract shows its name and description, the method and URL, and the Headers, Query and Request sections, with the responses on the right. The pencil enters edit mode, and the disk saves. A dot next to the disk means unsaved edits.
   - Headers, query params and response headers are grid tables. While editing, the trash icon removes a row and typing into the empty last row adds one.
-  - `{{variables}}` in the URL and in values are highlighted.
+  - Variables in the URL and in values, `$name`, `${name}`, `{{name}}` and `{name}`, are highlighted in the variable colour. With an environment selected, a name it does not define is drawn in the warning colour instead, unless the path-param popup has a value for it.
   - Each body has a JSON / Multipart dropdown while editing. Multipart bodies are a parts table with Text or File parts.
   - Responses are picked from the dropdown on the right, coloured by status class. "+ New example" adds one with a code and a name.
 - **Repair.** An invalid contract opens in a raw JSON editor instead. Once the JSON is valid, the GUI switches back to the structured view.
 - **Asks before losing work.** Cancel, opening another contract, opening or creating a project, and closing the window all ask what to do with unsaved edits: Save, Discard or Keep editing. Every delete and discard also asks first.
+
+## Sending
+
+The Send button at the right end of the URL bar, or Ctrl+Enter (Cmd+Enter on macOS), sends the open contract as it is on screen, unsaved edits included, and never writes the file. While the request is in flight the button reads Cancel, and Cancel drops the reply. A request gives up after 30 seconds.
+
+The environment dropdown in the app bar, next to the branch dropdown, lists No environment and every environment in `.apic/env`. The choice is remembered per project. Every send reads the environment from disk again, so an edit to `dev.local.toml` applies on the next send. [SENDING.md](SENDING.md) explains environment files.
+
+- A `{name}` path param the environment does not fill opens a popup that asks for its value before sending. The values are kept for the session and prefilled next time.
+- A variable the environment does not define is sent as written, and the status line names it.
+- The right pane switches between Examples, the documented responses, and Live, the real one. Send switches to Live, which shows the status coloured like the examples, the time and the size, the body under Response and the reply headers under Headers. A JSON body is pretty-printed and highlighted, other text shows as it is, and a binary body shows its size. Only the first 2 MB of a body is shown.
 
 ## Git
 
