@@ -40,6 +40,7 @@ pub(crate) enum MutateKind {
     CreateBranch,
     DeleteBranch,
     Resolve,
+    Merge,
 }
 
 /// The result of a completed background git job, sent back over `pending`.
@@ -51,8 +52,8 @@ pub(crate) enum JobResult {
     /// unselected, does not get filed under the wrong key.
     Diff((String, bool), Result<DiffData, String>),
 
-    /// An unstage, discard, commit, or branch switch, create or
-    /// delete, run then followed by a status refresh in the same background
+    /// An unstage, discard, commit, branch switch, create or
+    /// delete, or pull or merge, run then followed by a status refresh in the same background
     /// job. The refreshed status travels with the result so a successful
     /// mutation lands on screen in one poll. The message names what the
     /// mutation did, built at spawn time where the path or branch name is
@@ -219,6 +220,16 @@ pub(crate) enum Mutation {
         name: String,
     },
 
+    /// Brings `source` into `target`: checks out `target` first when
+    /// `switch`, fetches every remote first when `fetch` (a pull), then
+    /// merges. Stops at the first step that fails.
+    Merge {
+        target: String,
+        source: String,
+        fetch: bool,
+        switch: bool,
+    },
+
     /// Writes the rendered resolution `text` for `path` and stages it.
     ///
     /// The write and the stage are two halves of one operation: editing the
@@ -244,6 +255,7 @@ impl Mutation {
             Mutation::CreateBranch { .. } => MutateKind::CreateBranch,
             Mutation::DeleteBranch { .. } => MutateKind::DeleteBranch,
             Mutation::Resolve { .. } => MutateKind::Resolve,
+            Mutation::Merge { .. } => MutateKind::Merge,
         }
     }
 
@@ -258,6 +270,18 @@ impl Mutation {
             Mutation::CreateBranch { name } => format!("created branch {name}"),
             Mutation::DeleteBranch { name } => format!("deleted branch {name}"),
             Mutation::Resolve { path, .. } => format!("resolved {path}"),
+            Mutation::Merge {
+                target,
+                source,
+                fetch: true,
+                ..
+            } => format!("pulled {source} into {target}"),
+            Mutation::Merge {
+                target,
+                source,
+                fetch: false,
+                ..
+            } => format!("merged {source} into {target}"),
         }
     }
 
@@ -283,6 +307,20 @@ impl Mutation {
             Mutation::SwitchBranch { name } => cli::switch_branch(root, name),
             Mutation::CreateBranch { name } => cli::create_branch(root, name),
             Mutation::DeleteBranch { name } => cli::delete_branch(root, name),
+            Mutation::Merge {
+                target,
+                source,
+                fetch,
+                switch,
+            } => {
+                if *switch {
+                    cli::switch_branch(root, target)?;
+                }
+                if *fetch {
+                    cli::fetch_all(root)?;
+                }
+                cli::merge(root, source)
+            }
             Mutation::Resolve { path, text } => {
                 std::fs::write(root.join(path), text).map_err(|e| e.to_string())?;
                 cli::stage(root, path)
@@ -484,5 +522,39 @@ mod tests {
             scopes(root, Some(project_root), repo_root),
             vec!["contracts".to_string()]
         );
+    }
+
+    /// A pull fetches a commit another clone pushed, then merges it.
+    #[test]
+    fn merge_mutation_with_fetch_pulls_a_pushed_commit() {
+        use crate::app::test_support::{git_available, git_output, project_fixture, tempdir};
+        if !git_available() {
+            return;
+        }
+        let local = project_fixture();
+        let remote = tempdir();
+        git_output(&remote, &["init", "--bare"]);
+        let remote_path = remote.to_string_lossy().into_owned();
+        git_output(&local, &["remote", "add", "origin", &remote_path]);
+        git_output(&local, &["push", "origin", "apic-test"]);
+        let other = tempdir();
+        git_output(&other, &["clone", "-b", "apic-test", &remote_path, "."]);
+        git_output(&other, &["config", "user.email", "test@example.com"]);
+        git_output(&other, &["config", "user.name", "Test User"]);
+        std::fs::write(other.join("pushed.txt"), "pushed\n").unwrap();
+        git_output(&other, &["add", "--", "pushed.txt"]);
+        git_output(&other, &["commit", "-m", "pushed"]);
+        git_output(&other, &["push", "origin", "apic-test"]);
+
+        Mutation::Merge {
+            target: "apic-test".into(),
+            source: "origin/apic-test".into(),
+            fetch: true,
+            switch: false,
+        }
+        .run(&local)
+        .unwrap();
+
+        assert!(local.join("pushed.txt").exists());
     }
 }

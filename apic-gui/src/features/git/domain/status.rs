@@ -88,7 +88,8 @@ pub(crate) struct Status {
     pub(crate) outside: Vec<FileStatus>,
 }
 
-/// The local branches, and which one is checked out.
+/// The local branches, which one is checked out, and the remote-tracking
+/// branches.
 ///
 /// `current` is `None` in detached HEAD. That is a normal state, not an
 /// error: git reports no branch name there, and the panel should show it as
@@ -97,6 +98,9 @@ pub(crate) struct Status {
 pub(crate) struct Branches {
     pub(crate) current: Option<String>,
     pub(crate) all: Vec<String>,
+
+    /// Remote-tracking branches named `remote/branch`, such as `origin/main`.
+    pub(crate) remotes: Vec<String>,
 }
 
 impl Status {

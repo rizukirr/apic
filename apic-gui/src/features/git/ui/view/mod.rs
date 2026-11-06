@@ -720,6 +720,7 @@ mod tests {
                 branches: Branches {
                     current: Some("main".into()),
                     all: vec!["main".into(), "feature".into()],
+                    remotes: Vec::new(),
                 },
                 ..GitState::default()
             };
@@ -736,6 +737,7 @@ mod tests {
                 branches: Branches {
                     current: None,
                     all: vec!["main".into()],
+                    remotes: Vec::new(),
                 },
                 ..GitState::default()
             };
@@ -752,6 +754,7 @@ mod tests {
                 branches: Branches {
                     current: Some("main".into()),
                     all: vec!["main".into()],
+                    remotes: Vec::new(),
                 },
                 new_branch: Some("feature".into()),
                 ..GitState::default()
@@ -773,6 +776,7 @@ mod tests {
                 branches: Branches {
                     current: Some("main".into()),
                     all: vec!["main".into(), "feature".into()],
+                    remotes: Vec::new(),
                 },
                 pending_branch_delete: Some("feature".into()),
                 ..GitState::default()

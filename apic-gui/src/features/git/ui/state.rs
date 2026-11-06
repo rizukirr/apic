@@ -95,10 +95,48 @@ pub(crate) enum GitAction {
     /// The pending branch delete was confirmed, delete it.
     ConfirmBranchDelete,
 
+    /// Open the pull or merge popup for this branch.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "constructed by the branch menu in a later task")
+    )]
+    RequestBranchOp { kind: BranchOpKind, target: String },
+
+    /// The pending pull or merge was confirmed, run it.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "constructed by the branch popup in a later task")
+    )]
+    ConfirmBranchOp,
+
     /// Write the rendered resolution `text` for this conflicted path and
     /// stage it. The text is already rendered, this action carries no
     /// markers for the job to parse.
     ResolveConflict { path: String, text: String },
+}
+
+/// Which branch operation the pull/merge popup runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BranchOpKind {
+    /// Fetch every remote, then merge a remote branch.
+    Pull,
+
+    /// Merge a local or remote branch, no fetch.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "constructed by the branch menu in a later task")
+    )]
+    Merge,
+}
+
+/// A pull or merge awaiting confirmation: bring `source` into `target`.
+/// `target` is the right-clicked branch and never changes. `source` is empty
+/// until the popup picks one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BranchOp {
+    pub(crate) kind: BranchOpKind,
+    pub(crate) target: String,
+    pub(crate) source: String,
 }
 
 /// Everything the git feature owns. `App` holds one of these; no other
@@ -147,12 +185,11 @@ pub(crate) struct GitState {
     /// The name typed into the create-branch dialog, if it is open.
     pub(crate) new_branch: Option<String>,
 
-    /// The branch a delete would target, when the delete dialog is open.
-    /// Doubles as the dialog's own picker: it starts on whichever branch the
-    /// `x` button was clicked for, and changes as the user picks a different
-    /// one from the dialog's dropdown before confirming. `None` when the
-    /// dialog is closed.
+    /// The right-clicked branch a delete would remove, while its confirmation is open.
     pub(crate) pending_branch_delete: Option<String>,
+
+    /// The pull or merge awaiting confirmation, when its popup is open.
+    pub(crate) pending_branch_op: Option<BranchOp>,
 
     /// The last git error, shown in the panel; empty when there is none.
     pub(crate) error: String,
@@ -355,6 +392,30 @@ impl GitState {
                     self.start_mutation(paths, ctx, Mutation::DeleteBranch { name });
                 }
             }
+            GitAction::RequestBranchOp { kind, target } => {
+                self.pending_branch_op = Some(BranchOp {
+                    kind,
+                    target,
+                    source: String::new(),
+                })
+            }
+            GitAction::ConfirmBranchOp => {
+                if let Some(op) = self.pending_branch_op.take()
+                    && !op.source.is_empty()
+                {
+                    let switch = self.branches.current.as_deref() != Some(op.target.as_str());
+                    self.start_mutation(
+                        paths,
+                        ctx,
+                        Mutation::Merge {
+                            target: op.target,
+                            source: op.source,
+                            fetch: op.kind == BranchOpKind::Pull,
+                            switch,
+                        },
+                    );
+                }
+            }
             GitAction::ResolveConflict { path, text } => {
                 self.start_mutation(paths, ctx, Mutation::Resolve { path, text })
             }
@@ -446,7 +507,7 @@ impl GitState {
                         self.message_before_amend = None;
                         self.amend_pushed_to = None;
                     }
-                    MutateKind::SwitchBranch => {
+                    MutateKind::SwitchBranch | MutateKind::Merge => {
                         self.needs_branches = true;
                         events.push(GitEvent::BranchSwitched);
                     }
@@ -456,9 +517,17 @@ impl GitState {
                     MutateKind::Unstage | MutateKind::Discard | MutateKind::Resolve => {}
                 }
             }
-            JobResult::Mutate(_, _, Err(e)) => {
+            JobResult::Mutate(kind, _, Err(e)) => {
                 self.error = e.clone();
                 events.push(GitEvent::Status(e));
+                if matches!(kind, MutateKind::Merge) {
+                    // A failed merge may already have switched branch or
+                    // left conflicts behind: reread both so the resolver
+                    // shows them, and reconcile the open contract.
+                    self.needs_branches = true;
+                    self.needs_refresh = true;
+                    events.push(GitEvent::BranchSwitched);
+                }
             }
         }
     }
@@ -1226,5 +1295,59 @@ mod tests {
         settle_git(&mut git, &paths, &ctx);
         git.handle(GitAction::ToggleAmend, Some(&paths), &ctx);
         assert_eq!(git.commit_message, "draft");
+    }
+
+    #[test]
+    fn confirm_merge_into_another_branch_switches_to_it() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let (mut git, paths) = git_at(&root);
+        let ctx = egui::Context::default();
+        git.branches.current = Some("apic-test".into());
+
+        git.handle(
+            GitAction::RequestBranchOp {
+                kind: BranchOpKind::Merge,
+                target: "apic-second".into(),
+            },
+            Some(&paths),
+            &ctx,
+        );
+        git.pending_branch_op.as_mut().unwrap().source = "apic-test".into();
+        git.handle(GitAction::ConfirmBranchOp, Some(&paths), &ctx);
+        let events = settle_git(&mut git, &paths, &ctx);
+
+        assert_eq!(current_branch(&root), "apic-second");
+        assert!(events.contains(&GitEvent::BranchSwitched), "{events:?}");
+        assert!(git.pending_branch_op.is_none());
+    }
+
+    #[test]
+    fn confirm_with_no_source_runs_nothing() {
+        let mut git = GitState::default();
+        let ctx = egui::Context::default();
+        git.pending_branch_op = Some(BranchOp {
+            kind: BranchOpKind::Pull,
+            target: "main".into(),
+            source: String::new(),
+        });
+        git.handle(GitAction::ConfirmBranchOp, None, &ctx);
+        assert!(git.pending.is_none());
+        assert!(git.pending_branch_op.is_none());
+    }
+
+    #[test]
+    fn failed_merge_rereads_status_and_branches() {
+        let mut git = GitState::default();
+        let mut events = Vec::new();
+        git.apply_result(
+            JobResult::Mutate(MutateKind::Merge, String::new(), Err("conflict".into())),
+            &mut events,
+        );
+        assert!(git.needs_branches && git.needs_refresh);
+        assert_eq!(git.error, "conflict");
+        assert!(events.contains(&GitEvent::BranchSwitched));
     }
 }
