@@ -92,6 +92,20 @@ pub(crate) struct App {
     pub(crate) settings_path: Option<PathBuf>,
 }
 
+/// `path` relative to `root`, both canonicalised, with `/` separators.
+/// `None` when either cannot be canonicalised or `path` is outside `root`.
+fn relative_slash_path(root: &Path, path: &Path) -> Option<String> {
+    let root = root.canonicalize().ok()?;
+    let path = path.canonicalize().ok()?;
+    let rel = path.strip_prefix(&root).ok()?;
+    Some(
+        rel.components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/"),
+    )
+}
+
 impl App {
     pub(crate) fn new() -> Self {
         let mut app = App {
@@ -144,17 +158,9 @@ impl App {
         let Some(root) = self.project.project_root.clone() else {
             return;
         };
-        let (Ok(canon_root), Ok(canon_path)) = (root.canonicalize(), path.canonicalize()) else {
+        let Some(rel) = relative_slash_path(&root, path) else {
             return;
         };
-        let Ok(rel) = canon_path.strip_prefix(&canon_root) else {
-            return;
-        };
-        let rel = rel
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
         self.update_settings(|s| s.remember_file(root, rel));
     }
 
@@ -485,9 +491,56 @@ impl App {
         if matches!(action, ContractsAction::OpenNewTemplate) {
             ctx.data_mut(|d| d.insert_temp(egui::Id::new(FOCUS_NEW_TEMPLATE), "open".to_string()));
         }
+        let is_load = matches!(action, ContractsAction::Load(_));
+        let repairing_before = self.contracts.repair.as_ref().map(|rep| rep.index);
         let paths = self.contracts_paths();
         let events = self.contracts.handle(action, paths.as_ref());
         self.apply_contracts_events(events, Some(ctx));
+        let repairing_after = self.contracts.repair.as_ref().map(|rep| rep.index);
+        // A load always checks, so reopening a conflicted contract whose
+        // repair state is still held redirects again. A newly entered repair
+        // editor checks too, which covers a load continued from the
+        // unsaved-changes popup by `DiscardAndContinue`.
+        if is_load || repairing_after != repairing_before {
+            self.open_conflict_in_changes(ctx);
+        }
+    }
+
+    /// When a contracts action just loaded a contract or opened the repair
+    /// editor for one that git lists as conflicted, shows it in the inline conflict resolver
+    /// under Changes instead. Anything else, including git status not yet
+    /// loaded, leaves the repair editor in place.
+    fn open_conflict_in_changes(&mut self, ctx: &egui::Context) {
+        let Some(repo_root) = self.shell.repo_root.clone() else {
+            return;
+        };
+        let Some(file) = self
+            .contracts
+            .repair
+            .as_ref()
+            .and_then(|rep| self.contracts.entries.get(rep.index))
+            .map(|entry| entry.path.clone())
+        else {
+            return;
+        };
+        let Some(rel) = relative_slash_path(&repo_root, &file) else {
+            return;
+        };
+        if !self.git.status.find(&rel).is_some_and(|f| f.conflicted) {
+            return;
+        }
+        // Set directly rather than through `ShellAction::SwitchView`: that
+        // also starts a status refresh, and git runs one job at a time, so
+        // the diff fetch `Select` starts below would be refused. Status is
+        // already loaded, since it is what said this file is conflicted.
+        self.shell.sidebar_view = SidebarView::Changes;
+        self.apply(
+            Action::Git(GitAction::Select {
+                path: rel,
+                staged: false,
+            }),
+            ctx,
+        );
     }
 
     /// Applies what the contracts view model asked the shell to do.
@@ -565,6 +618,15 @@ impl App {
         }
     }
 
+    /// Rescans the contracts after a git resolve or discard rewrote files,
+    /// see `ContractsState::refresh_after_git_write`.
+    fn refresh_after_git_write(&mut self) {
+        if let Some(paths) = self.read_project() {
+            let events = self.contracts.refresh_after_git_write(&paths);
+            self.apply_contracts_events(events, None);
+        }
+    }
+
     /// Discovers contracts for the active project and reads each one's method for
     /// the sidebar badge. Resolves everything against `self.project.project_root`;
     /// never reads the process current directory.
@@ -638,6 +700,7 @@ impl App {
             match event {
                 GitEvent::Status(text) => self.shell.status = text,
                 GitEvent::BranchSwitched => self.reconcile_after_checkout(),
+                GitEvent::WorkingTreeChanged => self.refresh_after_git_write(),
             }
         }
     }
@@ -749,8 +812,94 @@ mod tests {
     use apic_core::edit::EditModel;
 
     use crate::app::test_support::{
-        app_at, current_branch, dirty, git_available, git_output, project_fixture, settle, tempdir,
+        app_at, conflict_fixture, current_branch, dirty, git_available, git_output,
+        project_fixture, settle, tempdir,
     };
+
+    fn entry_index(app: &App, name: &str) -> usize {
+        app.contracts
+            .entries
+            .iter()
+            .position(|e| e.path.ends_with(name))
+            .expect("contract is listed")
+    }
+
+    #[test]
+    fn resolving_a_conflict_refreshes_the_contracts_list() {
+        if !git_available() {
+            return;
+        }
+        let mut app = app_at(conflict_fixture());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        app.poll_git(&ctx);
+        settle(&mut app, &ctx);
+        let sample = entry_index(&app, "sample.json");
+        assert!(app.contracts.entries[sample].error.is_some());
+        app.apply(Action::Contracts(ContractsAction::Load(sample)), &ctx);
+        settle(&mut app, &ctx);
+
+        app.apply(
+            Action::Git(GitAction::ResolveConflict {
+                path: "contracts/sample.json".to_string(),
+                text: apic_core::template::DEFAULT.to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        let sample = entry_index(&app, "sample.json");
+        assert!(
+            app.contracts.entries[sample].error.is_none(),
+            "the resolved file must no longer be listed as invalid"
+        );
+        assert!(app.contracts.repair.is_none());
+        assert!(app.contracts.model.is_some());
+    }
+
+    #[test]
+    fn resolving_a_conflict_keeps_unsaved_edits_to_another_contract() {
+        if !git_available() {
+            return;
+        }
+        let root = conflict_fixture();
+        std::fs::write(
+            root.join("contracts").join("other.json"),
+            apic_core::template::DEFAULT,
+        )
+        .unwrap();
+        let mut app = app_at(root);
+        let ctx = egui::Context::default();
+        app.reload_project();
+        app.poll_git(&ctx);
+        settle(&mut app, &ctx);
+        let other = entry_index(&app, "other.json");
+        app.apply(Action::Contracts(ContractsAction::Load(other)), &ctx);
+        app.contracts.editing = true;
+        app.contracts
+            .model
+            .as_mut()
+            .expect("other.json is open")
+            .name
+            .push('x');
+
+        app.apply(
+            Action::Git(GitAction::ResolveConflict {
+                path: "contracts/sample.json".to_string(),
+                text: apic_core::template::DEFAULT.to_string(),
+            }),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        assert!(app.contracts.has_unsaved_edits());
+        let sample = entry_index(&app, "sample.json");
+        assert!(app.contracts.entries[sample].error.is_none());
+        assert_eq!(
+            app.contracts.selected,
+            Some(entry_index(&app, "other.json"))
+        );
+    }
 
     /// A minimal but valid contract, loaded the same way `load()` does.
     fn sample_model() -> EditModel {
@@ -1583,5 +1732,169 @@ mod tests {
                 let _ = app.top_bar(ui);
             });
         }
+    }
+
+    #[test]
+    fn loading_a_conflicted_contract_opens_the_resolver_in_changes() {
+        if !git_available() {
+            return;
+        }
+        let mut app = app_at(conflict_fixture());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        app.poll_git(&ctx);
+        settle(&mut app, &ctx);
+        assert!(
+            app.git
+                .status
+                .find("contracts/sample.json")
+                .is_some_and(|f| f.conflicted),
+            "fixture must be conflicted: {:?}",
+            app.git.status.inside
+        );
+        let i = app
+            .contracts
+            .entries
+            .iter()
+            .position(|e| e.path.ends_with("sample.json"))
+            .expect("sample.json is listed");
+
+        app.apply(Action::Contracts(ContractsAction::Load(i)), &ctx);
+
+        assert_eq!(app.shell.central, CentralView::Git);
+        assert_eq!(app.shell.sidebar_view, SidebarView::Changes);
+        assert_eq!(
+            app.git.selected,
+            Some(("contracts/sample.json".to_string(), false))
+        );
+    }
+
+    #[test]
+    fn loading_an_invalid_contract_without_a_conflict_keeps_the_repair_editor() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        std::fs::write(root.join("contracts").join("broken.json"), "{ not json").unwrap();
+        let mut app = app_at(root);
+        let ctx = egui::Context::default();
+        app.reload_project();
+        app.poll_git(&ctx);
+        settle(&mut app, &ctx);
+        let i = app
+            .contracts
+            .entries
+            .iter()
+            .position(|e| e.path.ends_with("broken.json"))
+            .expect("broken.json is listed");
+
+        app.apply(Action::Contracts(ContractsAction::Load(i)), &ctx);
+
+        assert_eq!(app.shell.central, CentralView::Contracts);
+        assert_eq!(app.shell.sidebar_view, SidebarView::Contracts);
+        assert!(app.contracts.repair.is_some());
+    }
+
+    #[test]
+    fn discarding_edits_to_open_a_conflicted_contract_opens_the_resolver() {
+        if !git_available() {
+            return;
+        }
+        let root = conflict_fixture();
+        std::fs::write(
+            root.join("contracts").join("other.json"),
+            apic_core::template::DEFAULT,
+        )
+        .unwrap();
+        let mut app = app_at(root);
+        let ctx = egui::Context::default();
+        app.reload_project();
+        app.poll_git(&ctx);
+        settle(&mut app, &ctx);
+        let position = |app: &App, name: &str| {
+            app.contracts
+                .entries
+                .iter()
+                .position(|e| e.path.ends_with(name))
+                .expect("contract is listed")
+        };
+        let other = position(&app, "other.json");
+        let sample = position(&app, "sample.json");
+        app.apply(Action::Contracts(ContractsAction::Load(other)), &ctx);
+        app.contracts.editing = true;
+        app.contracts
+            .model
+            .as_mut()
+            .expect("other.json is open")
+            .name
+            .push('x');
+        assert!(app.contracts.has_unsaved_edits());
+
+        app.apply(Action::Contracts(ContractsAction::Load(sample)), &ctx);
+        app.apply(Action::Contracts(ContractsAction::DiscardAndContinue), &ctx);
+
+        assert_eq!(app.shell.central, CentralView::Git);
+        assert_eq!(app.shell.sidebar_view, SidebarView::Changes);
+        assert_eq!(
+            app.git.selected,
+            Some(("contracts/sample.json".to_string(), false))
+        );
+    }
+
+    #[test]
+    fn opening_a_conflicted_contract_again_still_opens_the_resolver() {
+        if !git_available() {
+            return;
+        }
+        let mut app = app_at(conflict_fixture());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        app.poll_git(&ctx);
+        settle(&mut app, &ctx);
+        let sample = app
+            .contracts
+            .entries
+            .iter()
+            .position(|e| e.path.ends_with("sample.json"))
+            .expect("sample.json is listed");
+        app.apply(Action::Contracts(ContractsAction::Load(sample)), &ctx);
+        app.apply(
+            Action::Shell(ShellAction::SwitchView(SidebarView::Contracts)),
+            &ctx,
+        );
+        settle(&mut app, &ctx);
+
+        app.apply(Action::Contracts(ContractsAction::Load(sample)), &ctx);
+
+        assert_eq!(app.shell.central, CentralView::Git);
+        assert_eq!(app.shell.sidebar_view, SidebarView::Changes);
+    }
+
+    #[test]
+    fn redirected_conflict_loads_its_diff() {
+        if !git_available() {
+            return;
+        }
+        let mut app = app_at(conflict_fixture());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        app.poll_git(&ctx);
+        settle(&mut app, &ctx);
+        let sample = app
+            .contracts
+            .entries
+            .iter()
+            .position(|e| e.path.ends_with("sample.json"))
+            .expect("sample.json is listed");
+
+        app.apply(Action::Contracts(ContractsAction::Load(sample)), &ctx);
+        settle(&mut app, &ctx);
+
+        let key = ("contracts/sample.json".to_string(), false);
+        assert_eq!(
+            app.git.diff.as_ref().map(|(k, _)| k.clone()),
+            Some(key),
+            "the redirect must fetch the selected file's diff"
+        );
     }
 }

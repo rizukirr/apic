@@ -16,7 +16,7 @@ pub(crate) use self::branches::branch_menu;
 use self::branches::{
     branch_op_dialog, create_branch_dialog, delete_branch_dialog, discard_dialog,
 };
-use self::diff::{raw_diff_view, semantic_diff_view};
+use self::diff::{inline_diff_view, semantic_diff_view};
 use self::files::{FileTree, RowMode, file_row};
 use self::resolver::conflict_resolver;
 use crate::features::git::domain::diff as domain_diff;
@@ -270,7 +270,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
     let conflicted = state.status.find(&path).is_some_and(|f| f.conflicted);
 
     // The field list, when this change has one. Worked out before the
-    // header so the raw-diff toggle can be disabled when there is nothing
+    // header so the field-list toggle can be disabled when there is nothing
     // for it to switch away from.
     let field_changes = if conflicted {
         None
@@ -285,7 +285,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
             let side = if staged { "staged" } else { "unstaged" };
             ui.label(RichText::new(side).color(p.on_surface_variant));
             ui.add_enabled_ui(field_changes.is_some(), |ui| {
-                ui.checkbox(&mut state.show_raw_diff, "Show raw diff")
+                ui.checkbox(&mut state.show_fields, "Show field changes")
             })
             .response
             .on_disabled_hover_text("No field-level view for this change");
@@ -302,17 +302,15 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
         return conflict_resolver(ui, state, &path, staged, &raw, new_blob.as_deref());
     }
 
-    // The field list is the default: a changed file raises the question of
-    // what changed in it, not what it contains. Anything the field list
-    // cannot answer, a non-contract file, an untracked file, or a change
-    // that is formatting only, falls through to the diff, so no selection
-    // ever renders an empty pane and there is nothing to instruct the user
-    // out of.
-    let semantic = field_changes.filter(|_| !state.show_raw_diff);
+    // The inline diff is the default for every file. The field list shows
+    // only when asked for and when this change has one, so a non-contract
+    // file, an untracked file or a formatting-only change always shows
+    // the inline diff and no selection ever renders an empty pane.
+    let semantic = field_changes.filter(|_| state.show_fields);
 
     match semantic {
         Some(changes) => semantic_diff_view(ui, &changes),
-        None => raw_diff_view(ui, &data.raw),
+        None => inline_diff_view(ui, &data.rows),
     }
     None
 }
@@ -332,6 +330,15 @@ mod tests {
     const CONTRACT_POST: &str =
         r#"{"name":"x","method":"POST","url":"http://a","headers":[],"responses":[]}"#;
     const CONTRACT_GET_REFORMATTED: &str = "{\n  \"name\": \"x\",\n  \"method\": \"GET\",\n  \"url\": \"http://a\",\n  \"headers\": [],\n  \"responses\": []\n}\n";
+
+    fn diff_data(raw: &str, old_blob: Option<&str>, new_blob: Option<&str>) -> DiffData {
+        DiffData {
+            raw: raw.to_string(),
+            rows: domain_diff::parse_unified(raw),
+            old_blob: old_blob.map(str::to_string),
+            new_blob: new_blob.map(str::to_string),
+        }
+    }
 
     fn state_with_diff(path: &str, staged: bool, data: DiffData) -> GitState {
         GitState {
@@ -475,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn central_renders_semantic_diff_for_a_changed_contract() {
+    fn central_renders_the_field_list_when_show_fields_is_set() {
         for preference in BOTH_THEMES {
             let old = domain_diff::parse(CONTRACT_GET).expect("valid contract");
             let new = domain_diff::parse(CONTRACT_POST).expect("valid contract");
@@ -483,12 +490,13 @@ mod tests {
             let mut state = state_with_diff(
                 "contracts/login.json",
                 true,
-                DiffData {
-                    raw: "diff --git a/contracts/login.json b/contracts/login.json".into(),
-                    old_blob: Some(CONTRACT_GET.into()),
-                    new_blob: Some(CONTRACT_POST.into()),
-                },
+                diff_data(
+                    "diff --git a/contracts/login.json b/contracts/login.json",
+                    Some(CONTRACT_GET),
+                    Some(CONTRACT_POST),
+                ),
             );
+            state.show_fields = true;
             run_in_theme(preference, |ui| {
                 central_body(ui, &mut state);
             });
@@ -496,18 +504,18 @@ mod tests {
     }
 
     #[test]
-    fn central_renders_the_field_list_by_default_for_a_changed_contract() {
+    fn central_renders_the_inline_diff_by_default_for_a_changed_contract() {
         for preference in BOTH_THEMES {
             let mut state = state_with_diff(
                 "contracts/login.json",
                 true,
-                DiffData {
-                    raw: "diff --git a/contracts/login.json b/contracts/login.json\nindex 2a4e428..5d3ef15 100644\n--- a/contracts/login.json\n+++ b/contracts/login.json\n@@ -1,3 +1,3 @@\n {\n-    \"name\": \"user-login\",\n+    \"name\": \"login-v2\",\n }\n".into(),
-                    old_blob: Some(CONTRACT_GET.into()),
-                    new_blob: Some(CONTRACT_POST.into()),
-                },
+                diff_data(
+                    "diff --git a/contracts/login.json b/contracts/login.json\nindex 2a4e428..5d3ef15 100644\n--- a/contracts/login.json\n+++ b/contracts/login.json\n@@ -1,3 +1,3 @@\n {\n-    \"name\": \"user-login\",\n+    \"name\": \"login-v2\",\n }\n",
+                    Some(CONTRACT_GET),
+                    Some(CONTRACT_POST),
+                ),
             );
-            assert!(!state.show_raw_diff);
+            assert!(!state.show_fields);
             run_in_theme(preference, |ui| {
                 central_body(ui, &mut state);
             });
@@ -515,16 +523,24 @@ mod tests {
     }
 
     #[test]
-    fn central_renders_raw_diff_for_a_non_contract_file() {
+    fn inline_diff_view_renders_every_row_kind_in_both_themes() {
+        let rows = domain_diff::parse_unified(
+            "@@ -1,3 +1,3 @@\n a\n-\"method\": \"GET\",\n+\"method\": \"POST\",\n c\n\\ No newline at end of file\n",
+        );
+        for preference in BOTH_THEMES {
+            run_in_theme(preference, |ui| {
+                inline_diff_view(ui, &rows);
+            });
+        }
+    }
+
+    #[test]
+    fn central_renders_the_inline_diff_for_a_non_contract_file() {
         for preference in BOTH_THEMES {
             let mut state = state_with_diff(
                 "src/main.rs",
                 false,
-                DiffData {
-                    raw: "@@ -1 +1 @@\n-old line\n+new line\n".into(),
-                    old_blob: None,
-                    new_blob: None,
-                },
+                diff_data("@@ -1 +1 @@\n-old line\n+new line\n", None, None),
             );
             run_in_theme(preference, |ui| {
                 central_body(ui, &mut state);
@@ -541,12 +557,11 @@ mod tests {
             let mut state = state_with_diff(
                 "contracts/login.json",
                 false,
-                DiffData {
-                    raw: "@@ -1,7 +1 @@\n-{\"name\":\"x\",\"method\":\"GET\",\"url\":\"http://a\",\"headers\":[],\"responses\":[]}\n+..."
-                        .into(),
-                    old_blob: Some(CONTRACT_GET.into()),
-                    new_blob: Some(CONTRACT_GET_REFORMATTED.into()),
-                },
+                diff_data(
+                    "@@ -1,7 +1 @@\n-{\"name\":\"x\",\"method\":\"GET\",\"url\":\"http://a\",\"headers\":[],\"responses\":[]}\n+...",
+                    Some(CONTRACT_GET),
+                    Some(CONTRACT_GET_REFORMATTED),
+                ),
             );
             run_in_theme(preference, |ui| {
                 central_body(ui, &mut state);
@@ -564,11 +579,7 @@ mod tests {
         let mut state = state_with_diff(
             path,
             false,
-            DiffData {
-                raw: "@@ -1,3 +1,7 @@\n conflict".into(),
-                old_blob: None,
-                new_blob: Some(text.to_string()),
-            },
+            diff_data("@@ -1,3 +1,7 @@\n conflict", None, Some(text)),
         );
         state.status = Status {
             inside: vec![file(path, true)],
@@ -617,9 +628,46 @@ mod tests {
             run_in_theme(preference, |ui| {
                 central_body(ui, &mut state);
             });
+            state
+                .resolve
+                .as_mut()
+                .expect("markers must parse")
+                .choices
+                .fill(Some(Choice::Ours));
+            run_in_theme(preference, |ui| {
+                central_body(ui, &mut state);
+            });
             let resolve = state.resolve.as_ref().expect("markers must parse");
             let rendered = conflict::render(&resolve.file, &resolve.choices);
             assert!(apic_core::json::validate(&rendered).is_err());
+        }
+    }
+
+    #[test]
+    fn central_renders_the_conflict_resolver_with_a_mix_of_decided_and_undecided_blocks() {
+        for preference in BOTH_THEMES {
+            let mut state = conflict_state("contracts/sample.json", CONFLICT_TEXT);
+            run_in_theme(preference, |ui| {
+                central_body(ui, &mut state);
+            });
+            let resolve = state.resolve.as_mut().expect("markers must parse");
+            resolve.choices[0] = Some(Choice::Both);
+            run_in_theme(preference, |ui| {
+                central_body(ui, &mut state);
+            });
+            let resolve = state.resolve.as_ref().expect("markers must parse");
+            assert_eq!(resolve.choices, vec![Some(Choice::Both), None]);
+        }
+    }
+
+    #[test]
+    fn central_renders_the_conflict_resolver_for_a_non_json_file() {
+        for preference in BOTH_THEMES {
+            let mut state = conflict_state("notes.txt", CONFLICT_TEXT);
+            run_in_theme(preference, |ui| {
+                central_body(ui, &mut state);
+            });
+            assert!(state.resolve.is_some());
         }
     }
 

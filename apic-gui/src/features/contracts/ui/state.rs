@@ -259,6 +259,51 @@ impl ContractsState {
         events
     }
 
+    /// Rescans after git rewrote files under the project, a resolve or a
+    /// discard. The repair editor follows its file: it opens as a contract
+    /// once the file is valid, shows the new text while still invalid, and
+    /// closes when the file is gone. Unlike `reconcile`, an open contract
+    /// with unsaved edits, or an open template, is never reloaded, so a git
+    /// action on another file cannot drop edits.
+    pub(crate) fn refresh_after_git_write(
+        &mut self,
+        paths: &ContractsPaths,
+    ) -> Vec<ContractsEvent> {
+        let repairing = self
+            .repair
+            .as_ref()
+            .and_then(|rep| self.entries.get(rep.index))
+            .map(|entry| entry.path.clone());
+        let mut events = self.reload(paths);
+        let position =
+            |entries: &[Entry], path: &PathBuf| entries.iter().position(|e| &e.path == path);
+        if let Some(path) = repairing {
+            self.repair = None;
+            self.selected = None;
+            if let Some(i) = position(&self.entries, &path) {
+                if self.entries[i].error.is_some() {
+                    self.enter_repair(i);
+                } else {
+                    self.load(i, &mut events);
+                }
+            }
+            return events;
+        }
+        if self.has_unsaved_edits() || self.selected_template.is_some() {
+            self.selected = self.path.as_ref().and_then(|p| position(&self.entries, p));
+            return events;
+        }
+        match self.path.clone().and_then(|p| position(&self.entries, &p)) {
+            Some(i) => self.load(i, &mut events),
+            None => {
+                self.model = None;
+                self.path = None;
+                self.selected = None;
+            }
+        }
+        events
+    }
+
     /// Whether edit mode is on and the model differs from its pre-edit
     /// snapshot.
     pub(crate) fn has_unsaved_edits(&self) -> bool {
