@@ -11,5 +11,6 @@ pub mod fuzzy;
 pub mod json;
 pub mod template;
 pub mod validate;
+pub mod vars;
 
 pub use validate::validate_dir;
