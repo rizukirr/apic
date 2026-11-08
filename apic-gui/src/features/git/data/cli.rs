@@ -274,6 +274,9 @@ mod tests {
         assert!(run(dir, &["init"]).is_ok());
         assert!(run(dir, &["config", "user.email", "test@example.com"]).is_ok());
         assert!(run(dir, &["config", "user.name", "Test User"]).is_ok());
+        // Windows runners set core.autocrlf, which would check files out
+        // with CRLF and break the content assertions.
+        assert!(run(dir, &["config", "core.autocrlf", "false"]).is_ok());
         fs::write(dir.join("file.txt"), "original\n").unwrap();
         assert!(run(dir, &["add", "--", "file.txt"]).is_ok());
         assert!(commit(dir, "initial", false).is_ok());
