@@ -21,7 +21,7 @@ pub(crate) enum Change {
 impl Change {
     /// Maps one XY status character. An unrecognized code reads as `Modified`
     /// so a future git status letter shows the file rather than dropping it.
-    fn from_code(c: u8) -> Change {
+    pub(crate) fn from_code(c: u8) -> Change {
         match c {
             b'.' => Change::Unmodified,
             b'A' => Change::Added,
