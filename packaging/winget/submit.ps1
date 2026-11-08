@@ -113,6 +113,61 @@ function Test-UrlExists {
     }
 }
 
+# `wingetcreate update` copies every locale field from the last published version, so a
+# license change or new release notes never reach the PR on their own (1.0.0 went out as MIT
+# with no ReleaseNotes). Rewrite both fields in the generated locale manifest before submitting.
+$cargoToml = Join-Path $PSScriptRoot '..\..\Cargo.toml'
+$licenseLine = Get-Content $cargoToml | Where-Object { $_ -match '^\s*license\s*=' } | Select-Object -First 1
+if ($licenseLine -match '"([^"]+)"') { $License = $Matches[1] } else { throw "Could not read license from $cargoToml" }
+
+function Get-ReleaseNotes {
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        Write-Warning "gh not found; submitting without ReleaseNotes."
+        return $null
+    }
+    $body = (& gh release view "v$Version" -R rizukirr/apic --json body -q .body 2>$null) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or -not $body.Trim()) {
+        Write-Warning "Could not read release notes for v$Version; submitting without ReleaseNotes."
+        return $null
+    }
+    $body = $body.Trim()
+    # The winget schema caps ReleaseNotes at 10000 characters.
+    if ($body.Length -gt 10000) {
+        Write-Warning "Release notes exceed 10000 characters; submitting without ReleaseNotes."
+        return $null
+    }
+    return $body
+}
+
+function Update-LocaleManifest {
+    param([string]$Dir, [string]$Id, [string]$Notes)
+
+    $file = Get-ChildItem $Dir -Recurse -Filter "$Id.locale.en-US.yaml" | Select-Object -First 1
+    if (-not $file) { throw "No generated locale manifest for $Id under $Dir" }
+
+    $lines = [System.IO.File]::ReadAllLines($file.FullName) |
+        Where-Object { $_ -notmatch '^License:' }
+    # Drop any carried-over ReleaseNotes block: the key line plus its indented continuation.
+    $out = New-Object System.Collections.Generic.List[string]
+    $inNotes = $false
+    foreach ($l in $lines) {
+        if ($l -match '^ReleaseNotes:') { $inNotes = $true; continue }
+        if ($inNotes -and ($l -match '^\s' -or $l -eq '')) { continue }
+        $inNotes = $false
+        if ($l -match '^LicenseUrl:') { $out.Add("License: $License") }
+        if ($Notes -and $l -match '^ReleaseNotesUrl:') {
+            $out.Add('ReleaseNotes: |-')
+            foreach ($n in ($Notes -split "`r?`n")) { $out.Add($(if ($n) { "  $n" } else { '' })) }
+        }
+        $out.Add($l)
+    }
+    if (-not ($out -match '^License:')) { throw "Generated locale manifest for $Id has no LicenseUrl to anchor License on" }
+    [System.IO.File]::WriteAllLines($file.FullName, $out, (New-Object System.Text.UTF8Encoding $false))
+}
+
+$releaseNotes = $null
+$notesFetched = $false
+
 # Keep generated manifests out of the repo root; they are wingetcreate scratch output.
 $outDir = Join-Path ([System.IO.Path]::GetTempPath()) "apic-winget-$Version"
 
@@ -140,14 +195,32 @@ foreach ($p in $packages) {
         $forkChecked = $true
     }
 
-    $params = @('update', $p.Id, '--version', $Version, '--urls', $p.Url, '--out', $outDir)
-    if (-not $DryRun) { $params += '--submit' }
+    # A separate, emptied directory per package so a stale run cannot leak into the submission.
+    $pkgDir = Join-Path $outDir $p.Id
+    $params = @('update', $p.Id, '--version', $Version, '--urls', $p.Url, '--out', $pkgDir)
     Write-Host "wingetcreate $($params -join ' ')"
+    Write-Host "  then set License: $License and ReleaseNotes, and run: wingetcreate submit $pkgDir"
     if (-not $DryRun) {
-        & wingetcreate @params
+        if (-not $notesFetched) { $releaseNotes = Get-ReleaseNotes; $notesFetched = $true }
+        if (Test-Path $pkgDir) { Remove-Item -Recurse -Force $pkgDir }
         # Do not abort the loop: one package failing must not block the others.
+        & wingetcreate @params
         if ($LASTEXITCODE -ne 0) {
-            Write-Warning "wingetcreate failed for $($p.Id) (exit $LASTEXITCODE)"
+            Write-Warning "wingetcreate update failed for $($p.Id) (exit $LASTEXITCODE)"
+            $failed += $p.Id
+            continue
+        }
+        try {
+            Update-LocaleManifest -Dir $pkgDir -Id $p.Id -Notes $releaseNotes
+        } catch {
+            Write-Warning "Could not patch manifest for $($p.Id): $_"
+            $failed += $p.Id
+            continue
+        }
+        $manifestDir = (Get-ChildItem $pkgDir -Recurse -Filter "$($p.Id).yaml" | Select-Object -First 1).DirectoryName
+        & wingetcreate submit $manifestDir
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "wingetcreate submit failed for $($p.Id) (exit $LASTEXITCODE)"
             $failed += $p.Id
         }
     }
