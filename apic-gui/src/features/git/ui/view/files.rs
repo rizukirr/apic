@@ -26,6 +26,10 @@ use crate::ui::theme::*;
 pub(super) enum RowMode {
     Changed,
     Conflicted,
+
+    /// A file a commit changed, in the log panel: no checkbox, no menu, and
+    /// a click shows that commit's diff of it.
+    Commit,
 }
 
 /// The colour of a change letter: success for added or untracked, warning
@@ -47,7 +51,7 @@ fn change_color(change: Change, conflicted: bool, p: &Palette) -> egui::Color32 
 /// row has none: clicking it opens the resolver instead.
 pub(super) fn file_menu_items(file: &FileStatus, mode: RowMode) -> Vec<(&'static str, GitAction)> {
     let mut items = Vec::new();
-    if mode == RowMode::Conflicted {
+    if mode != RowMode::Changed {
         return items;
     }
     if file.has_staged_change() {
@@ -78,7 +82,7 @@ pub(super) fn folder_menu_items(
     node: &FileTree,
 ) -> Vec<(&'static str, GitAction)> {
     let mut items = Vec::new();
-    if mode == RowMode::Conflicted {
+    if mode != RowMode::Changed {
         return items;
     }
     if node.any_staged() {
@@ -178,9 +182,15 @@ pub(super) fn file_row(
                         .truncate();
                 let response = ui.add(button);
                 if response.clicked() {
-                    action = Some(GitAction::Select {
-                        path: file.path.clone(),
-                        staged,
+                    action = Some(if mode == RowMode::Commit {
+                        GitAction::SelectCommitFile {
+                            path: file.path.clone(),
+                        }
+                    } else {
+                        GitAction::Select {
+                            path: file.path.clone(),
+                            staged,
+                        }
                     });
                 }
                 if has_menu {
@@ -472,5 +482,15 @@ mod tests {
         assert_eq!(paths, ["dir/a.json", "dir/sub/b.json", "dir/sub/c.json"]);
         let sub = dir.dirs.get("sub").expect("sub node");
         assert_eq!(sub.tick_counts(), (1, 2));
+    }
+
+    #[test]
+    fn log_view_commit_rows_offer_no_menu() {
+        let added = side("dir/a.json", Change::Added, Change::Unmodified);
+        assert!(file_menu_items(&added, RowMode::Commit).is_empty());
+        let refs = [&added];
+        let tree = FileTree::from_files(&refs, |_| false);
+        let dir = tree.dirs.get("dir").expect("dir node");
+        assert!(folder_menu_items("dir", RowMode::Commit, dir).is_empty());
     }
 }

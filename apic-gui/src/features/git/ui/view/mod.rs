@@ -5,6 +5,7 @@
 mod branches;
 mod diff;
 mod files;
+mod log;
 mod resolver;
 
 use std::path::Path;
@@ -18,8 +19,12 @@ use self::branches::{
 };
 use self::diff::{inline_diff_view, semantic_diff_view};
 use self::files::{FileTree, RowMode, file_row};
+pub(crate) use self::log::log_panel;
+use self::log::revert_dialog;
 use self::resolver::conflict_resolver;
+use crate::features::git::data::jobs::DiffData;
 use crate::features::git::domain::diff as domain_diff;
+use crate::features::git::domain::log::short;
 use crate::features::git::domain::status::{Status, split_conflicts};
 use crate::features::git::ui::state::GitAction;
 use crate::features::git::ui::state::GitState;
@@ -209,6 +214,9 @@ pub(crate) fn dialogs(ctx: &egui::Context, state: &mut GitState) -> Option<GitAc
     if let Some(a) = branch_op_dialog(ctx, state) {
         action = Some(a);
     }
+    if let Some(a) = revert_dialog(ctx, state) {
+        action = Some(a);
+    }
     conflict_notice_dialog(ctx, state);
     action
 }
@@ -279,14 +287,24 @@ fn amend_pushed_dialog(ctx: &egui::Context, state: &GitState) -> Option<GitActio
     }
 }
 
-/// The central body for the Git section: the diff view once selected, an empty
-/// state until then, or the conflict resolver for a conflicted file.
+/// The central body for the Git section: a commit file's diff when one was
+/// picked in the log, otherwise the selected working-tree file's diff, an
+/// empty state until then, or the conflict resolver for a conflicted file.
 ///
 /// The panel frame is owned by the app shell. This only sees the git slice.
 /// Returns the resolve action once the user clicks Resolve, for the app
 /// shell to apply after this closure ends.
 pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
-    let p = palette(ui.ctx());
+    if let Some(path) = state.log.selected_file.clone() {
+        let hash = state.log.selected.clone().unwrap_or_default();
+        match &state.log.diff {
+            Some((key, data)) if *key == (hash.clone(), path.clone()) => {
+                diff_body(ui, &mut state.show_fields, &path, short(&hash), data)
+            }
+            _ => empty_state(ui, "Loading diff...", ""),
+        }
+        return None;
+    }
     let Some((path, staged)) = state.selected.clone() else {
         empty_state(ui, "No file selected", "Select a changed file on the left.");
         return None;
@@ -301,59 +319,50 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
         return None;
     };
 
-    let conflicted = state.status.find(&path).is_some_and(|f| f.conflicted);
-
-    // The field list, when this change has one. Worked out before the
-    // header so the field-list toggle can be disabled when there is nothing
-    // for it to switch away from.
-    let field_changes = if conflicted {
-        None
-    } else {
-        domain_diff::semantic_changes(data.old_blob.as_deref(), data.new_blob.as_deref())
-    };
-
-    ui.add_space(SPACE_SMALL);
-    if !conflicted {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(&path).color(p.on_surface).strong());
-            let side = if staged { "staged" } else { "unstaged" };
-            ui.label(RichText::new(side).color(p.on_surface_variant));
-            ui.add_enabled_ui(field_changes.is_some(), |ui| {
-                ui.checkbox(&mut state.show_fields, "Show field changes")
-            })
-            .response
-            .on_disabled_hover_text("No field-level view for this change");
-        });
-        ui.separator();
-    }
-
-    if conflicted {
+    if state.status.find(&path).is_some_and(|f| f.conflicted) {
         // Cloned out of `data` before it is dropped, so `state` can be
         // borrowed mutably below without fighting the borrow checker over a
         // reference into `state.diff`.
         let raw = data.raw.clone();
         let new_blob = data.new_blob.clone();
+        ui.add_space(SPACE_SMALL);
         return conflict_resolver(ui, state, &path, staged, &raw, new_blob.as_deref());
     }
 
-    // The inline diff is the default for every file. The field list shows
-    // only when asked for and when this change has one, so a non-contract
-    // file, an untracked file or a formatting-only change always shows
-    // the inline diff and no selection ever renders an empty pane.
-    let semantic = field_changes.filter(|_| state.show_fields);
+    let side = if staged { "staged" } else { "unstaged" };
+    diff_body(ui, &mut state.show_fields, &path, side, data);
+    None
+}
 
-    match semantic {
+/// One read-only diff: `path` and `side` with the Show field changes toggle,
+/// then the field list when asked for and available, the inline diff
+/// otherwise. A non-contract file, an untracked file or a formatting-only
+/// change always shows the inline diff, so no selection renders an empty pane.
+fn diff_body(ui: &mut egui::Ui, show_fields: &mut bool, path: &str, side: &str, data: &DiffData) {
+    let p = palette(ui.ctx());
+    let field_changes =
+        domain_diff::semantic_changes(data.old_blob.as_deref(), data.new_blob.as_deref());
+    ui.add_space(SPACE_SMALL);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(path).color(p.on_surface).strong());
+        ui.label(RichText::new(side).color(p.on_surface_variant));
+        ui.add_enabled_ui(field_changes.is_some(), |ui| {
+            ui.checkbox(show_fields, "Show field changes")
+        })
+        .response
+        .on_disabled_hover_text("No field-level view for this change");
+    });
+    ui.separator();
+    match field_changes.filter(|_| *show_fields) {
         Some(changes) => semantic_diff_view(ui, &changes),
         None => inline_diff_view(ui, &data.rows),
     }
-    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::resolver::resolve_label;
     use super::*;
-    use crate::features::git::data::jobs::DiffData;
     use crate::features::git::domain::conflict::{self, Choice};
     use crate::features::git::domain::status::fixtures::{file, untracked};
     use crate::features::git::domain::status::{Branches, Change, FileStatus};
@@ -1218,6 +1227,224 @@ mod tests {
                 };
                 run_in_theme(preference, |ui| {
                     let _ = changes_body(ui, &mut state, Some(std::path::Path::new("/repo")));
+                });
+            }
+        }
+    }
+
+    use crate::features::git::domain::log::{Commit, lanes};
+    use crate::features::git::ui::state::LogState;
+
+    /// A merge on top of a root commit, both loaded, on branch `main`.
+    fn log_view_state() -> GitState {
+        let merge = Commit {
+            hash: "b".repeat(40),
+            parents: vec!["a".repeat(40), "c".repeat(40)],
+            author: "Ann".into(),
+            date: "2026-11-08 10:00".into(),
+            refs: vec!["HEAD -> main".into()],
+            subject: "Merge branch 'side'".into(),
+        };
+        let root = Commit {
+            hash: "a".repeat(40),
+            parents: vec![],
+            author: "Bob".into(),
+            date: "2026-11-07 09:00".into(),
+            refs: vec![],
+            subject: "first commit".into(),
+        };
+        let commits = vec![merge, root];
+        GitState {
+            branches: Branches {
+                current: Some("main".into()),
+                all: vec!["main".into()],
+                remotes: vec![],
+            },
+            log: LogState {
+                open: true,
+                rows: lanes(&commits),
+                commits,
+                loaded: true,
+                ..LogState::default()
+            },
+            ..GitState::default()
+        }
+    }
+
+    /// One headless frame of `log_panel` fed `events`. Stores any action it
+    /// returns into `action` and returns every labelled AccessKit node.
+    fn log_frame(
+        ctx: &egui::Context,
+        state: &mut GitState,
+        events: Vec<egui::Event>,
+        action: &mut Option<GitAction>,
+    ) -> Vec<(String, egui::Rect)> {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        labelled_nodes(ctx.run_ui(input, |ui| {
+            if let Some(a) = log_panel(ui, state) {
+                *action = Some(a);
+            }
+        }))
+    }
+
+    /// Moves to the centre of `rect` and clicks `button` there, then runs two
+    /// idle frames. Returns the nodes from the last frame.
+    fn log_click(
+        ctx: &egui::Context,
+        state: &mut GitState,
+        rect: egui::Rect,
+        button: egui::PointerButton,
+        action: &mut Option<GitAction>,
+    ) -> Vec<(String, egui::Rect)> {
+        let pos = rect.center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut nodes = Vec::new();
+        for events in [
+            vec![egui::Event::PointerMoved(pos)],
+            vec![press(true)],
+            vec![press(false)],
+            vec![],
+            vec![],
+        ] {
+            nodes = log_frame(ctx, state, events, action);
+        }
+        nodes
+    }
+
+    #[test]
+    fn log_view_panel_renders_its_toolbar_labels_and_rows() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut state = log_view_state();
+        let mut action = None;
+        log_frame(&ctx, &mut state, vec![], &mut action);
+        let nodes = log_frame(&ctx, &mut state, vec![], &mut action);
+        for label in [
+            "Branch: main",
+            "User: All",
+            "Date: All time",
+            "Paths: All",
+            ".*",
+            "Cc",
+            "Merge branch 'side'",
+            "first commit",
+        ] {
+            node(&nodes, label);
+        }
+    }
+
+    #[test]
+    fn log_view_right_click_revert_opens_the_popup() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut state = log_view_state();
+        let mut action = None;
+        log_frame(&ctx, &mut state, vec![], &mut action);
+        let nodes = log_frame(&ctx, &mut state, vec![], &mut action);
+        let row = node(&nodes, "first commit");
+        let nodes = log_click(
+            &ctx,
+            &mut state,
+            row,
+            egui::PointerButton::Secondary,
+            &mut action,
+        );
+        let revert = node(&nodes, "Revert");
+        log_click(
+            &ctx,
+            &mut state,
+            revert,
+            egui::PointerButton::Primary,
+            &mut action,
+        );
+
+        state.handle(action.expect("Revert returns an action"), None, &ctx);
+        assert_eq!(
+            state.log.pending_revert.as_ref().map(|c| c.hash.clone()),
+            Some("a".repeat(40))
+        );
+        dialogs_frame(&ctx, &mut state, vec![]);
+        let nodes = dialogs_frame(&ctx, &mut state, vec![]);
+        node(&nodes, "Revert commit");
+        node(&nodes, "first commit");
+    }
+
+    /// Every state the panel draws: loading, nothing matched, a failed
+    /// read over rows, a selected commit with files and Load more, and dots
+    /// only under a text filter.
+    fn log_view_variants() -> Vec<GitState> {
+        let loading = GitState::default();
+        let empty = GitState {
+            log: LogState {
+                loaded: true,
+                ..LogState::default()
+            },
+            ..GitState::default()
+        };
+        let mut failed = log_view_state();
+        failed.log.error = "fatal: bad revision".into();
+        let mut busy = log_view_state();
+        busy.log.more = true;
+        busy.log.selected = Some("a".repeat(40));
+        busy.log.files = Some(vec![FileStatus {
+            path: "contracts/a.json".into(),
+            index: Change::Added,
+            worktree: Change::Unmodified,
+            conflicted: false,
+        }]);
+        busy.log.selected_file = Some("contracts/a.json".into());
+        let mut dots = log_view_state();
+        dots.log.filter.text = "first".into();
+        vec![loading, empty, failed, busy, dots]
+    }
+
+    #[test]
+    fn log_view_renders_each_state_in_both_themes() {
+        for preference in BOTH_THEMES {
+            for mut state in log_view_variants() {
+                run_in_theme(preference, |ui| {
+                    let _ = log_panel(ui, &mut state);
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn log_view_central_shows_a_commit_file_diff() {
+        for preference in BOTH_THEMES {
+            for show_fields in [false, true] {
+                let hash = "a".repeat(40);
+                let mut state = GitState {
+                    show_fields,
+                    log: LogState {
+                        selected: Some(hash.clone()),
+                        selected_file: Some("contracts/a.json".into()),
+                        diff: Some((
+                            (hash, "contracts/a.json".into()),
+                            diff_data(
+                                "@@ -1 +1 @@\n-GET\n+POST\n",
+                                Some(CONTRACT_GET),
+                                Some(CONTRACT_POST),
+                            ),
+                        )),
+                        ..LogState::default()
+                    },
+                    ..GitState::default()
+                };
+                run_in_theme(preference, |ui| {
+                    assert!(central_body(ui, &mut state).is_none());
                 });
             }
         }
