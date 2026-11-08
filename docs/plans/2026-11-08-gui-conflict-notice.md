@@ -163,7 +163,7 @@ fn conflicted_paths(status: &Status) -> Vec<String> {
 - Modify: `GUI.md` (the Conflicts bullet at line 47)
 - Modify: `CHANGELOG.md` (Unreleased, Added)
 
-- [ ] Step 1: Add `detail_box` to the `crate::ui::components` import in view/mod.rs, and add this function below `dialogs()`:
+- [x] Step 1: Add `detail_box` to the `crate::ui::components` import in view/mod.rs, and add this function below `dialogs()`:
 
 ```rust
 /// The "Merge conflict" popup, shown while `conflict_notice` is set: it
@@ -198,9 +198,9 @@ fn conflict_notice_dialog(ctx: &egui::Context, state: &mut GitState) {
 }
 ```
 
-- [ ] Step 2: In `dialogs()`, call `conflict_notice_dialog(ctx, state);` right before the final `action`.
+- [x] Step 2: In `dialogs()`, call `conflict_notice_dialog(ctx, state);` right before the final `action`.
 
-- [ ] Step 3: In the tests module, move the AccessKit label extraction out of `menu_frame` into a helper and use it from `menu_frame`:
+- [x] Step 3: In the tests module, move the AccessKit label extraction out of `menu_frame` into a helper and use it from `menu_frame`:
 
 ```rust
     /// Every AccessKit node in `out` that has a label, with its bounds.
@@ -297,9 +297,9 @@ Then add:
     }
 ```
 
-- [ ] Step 4: In GUI.md, append to the Conflicts bullet: ` When a git status finds a file newly conflicted, from a Pull or Merge here or from git outside the app, a Merge conflict popup lists every conflicted file. OK closes it, and it comes back only when another file becomes conflicted.`
+- [x] Step 4: In GUI.md, append to the Conflicts bullet: ` When a git status finds a file newly conflicted, from a Pull or Merge here or from git outside the app, a Merge conflict popup lists every conflicted file. OK closes it, and it comes back only when another file becomes conflicted.`
 
-- [ ] Step 5: In CHANGELOG.md, add as the first bullet under Unreleased, Added: `- **Merge conflict popup.** When a git status finds a file newly conflicted, whether from a Pull or Merge in the branch menu, from git outside the app, or on opening a project mid-merge, a popup lists every conflicted file so the conflict is not missed. OK closes it until another file becomes conflicted.`
+- [x] Step 5: In CHANGELOG.md, add as the first bullet under Unreleased, Added: `- **Merge conflict popup.** When a git status finds a file newly conflicted, whether from a Pull or Merge in the branch menu, from git outside the app, or on opening a project mid-merge, a popup lists every conflicted file so the conflict is not missed. OK closes it until another file becomes conflicted.`
 
-- [ ] Step 6: Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`
-- [ ] Step 7: Commit `feat(gui): show a Merge conflict popup listing conflicted files`
+- [x] Step 6: Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`
+- [x] Step 7: Commit `feat(gui): show a Merge conflict popup listing conflicted files`
