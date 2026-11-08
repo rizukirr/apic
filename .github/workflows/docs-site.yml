@@ -1,0 +1,34 @@
+name: Docs site
+
+# Tells rizukirr/apic-web to rebuild https://rizukirr.github.io/apic-web/docs/
+# when the Markdown it publishes changes. apic-web pulls these files at build time.
+on:
+  push:
+    branches: [main]
+    paths:
+      - README.md
+      - COMMAND.md
+      - CONTRACT.md
+      - SENDING.md
+      - GUI.md
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ask apic-web to rebuild
+        env:
+          # Fine-grained token scoped to rizukirr/apic-web with Contents: read and write.
+          GH_TOKEN: ${{ secrets.APIC_WEB_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::APIC_WEB_DISPATCH_TOKEN is not set; the site still picks up doc changes in its daily rebuild."
+            exit 0
+          fi
+          gh api --method POST repos/rizukirr/apic-web/dispatches \
+            -f event_type=docs-updated \
+            -F "client_payload[sha]=$GITHUB_SHA"
