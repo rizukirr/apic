@@ -24,7 +24,7 @@
 - Modify: `GUI.md` (the Browse bullet)
 - Modify: `CHANGELOG.md` (`## [Unreleased]` / `### Added`)
 
-- [ ] Step 1: In `data/mod.rs`, add after the `PickKind` enum:
+- [x] Step 1: In `data/mod.rs`, add after the `PickKind` enum:
 
 ```rust
 /// Which dialog a folder picked for a new request or template goes on to
@@ -51,7 +51,7 @@ In `pick`, change the folder arm's pattern to `PickKind::OpenProject | PickKind:
                     PickKind::NewTarget(NewKind::Template) => "Folder for the new template",
 ```
 
-- [ ] Step 2: In `state.rs`, change the data import to `use crate::features::project::data::{self, NewKind, PickKind};`. Add a `ProjectAction` variant after `ImportPostman`:
+- [x] Step 2: In `state.rs`, change the data import to `use crate::features::project::data::{self, NewKind, PickKind};`. Add a `ProjectAction` variant after `ImportPostman`:
 
 ```rust
     /// "+ New request" or "+ New template" with no project open: launch the
@@ -81,7 +81,7 @@ After `finish_new`, add:
     }
 ```
 
-- [ ] Step 3: In the `state.rs` tests module, add:
+- [x] Step 3: In the `state.rs` tests module, add:
 
 ```rust
     #[test]
@@ -169,7 +169,7 @@ After `finish_new`, add:
     }
 ```
 
-- [ ] Step 4: In `app/mod.rs`, change the imports to `use crate::features::project::data::{NewKind, project_root_of};`. Give `apply_project_events` a context parameter, `fn apply_project_events(&mut self, events: Vec<ProjectEvent>, ctx: &egui::Context) {`, and pass `ctx` (or `&ctx` where the caller holds an owned `Context`) at every call. Find them with `grep -n "apply_project_events(" apic-gui/src/app/mod.rs`. Add an arm after `ProjectEvent::Status`:
+- [x] Step 4: In `app/mod.rs`, change the imports to `use crate::features::project::data::{NewKind, project_root_of};`. Give `apply_project_events` a context parameter, `fn apply_project_events(&mut self, events: Vec<ProjectEvent>, ctx: &egui::Context) {`, and pass `ctx` (or `&ctx` where the caller holds an owned `Context`) at every call. Find them with `grep -n "apply_project_events(" apic-gui/src/app/mod.rs`. Add an arm after `ProjectEvent::Status`:
 
 ```rust
                 ProjectEvent::OpenNewDialog(kind) => {
@@ -181,7 +181,7 @@ After `finish_new`, add:
                 }
 ```
 
-- [ ] Step 5: In `app/mod.rs` `apply`, change the guard arm `ProjectAction::ImportPostman | ProjectAction::DismissRefusal => None,` to `ProjectAction::ImportPostman | ProjectAction::DismissRefusal | ProjectAction::PickForNew(_) => None,`. Replace `Action::Contracts(action) => self.handle_contracts(action, ctx),` with:
+- [x] Step 5: In `app/mod.rs` `apply`, change the guard arm `ProjectAction::ImportPostman | ProjectAction::DismissRefusal => None,` to `ProjectAction::ImportPostman | ProjectAction::DismissRefusal | ProjectAction::PickForNew(_) => None,`. Replace `Action::Contracts(action) => self.handle_contracts(action, ctx),` with:
 
 ```rust
             Action::Contracts(action) => {
@@ -211,7 +211,7 @@ fn route_new_without_project(action: ContractsAction, has_project: bool) -> Acti
 }
 ```
 
-- [ ] Step 6: In the `app/mod.rs` tests module, add:
+- [x] Step 6: In the `app/mod.rs` tests module, add:
 
 ```rust
     #[test]
@@ -267,15 +267,15 @@ fn route_new_without_project(action: ContractsAction, has_project: bool) -> Acti
 
 `project_fixture` and `app_at` are in `crate::app::test_support`. Extend the tests module's existing `use crate::app::test_support::{..}` line if one of them is missing.
 
-- [ ] Step 7: In `GUI.md`, in the bullet that starts `- **Browse.**`, replace `and \`+\` starts a new request.` with `and \`+\` starts a new request. With no project open, \`+\` and the Templates section's \`+\` first ask for a folder, set it up as a project unless it already is one, open it, and then show the dialog.`
+- [x] Step 7: In `GUI.md`, in the bullet that starts `- **Browse.**`, replace `and \`+\` starts a new request.` with `and \`+\` starts a new request. With no project open, \`+\` and the Templates section's \`+\` first ask for a folder, set it up as a project unless it already is one, open it, and then show the dialog.`
 
-- [ ] Step 8: In `CHANGELOG.md`, under `## [Unreleased]` / `### Added`, add as the first bullet:
+- [x] Step 8: In `CHANGELOG.md`, under `## [Unreleased]` / `### Added`, add as the first bullet:
 
 ```
 - **New request and New template without a project.** With no project open, the sidebar's `+` and the Templates section's `+` ask for a folder first, set it up as a project unless it already is one, open it, and then show the dialog. Before, the dialog opened and Create only said "no project".
 ```
 
-- [ ] Step 9: Run `cargo fmt --all`.
-- [ ] Step 10: Run `cargo test -p apic-gui`.
-- [ ] Step 11: Run `cargo clippy --workspace --all-targets -- -D warnings`.
-- [ ] Step 12: Commit: `feat(gui): pick a folder before New request and New template when no project is open`.
+- [x] Step 9: Run `cargo fmt --all`.
+- [x] Step 10: Run `cargo test -p apic-gui`.
+- [x] Step 11: Run `cargo clippy --workspace --all-targets -- -D warnings`.
+- [x] Step 12: Commit: `feat(gui): pick a folder before New request and New template when no project is open`.
