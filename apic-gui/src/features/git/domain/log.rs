@@ -188,7 +188,9 @@ pub(crate) fn parse_log(bytes: &[u8]) -> Vec<Commit> {
     let text = String::from_utf8_lossy(bytes);
     let fields: Vec<&str> = text.split('\0').collect();
     fields
-        .chunks_exact(6)
+        .as_chunks::<6>()
+        .0
+        .iter()
         .map(|f| Commit {
             hash: f[0].trim().to_string(),
             parents: f[1].split_whitespace().map(str::to_string).collect(),
@@ -211,7 +213,9 @@ pub(crate) fn parse_name_status(bytes: &[u8]) -> Vec<FileStatus> {
     let text = String::from_utf8_lossy(bytes);
     let fields: Vec<&str> = text.split('\0').collect();
     fields
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .filter_map(|f| {
             Some(FileStatus {
                 path: f[1].to_string(),
@@ -344,7 +348,7 @@ mod tests {
 
     #[test]
     fn parse_log_reads_unicode_empty_refs_and_a_root_commit() {
-        let bytes = "h1\0p1 p2\0Ann\02026-11-08 10:00\0HEAD -> main, tag: v1\0fix ✓ ünï\0h2\0\0Bob\02026-11-07 09:00\0\0root\0";
+        let bytes = "h1\x00p1 p2\x00Ann\x002026-11-08 10:00\x00HEAD -> main, tag: v1\x00fix ✓ ünï\x00h2\x00\x00Bob\x002026-11-07 09:00\x00\x00root\x00";
         let commits = parse_log(bytes.as_bytes());
         assert_eq!(
             commits,
