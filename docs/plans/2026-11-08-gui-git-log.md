@@ -1623,7 +1623,7 @@ Replace the `Mutate(kind, _, Err(e))` arm (lines 552-563) with:
 - Modify: `apic-gui/src/features/git/ui/view/mod.rs` (the module list at lines 5-8, parent of the new module, the imports at lines 15-29, `dialogs` at lines 195-214, `central_body` at lines 282-350, the tests module from line 352, including `labelled_nodes` at line 905, `dialogs_frame` at line 928 and `node` at line 1048)
 - Modify: `apic-gui/src/features/git/ui/view/files.rs` (`RowMode` at lines 25-29, the checks at lines 50 and 81, the click at lines 180-185, the tests module from line 367)
 
-- [ ] Step 1: In `files.rs`, add a variant to `RowMode` after `Conflicted,`:
+- [x] Step 1: In `files.rs`, add a variant to `RowMode` after `Conflicted,`:
 
 ```rust
 
@@ -1663,7 +1663,7 @@ Add to the files.rs tests module:
     }
 ```
 
-- [ ] Step 2: Create `ui/view/log.rs`:
+- [x] Step 2: Create `ui/view/log.rs`:
 
 ```rust
 //! The git log panel: the filter toolbar, the commit table with its painted
@@ -2109,7 +2109,7 @@ mod tests {
 }
 ```
 
-- [ ] Step 3: In `view/mod.rs`, add `mod log;` after `mod files;` in the module list, then add after the `pub(crate) use self::branches::branch_menu;` line:
+- [x] Step 3: In `view/mod.rs`, add `mod log;` after `mod files;` in the module list, then add after the `pub(crate) use self::branches::branch_menu;` line:
 
 ```rust
 pub(crate) use self::log::log_panel;
@@ -2118,7 +2118,7 @@ use crate::features::git::data::jobs::DiffData;
 use crate::features::git::domain::log::short;
 ```
 
-- [ ] Step 4: In `dialogs()`, add before `conflict_notice_dialog(ctx, state);`:
+- [x] Step 4: In `dialogs()`, add before `conflict_notice_dialog(ctx, state);`:
 
 ```rust
     if let Some(a) = revert_dialog(ctx, state) {
@@ -2126,7 +2126,7 @@ use crate::features::git::domain::log::short;
     }
 ```
 
-- [ ] Step 5: Replace `central_body` (lines 282-350, doc comment included) with:
+- [x] Step 5: Replace `central_body` (lines 282-350, doc comment included) with:
 
 ```rust
 /// The central body for the Git section: a commit file's diff when one was
@@ -2202,7 +2202,7 @@ fn diff_body(ui: &mut egui::Ui, show_fields: &mut bool, path: &str, side: &str, 
 }
 ```
 
-- [ ] Step 6: In the `view/mod.rs` tests module, remove the now duplicate `use crate::features::git::data::jobs::DiffData;` (line 356), and add:
+- [x] Step 6: In the `view/mod.rs` tests module, remove the now duplicate `use crate::features::git::data::jobs::DiffData;` (line 356), and add:
 
 ```rust
     use crate::features::git::domain::log::{Commit, lanes};
@@ -2412,10 +2412,10 @@ fn diff_body(ui: &mut egui::Ui, show_fields: &mut bool, path: &str, side: &str, 
     }
 ```
 
-- [ ] Step 7: Run `cargo test -p apic-gui log_view_`
-- [ ] Step 8: Run `cargo test -p apic-gui features::git`
-- [ ] Step 9: Run `cargo fmt --all`
-- [ ] Step 10: Commit `feat(gui): draw the git log panel, its file list and the revert popup`
+- [x] Step 7: Run `cargo test -p apic-gui log_view_`
+- [x] Step 8: Run `cargo test -p apic-gui features::git`
+- [x] Step 9: Run `cargo fmt --all`
+- [x] Step 10: Commit `feat(gui): draw the git log panel, its file list and the revert popup`
 
 ### Task 5: app wiring, persisted open flag and docs → verify: `cargo test -p apic-gui log_app_` exits 0 and runs at least 1 test, and `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` each exit 0
 
