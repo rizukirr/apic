@@ -215,6 +215,9 @@ pub(crate) struct LogState {
     /// A read from the start is owed.
     pub(crate) needs_load: bool,
 
+    /// A read from the start is running, so `commits` may be stale.
+    pub(crate) reloading: bool,
+
     /// A Load more is owed.
     pub(crate) needs_more: bool,
 
@@ -597,7 +600,9 @@ impl GitState {
                 self.log.needs_diff = true;
             }
             GitAction::RequestRevert { hash } => {
-                if let Some(commit) = self.log.commits.iter().find(|c| c.hash == hash)
+                if self.log.needs_load || self.log.reloading {
+                    self.log.error = "The log is reloading, try the revert again".into();
+                } else if let Some(commit) = self.log.commits.iter().find(|c| c.hash == hash)
                     && self.revert_block(commit).is_none()
                 {
                     self.log.pending_revert = Some(commit.clone());
@@ -613,7 +618,12 @@ impl GitState {
                 let Some(commit) = self.log.pending_revert.take() else {
                     return;
                 };
-                if self.branches.current != self.log.revert_branch {
+                if self.log.needs_load
+                    || self.log.reloading
+                    || !self.log.commits.iter().any(|c| c.hash == commit.hash)
+                {
+                    self.log.error = "The log changed, so the revert was not run".into();
+                } else if self.branches.current != self.log.revert_branch {
                     self.log.error = "The branch changed, so the revert was not run".into();
                 } else if let Some(reason) = self.revert_block(&commit) {
                     self.log.error = reason.into();
@@ -642,6 +652,7 @@ impl GitState {
                 // forever: clear `pending` and surface an error instead.
                 Err(TryRecvError::Disconnected) => {
                     self.pending = None;
+                    self.log.reloading = false;
                     self.error = "git worker disconnected".into();
                 }
             }
@@ -701,6 +712,7 @@ impl GitState {
                 self.error = e;
             }
             JobResult::Log(append, Ok(page)) => {
+                self.log.reloading &= append;
                 if !append {
                     self.log.commits.clear();
                     self.log.fetched = 0;
@@ -715,7 +727,10 @@ impl GitState {
                 self.log.loaded = true;
                 self.log.error.clear();
             }
-            JobResult::Log(_, Err(e)) => self.log.error = e,
+            JobResult::Log(append, Err(e)) => {
+                self.log.reloading &= append;
+                self.log.error = e;
+            }
             JobResult::CommitFiles(hash, Ok(files)) => {
                 if self.log.selected.as_ref() == Some(&hash) {
                     self.log.files = Some(files);
@@ -902,6 +917,7 @@ impl GitState {
             let append = !log.needs_load;
             log.needs_load = false;
             log.needs_more = false;
+            log.reloading = !append;
             let skip = if append { log.fetched } else { 0 };
             jobs::log(
                 paths.clone(),
@@ -2090,8 +2106,11 @@ mod tests {
         dirty(&root.join("contracts").join("sample.json"));
         git_output(&root, &["commit", "-am", "change"]);
         let (mut git, paths, ctx) = open_log(&root);
+        git.handle(GitAction::RefreshBranches, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
         let hash = git.log.commits[0].hash.clone();
         git.handle(GitAction::RequestRevert { hash }, Some(&paths), &ctx);
+        assert_eq!(git.log.revert_branch.as_deref(), Some("apic-test"));
         git.handle(
             GitAction::SwitchBranch {
                 name: "apic-second".into(),
@@ -2106,6 +2125,46 @@ mod tests {
         assert_eq!(git_output(&root, &["rev-parse", "HEAD"]), head);
         assert!(git.log.pending_revert.is_none());
         assert!(!git.log.error.is_empty(), "the refusal is explained");
+    }
+
+    #[test]
+    fn log_state_revert_of_a_stale_row_after_a_switch_is_refused() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+        git_output(&root, &["commit", "-am", "change"]);
+        let (mut git, paths, ctx) = open_log(&root);
+        git.handle(
+            GitAction::SwitchBranch {
+                name: "apic-second".into(),
+            },
+            Some(&paths),
+            &ctx,
+        );
+        for _ in 0..200 {
+            git.poll(Some(&paths), &ctx);
+            if git.branches.current.as_deref() == Some("apic-second") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(git.branches.current.as_deref(), Some("apic-second"));
+        assert!(git.pending.is_some(), "the log reload is still running");
+        let hash = git.log.commits.iter().find(|c| c.subject == "change");
+        let hash = hash.expect("the stale row is still shown").hash.clone();
+        git.handle(GitAction::RequestRevert { hash }, Some(&paths), &ctx);
+        // The reload landing clears `log.error`, so the refusal is checked
+        // before settling.
+        assert!(!git.log.error.is_empty(), "the refusal is explained");
+        settle_git(&mut git, &paths, &ctx);
+        let head = git_output(&root, &["rev-parse", "HEAD"]);
+        if git.log.pending_revert.is_some() {
+            git.handle(GitAction::ConfirmRevert, Some(&paths), &ctx);
+        }
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(git_output(&root, &["rev-parse", "HEAD"]), head);
     }
 
     #[test]
