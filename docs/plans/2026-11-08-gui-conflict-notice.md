@@ -15,7 +15,7 @@
 **Files:**
 - Modify: `apic-gui/src/features/git/ui/state.rs` (the `GitState` struct, `set_status` at line 302, the tests module starting at line 630)
 
-- [ ] Step 1: Add a field to `GitState`, after `ticks`:
+- [x] Step 1: Add a field to `GitState`, after `ticks`:
 
 ```rust
     /// Every conflicted path, set when a status brings a conflicted path the
@@ -24,7 +24,7 @@
     pub(crate) conflict_notice: Option<Vec<String>>,
 ```
 
-- [ ] Step 2: Replace `set_status` with:
+- [x] Step 2: Replace `set_status` with:
 
 ```rust
     /// Stores a fresh status and forgets ticks for paths no longer in it.
@@ -58,7 +58,7 @@ fn conflicted_paths(status: &Status) -> Vec<String> {
 }
 ```
 
-- [ ] Step 3: Add tests to the tests module in state.rs (import `crate::features::git::domain::status::fixtures::file` there):
+- [x] Step 3: Add tests to the tests module in state.rs (import `crate::features::git::domain::status::fixtures::file` there):
 
 ```rust
     fn status_of(files: &[(&str, bool)]) -> Status {
@@ -152,9 +152,9 @@ fn conflicted_paths(status: &Status) -> Vec<String> {
     }
 ```
 
-- [ ] Step 4: Run `cargo test -p apic-gui conflict_notice`
-- [ ] Step 5: Run `cargo clippy -p apic-gui --all-targets -- -D warnings`
-- [ ] Step 6: Commit `feat(gui): note newly conflicted paths on each git status`
+- [x] Step 4: Run `cargo test -p apic-gui conflict_notice`
+- [x] Step 5: Run `cargo clippy -p apic-gui --all-targets -- -D warnings`
+- [x] Step 6: Commit `feat(gui): note newly conflicted paths on each git status`
 
 ### Task 2: the Merge conflict popup and docs → verify: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` each exit 0, and `cargo test -p apic-gui conflict_notice_popup` runs at least 1 test
 
