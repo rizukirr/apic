@@ -1,0 +1,5 @@
+# Public mock APIs for trying `apic send` and the GUI Send button.
+# After running demo/login, put the returned accessToken in
+# .apic/env/demo.local.toml as: access_token = "..."
+dummyjson = "https://dummyjson.com"
+httpbin = "https://httpbin.org"

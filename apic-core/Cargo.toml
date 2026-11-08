@@ -1,10 +1,10 @@
 [package]
 name = "apic-core"
-version = "0.5.1"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.92"
 authors = ["Rizki Rakasiwi"]
-license = "MIT"
+license = "GPL-3.0-only"
 description = "Core contract model and logic for apic (parsing, validation, templates, convert)."
 repository = "https://github.com/rizukirr/apic"
 homepage = "https://github.com/rizukirr/apic"
@@ -14,3 +14,4 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 toml = "1.1.2"
 walkdir = "2.5.0"
+ureq = "3.5.1"

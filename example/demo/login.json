@@ -1,0 +1,39 @@
+{
+    "name": "Login",
+    "description": "Logs in to dummyjson.com with its public test user. Copy accessToken from the response into .apic/env/demo.local.toml as access_token.",
+    "method": "POST",
+    "url": "$dummyjson/auth/login",
+    "query": [],
+    "headers": [
+        {
+            "name": "Content-Type",
+            "value": "application/json",
+            "required": true
+        }
+    ],
+    "request": {
+        "username": "emilys",
+        "password": "emilyspass",
+        "expiresInMins": 30
+    },
+    "responses": [
+        {
+            "code": 200,
+            "description": "OK",
+            "schema": {
+                "id": 1,
+                "username": "emilys",
+                "email": "emily.johnson@x.dummyjson.com",
+                "accessToken": "eyJhbGciOiJIUzI1NiIs...",
+                "refreshToken": "eyJhbGciOiJIUzI1NiIs..."
+            }
+        },
+        {
+            "code": 400,
+            "description": "Bad Request",
+            "schema": {
+                "message": "Invalid credentials"
+            }
+        }
+    ]
+}

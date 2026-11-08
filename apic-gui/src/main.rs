@@ -4,24 +4,24 @@
 //! contracts, displays them in a styled, panelled layout (a viewer that mirrors
 //! `apic read`), and edits them through the shared [`apic_core::edit`] model.
 //! The GUI owns only its widgets, theme, and layout, never the editing behavior,
-//! so it cannot drift from the CLI/TUI.
+//! so it cannot drift from the CLI.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use eframe::egui;
 
 mod app;
-mod desktop;
 mod features;
-mod settings;
+mod platform;
 mod ui;
 
 use app::App;
-use ui::theme::apply_theme;
+use platform::settings::Settings;
+use ui::theme::install_themes;
 
 fn main() -> eframe::Result {
     if std::env::args().skip(1).any(|a| a == "--desktop-entry") {
-        match desktop::install_desktop_entry() {
+        match platform::desktop::install_desktop_entry() {
             Ok(msg) => {
                 println!("{msg}");
                 std::process::exit(0);
@@ -47,7 +47,8 @@ fn main() -> eframe::Result {
         "apic",
         options,
         Box::new(|cc| {
-            apply_theme(&cc.egui_ctx);
+            cc.egui_ctx.set_fonts(app::fonts_with_icons());
+            install_themes(&cc.egui_ctx, Settings::load().theme);
             Ok(Box::new(App::new()))
         }),
     )

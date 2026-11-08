@@ -1,25 +1,18 @@
-//! Application-level state: the active project location and window chrome.
+//! Application-level state: the window chrome and the repository location.
 //! Feature-specific state lives in that feature's own `state.rs`.
 
 use std::path::PathBuf;
 
-/// Application chrome and the active project location. Shared by every
+use crate::features::git::data::jobs::RepoPaths;
+use crate::features::project::ui::state::ProjectState;
+
+/// Application chrome and the repository location. Shared by every
 /// feature; no feature owns it.
 ///
 /// `Default` is written by hand rather than derived: `sidebar_open` starts
 /// `true`, and a derived `Default` would silently start the app with the
 /// sidebar collapsed.
 pub(crate) struct ShellState {
-    /// The directory whose contracts are listed in the sidebar.
-    pub(crate) root: Option<PathBuf>,
-
-    /// Absolute root of the active project (the dir containing `.apic/`). `None`
-    /// when no project is open. All discovery resolves against this, never cwd.
-    pub(crate) project_root: Option<PathBuf>,
-
-    /// The `.apic` directory, for locating templates.
-    pub(crate) apic_dir: Option<PathBuf>,
-
     /// The status line shown in the bottom bar.
     pub(crate) status: String,
 
@@ -27,41 +20,68 @@ pub(crate) struct ShellState {
     /// not persisted, so it always starts `true` on launch.
     pub(crate) sidebar_open: bool,
 
-    /// Which panel fills the shell-owned sidebar frame. Switching tabs only
-    /// changes which body renders, each slice keeps its own selection so
-    /// switching away and back restores the previous view.
-    pub(crate) sidebar_tab: SidebarTab,
+    /// What fills the central panel, set by the last click in the sidebar.
+    pub(crate) central: CentralView,
+
+    /// Which list fills the sidebar's main area.
+    pub(crate) sidebar_view: SidebarView,
+
+    /// Whether the Commit section at the bottom of the sidebar is expanded.
+    pub(crate) commit_open: bool,
+
+    /// Whether the Templates section at the bottom of the sidebar is expanded.
+    pub(crate) templates_open: bool,
 
     /// Root of the git repository containing `project_root`, or `None` when
     /// the project is not inside one.
     pub(crate) repo_root: Option<PathBuf>,
 }
 
+impl ShellState {
+    /// The repository locations a git job runs against, or `None` when the
+    /// project is not inside a repository.
+    ///
+    /// # Arguments
+    ///
+    /// * `project` - where the active project and its contracts live
+    pub(crate) fn repo_paths(&self, project: &ProjectState) -> Option<RepoPaths> {
+        let repo_root = self.repo_root.clone()?;
+        Some(RepoPaths {
+            root: project.root.clone().unwrap_or_else(|| repo_root.clone()),
+            project_root: project.project_root.clone(),
+            repo_root,
+        })
+    }
+}
+
 impl Default for ShellState {
     fn default() -> Self {
         Self {
-            root: None,
-            project_root: None,
-            apic_dir: None,
             status: String::new(),
             sidebar_open: true,
-            sidebar_tab: SidebarTab::Explorer,
+            central: CentralView::Contracts,
+            sidebar_view: SidebarView::Contracts,
+            commit_open: false,
+            templates_open: false,
             repo_root: None,
         }
     }
 }
 
-/// Which panel fills the shell-owned sidebar frame.
+/// Which list fills the sidebar's main area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SidebarTab {
-    Explorer,
-    Git,
+pub(crate) enum SidebarView {
+    /// The contract tree.
+    Contracts,
+    /// The git changes: conflicts, staged, unstaged and outside files.
+    Changes,
 }
 
-/// Which action consumes the path chosen by an in-flight file dialog.
-#[derive(Clone, Copy)]
-pub(crate) enum DialogKind {
-    OpenProject,
-    NewProject,
-    ImportPostman,
+/// What fills the central panel: the last thing clicked in the sidebar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CentralView {
+    /// The open contract or template.
+    Contracts,
+    /// The selected git file's diff or conflict resolver.
+    Git,
 }

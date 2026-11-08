@@ -90,6 +90,7 @@ impl Config {
             fs::create_dir_all(&apic_dir)
                 .map_err(|err| format!("Failed to create {}: {}", apic_dir.display(), err))?;
         }
+        crate::env::ensure_gitignore(&apic_dir)?;
 
         let warning = crate::template::seed_if_missing(&apic_dir).err();
 
@@ -258,6 +259,16 @@ pub fn read_config_file() -> Result<Config, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn init_writes_local_env_gitignore() {
+        let dir = std::env::temp_dir().join(format!("apic_cfg_ignore_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Config::init_in(&dir, None).unwrap();
+        let ignore = std::fs::read_to_string(dir.join(".apic/.gitignore")).unwrap();
+        assert!(ignore.lines().any(|l| l == crate::env::LOCAL_IGNORE_LINE));
+    }
+
     use super::*;
 
     /// Builds a platform-absolute path from components. A leading `/` is not

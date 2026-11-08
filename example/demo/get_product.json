@@ -1,0 +1,35 @@
+{
+    "name": "Get product",
+    "description": "Fetches one product. {id} is a path param: pass --var id=1 on the CLI, or fill it in the popup in the GUI.",
+    "method": "GET",
+    "url": "$dummyjson/products/{id}",
+    "query": [
+        {
+            "name": "select",
+            "value": "title,price,rating",
+            "description": "Fields to return",
+            "required": false
+        }
+    ],
+    "headers": [],
+    "request": null,
+    "responses": [
+        {
+            "code": 200,
+            "description": "OK",
+            "schema": {
+                "id": 1,
+                "title": "Essence Mascara Lash Princess",
+                "price": 9.99,
+                "rating": 2.56
+            }
+        },
+        {
+            "code": 404,
+            "description": "Not Found",
+            "schema": {
+                "message": "Product with id '0' not found"
+            }
+        }
+    ]
+}

@@ -2,7 +2,7 @@
 //! naming them here is what lets components stop hard-coding numbers.
 
 /// Column-header cell labels.
-pub(crate) const SIZE_HEADER_LABEL: f32 = 10.0;
+pub(crate) const SIZE_HEADER_LABEL: f32 = 13.0;
 
 /// Sub-headings, chips, and other secondary labels.
 pub(crate) const SIZE_SECONDARY: f32 = 11.0;

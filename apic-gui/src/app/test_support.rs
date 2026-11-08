@@ -12,8 +12,11 @@ use eframe::egui;
 
 use crate::app::App;
 use crate::app::state::ShellState;
-use crate::features::contracts::state::ContractsState;
-use crate::features::git::state::GitState;
+use crate::features::contracts::ui::state::ContractsState;
+use crate::features::git::data::cli;
+use crate::features::git::data::jobs::RepoPaths;
+use crate::features::git::ui::state::{GitEvent, GitState};
+use crate::features::project::ui::state::ProjectState;
 
 /// Fresh directory per test, made unique with the process id and a counter,
 /// mirroring `apic-core/src/config.rs:309-317`, so parallel test runs never
@@ -30,7 +33,7 @@ pub(crate) fn tempdir() -> PathBuf {
 
 /// True when `git` is usable on this machine. Every test that needs a real
 /// repository returns early when this is false, matching
-/// `features::git::service::tests`.
+/// `features::git::data::cli::tests`.
 pub(crate) fn git_available() -> bool {
     Command::new("git").arg("--version").output().is_ok()
 }
@@ -142,16 +145,19 @@ pub(crate) fn conflict_fixture() -> PathBuf {
 /// Builds `App` with a struct literal rooted at `root`. Never calls
 /// `App::new()`: that loads `Settings::load()`, which reads the developer's
 /// real `~/.config/apic-gui/config.toml` and can open their last project.
+/// Its settings path is a fresh temp file, so no settings write reaches the
+/// real config either.
 pub(crate) fn app_at(root: PathBuf) -> App {
     App {
-        shell: ShellState {
+        shell: ShellState::default(),
+        project: ProjectState {
             project_root: Some(root),
             ..Default::default()
         },
         contracts: ContractsState::default(),
         git: GitState::default(),
-        pending_dialog: None,
-        needs_git_refresh: false,
+        closing: false,
+        settings_path: Some(tempdir().join("config.toml")),
     }
 }
 
@@ -171,6 +177,110 @@ pub(crate) fn settle(app: &mut App, ctx: &egui::Context) {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     panic!("git job did not complete within {MAX_ITERS} polls");
+}
+
+/// Appends a newline to `path`, a change that dirties the working tree
+/// without breaking JSON validity (trailing whitespace is legal JSON).
+pub(crate) fn dirty(path: &Path) {
+    let mut content = std::fs::read_to_string(path).expect("fixture file reads");
+    content.push('\n');
+    std::fs::write(path, content).expect("fixture file writes");
+}
+
+/// Runs `git -C root <args>` and returns stdout as a string, for
+/// assertions that read the repository directly rather than the app's
+/// own cache.
+pub(crate) fn git_output(root: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("git spawns");
+    assert!(out.status.success(), "git {args:?} failed: {out:?}");
+    String::from_utf8(out.stdout).expect("git output is utf8")
+}
+
+/// Reads the branch currently checked out in `root` directly from git,
+/// never from `GitState`.
+pub(crate) fn current_branch(root: &Path) -> String {
+    git_output(root, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .trim()
+        .to_string()
+}
+
+/// The git half of `app_at`: a fresh `GitState` and the `RepoPaths` for the
+/// fixture at `root`. `repo_root` comes from `cli::discover`, the same source
+/// `App::reload_project` uses, so a symlinked temp dir compares the same way.
+pub(crate) fn git_at(root: &Path) -> (GitState, RepoPaths) {
+    let repo_root = cli::discover(root)
+        .expect("git runs")
+        .expect("the fixture is a repository");
+    let paths = RepoPaths {
+        repo_root,
+        root: root.join("contracts"),
+        project_root: Some(root.to_path_buf()),
+    };
+    (GitState::default(), paths)
+}
+
+/// Polls `state` until no job is pending and nothing queued remains to
+/// start, collecting every event, with the same bound as `settle`.
+pub(crate) fn settle_git(
+    state: &mut GitState,
+    paths: &RepoPaths,
+    ctx: &egui::Context,
+) -> Vec<GitEvent> {
+    const MAX_ITERS: u32 = 200;
+    let mut events = Vec::new();
+    for _ in 0..MAX_ITERS {
+        events.extend(state.poll(Some(paths), ctx));
+        if state.pending.is_none() {
+            return events;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("git job did not complete within {MAX_ITERS} polls");
+}
+
+/// Serves one HTTP request on 127.0.0.1 with the raw response `reply`.
+///
+/// # Returns
+///
+/// The base URL, `http://127.0.0.1:<port>`, and a channel that receives the
+/// raw request bytes once the response is written.
+pub(crate) fn serve_once(reply: &'static str) -> (String, std::sync::mpsc::Receiver<Vec<u8>>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener binds");
+    let addr = listener.local_addr().expect("listener has an address");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while let Ok(n) = stream.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&buf[..end]).to_ascii_lowercase();
+                let len = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("content-length:"))
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                if buf.len() >= end + 4 + len {
+                    break;
+                }
+            }
+        }
+        let _ = stream.write_all(reply.as_bytes());
+        let _ = tx.send(buf);
+    });
+    (format!("http://{addr}"), rx)
 }
 
 #[cfg(test)]

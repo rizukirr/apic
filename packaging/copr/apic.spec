@@ -1,8 +1,8 @@
 Name:           apic-cli
-Version:        0.5.1
+Version:        1.0.0
 Release:        1%{?dist}
-Summary:        Git-friendly API contracts, CLI/TUI (prebuilt)
-License:        MIT
+Summary:        Git-friendly API contracts, CLI (prebuilt)
+License:        GPL-3.0-only
 URL:            https://github.com/rizukirr/apic
 ExclusiveArch:  x86_64 aarch64
 
@@ -67,6 +67,12 @@ cp -p %{SOURCE4} %{_builddir}/LICENSE
 %{_datadir}/icons/hicolor/256x256/apps/apic-gui.png
 
 %changelog
+* Sun Nov 08 2026 Rizki Rakasiwi <rizkirr.xyz@gmail.com> - 1.0.0-1
+- First stable release. The GUI adds sending with environments, pull, merge
+  and delete from the branch menu, a merge conflict popup and a git log panel
+  with a commit graph, filters and revert. The CLI moves to curl-style create
+  and edit and gains apic send. Licensed under GPL-3.0-only.
+
 * Thu Aug 27 2026 Rizki Rakasiwi <rizkirr.xyz@gmail.com> - 0.5.1-1
 - Packaging release. The desktop GUI moves back to eframe/egui 0.35 and the
   minimum supported Rust version drops to 1.92, so the GUI builds on the current

@@ -1,0 +1,38 @@
+{
+    "name": "Echo upload",
+    "description": "Sends a multipart form to httpbin.org, which echoes back the fields and the file it received.",
+    "method": "POST",
+    "url": "$httpbin/anything",
+    "query": [],
+    "headers": [],
+    "request": null,
+    "multipart": [
+        {
+            "name": "title",
+            "value": "Hello",
+            "required": true
+        },
+        {
+            "name": "file",
+            "value": "example/demo/hello.txt",
+            "filename": "hello.txt",
+            "contentType": "text/plain",
+            "description": "A file path relative to the project root",
+            "required": false
+        }
+    ],
+    "responses": [
+        {
+            "code": 200,
+            "description": "OK",
+            "schema": {
+                "form": {
+                    "title": "Hello"
+                },
+                "files": {
+                    "file": "Hello from apic.\n"
+                }
+            }
+        }
+    ]
+}

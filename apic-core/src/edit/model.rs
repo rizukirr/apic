@@ -219,7 +219,7 @@ impl EditModel {
     ///
     /// Returns `Err` (never panics) when an example buffer is malformed JSON, a
     /// response code is non-numeric, or the assembled document fails contract
-    /// validation. The error is suitable for display on the TUI status line.
+    /// validation. The error is suitable for display in a status line or a CLI error.
     pub fn to_json(&self) -> Result<String, String> {
         let mut root = serde_json::Map::new();
         root.insert("name".into(), Value::String(self.name.clone()));
@@ -507,8 +507,9 @@ mod tests {
             let out = model
                 .to_json()
                 .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let had_multipart = text.contains("\"multipart\"");
             assert!(
-                !out.contains("multipart"),
+                had_multipart || !out.contains("multipart"),
                 "{} gained a multipart key",
                 path.display()
             );

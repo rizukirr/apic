@@ -8,7 +8,7 @@ PublisherSupportUrl: https://github.com/rizukirr/apic/issues
 Author: Rizki Rakasiwi
 PackageName: apic-gui
 PackageUrl: https://github.com/rizukirr/apic
-License: MIT
+License: GPL-3.0-only
 LicenseUrl: https://github.com/rizukirr/apic/blob/main/LICENSE
 Copyright: Copyright (c) Rizki Rakasiwi
 ShortDescription: Desktop GUI for apic — design and collaborate on Git-friendly API contracts.
