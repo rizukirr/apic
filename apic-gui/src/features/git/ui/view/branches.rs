@@ -66,9 +66,16 @@ pub(crate) fn branch_menu(ui: &mut egui::Ui, state: &mut GitState) -> Option<Git
             + ui.spacing().button_padding.x * 2.0;
         for name in &branches.all {
             ui.horizontal(|ui| {
+                // The trailing grow atom takes the spare width, so a short
+                // name sits on the left instead of centred. No gap, so the
+                // atom adds no width to the widest name.
                 let row = ui.add(
-                    egui::Button::selectable(Some(name.as_str()) == current.as_deref(), name)
-                        .min_size(egui::vec2(name_width, 0.0)),
+                    egui::Button::selectable(
+                        Some(name.as_str()) == current.as_deref(),
+                        (name.as_str(), egui::Atom::grow()),
+                    )
+                    .gap(0.0)
+                    .min_size(egui::vec2(name_width, 0.0)),
                 );
                 if row.clicked() {
                     if let Some(a) = branch_select_action(name, current.as_deref()) {
