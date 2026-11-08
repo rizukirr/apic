@@ -227,6 +227,16 @@ pub(crate) struct GitState {
     /// The user's tick or untick per path, overriding the index-derived
     /// default until the path leaves the status.
     pub(crate) ticks: std::collections::HashMap<String, bool>,
+
+    /// Every conflicted path, set when a status brings a conflicted path the
+    /// previous status did not have. Drives the "Merge conflict" popup, which
+    /// clears it on OK. Cleared too by a status with no conflicts.
+    pub(crate) conflict_notice: Option<Vec<String>>,
+
+    /// Repository the in-flight status or mutation job runs against.
+    pub(crate) job_repo: Option<std::path::PathBuf>,
+    /// Repository `status` was read from.
+    pub(crate) status_repo: Option<std::path::PathBuf>,
 }
 
 /// Something a finished git job asks the app shell to do, because it touches
@@ -299,9 +309,28 @@ impl GitState {
     }
 
     /// Stores a fresh status and forgets ticks for paths no longer in it.
+    /// Opens the conflict notice when a path is newly conflicted, and clears
+    /// it when nothing is conflicted any more.
     fn set_status(&mut self, status: Status) {
+        let before = conflicted_paths(&self.status);
+        let now = conflicted_paths(&status);
+        if now.is_empty() {
+            self.conflict_notice = None;
+        } else if now.iter().any(|p| !before.contains(p)) {
+            self.conflict_notice = Some(now);
+        }
         self.ticks.retain(|path, _| status.find(path).is_some());
         self.status = status;
+    }
+
+    /// Files a status from the job's repository. A status from another repo
+    /// than the held one is compared against no previous conflicts.
+    fn set_job_status(&mut self, status: Status) {
+        if self.job_repo != self.status_repo {
+            self.status = Status::default();
+            self.status_repo = self.job_repo.clone();
+        }
+        self.set_status(status);
     }
 
     /// Applies one action from the git panel. `paths` is `None` when the
@@ -462,7 +491,7 @@ impl GitState {
     fn apply_result(&mut self, result: JobResult, events: &mut Vec<GitEvent>) {
         match result {
             JobResult::Status(Ok(status)) => {
-                self.set_status(status);
+                self.set_job_status(status);
                 self.error.clear();
             }
             JobResult::Diff(key, Ok(data)) => {
@@ -491,7 +520,7 @@ impl GitState {
                 self.error = e;
             }
             JobResult::Mutate(kind, message, Ok(status)) => {
-                self.set_status(status);
+                self.set_job_status(status);
                 self.error.clear();
                 events.push(GitEvent::Status(message));
                 if let Some((path, _)) = &self.selected
@@ -544,6 +573,7 @@ impl GitState {
         let Some(paths) = paths else {
             return;
         };
+        self.job_repo = Some(paths.repo_root.clone());
         self.pending = Some(jobs::status(paths.clone(), notifier(ctx)));
     }
 
@@ -584,6 +614,7 @@ impl GitState {
         let Some(paths) = paths else {
             return;
         };
+        self.job_repo = Some(paths.repo_root.clone());
         self.pending = Some(jobs::mutate(paths.clone(), mutation, notifier(ctx)));
     }
 
@@ -627,16 +658,140 @@ impl GitState {
     }
 }
 
+/// Every conflicted path in `status`, inside the working dir first.
+fn conflicted_paths(status: &Status) -> Vec<String> {
+    status
+        .inside
+        .iter()
+        .chain(status.outside.iter())
+        .filter(|f| f.conflicted)
+        .map(|f| f.path.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::features::git::domain::status::Change;
+    use crate::features::git::domain::status::fixtures::file;
 
     use crate::app::test_support::{
         conflict_fixture, current_branch, dirty, git_at, git_available, git_output,
         project_fixture, settle_git, tempdir,
     };
+
+    fn status_of(files: &[(&str, bool)]) -> Status {
+        Status {
+            inside: files.iter().map(|(p, c)| file(p, *c)).collect(),
+            outside: vec![],
+        }
+    }
+
+    #[test]
+    fn conflict_notice_opens_when_a_conflict_appears() {
+        let mut git = GitState::default();
+        git.set_status(status_of(&[("a.json", true), ("b.json", false)]));
+        assert_eq!(git.conflict_notice, Some(vec!["a.json".to_string()]));
+    }
+
+    #[test]
+    fn conflict_notice_stays_dismissed_while_no_new_path_conflicts() {
+        let mut git = GitState::default();
+        git.set_status(status_of(&[("a.json", true)]));
+        git.conflict_notice = None;
+        git.set_status(status_of(&[("a.json", true)]));
+        assert_eq!(git.conflict_notice, None);
+    }
+
+    #[test]
+    fn conflict_notice_reopens_with_every_path_on_a_new_conflict() {
+        let mut git = GitState::default();
+        git.set_status(status_of(&[("a.json", true)]));
+        git.conflict_notice = None;
+        git.set_status(status_of(&[("a.json", true), ("b.json", true)]));
+        assert_eq!(
+            git.conflict_notice,
+            Some(vec!["a.json".to_string(), "b.json".to_string()])
+        );
+    }
+
+    #[test]
+    fn conflict_notice_clears_when_no_conflict_is_left() {
+        let mut git = GitState::default();
+        git.set_status(status_of(&[("a.json", true)]));
+        git.set_status(status_of(&[("a.json", false)]));
+        assert_eq!(git.conflict_notice, None);
+    }
+
+    /// Spec goal 4: a project already mid-merge opens the notice on its
+    /// first status.
+    #[test]
+    fn conflict_notice_opens_on_the_first_status_of_a_mid_merge_repo() {
+        if !git_available() {
+            return;
+        }
+        let root = conflict_fixture();
+        let (mut git, paths) = git_at(&root);
+        let ctx = egui::Context::default();
+        git.handle(GitAction::Refresh, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(
+            git.conflict_notice,
+            Some(vec!["contracts/sample.json".to_string()])
+        );
+    }
+
+    /// Spec goal 3: a merge from the branch menu that conflicts opens the
+    /// notice through the status reread after the failed merge.
+    #[test]
+    fn conflict_notice_opens_after_a_conflicting_merge_from_the_menu() {
+        if !git_available() {
+            return;
+        }
+        let root = conflict_fixture();
+        git_output(&root, &["merge", "--abort"]);
+        let (mut git, paths) = git_at(&root);
+        let ctx = egui::Context::default();
+        git.branches.current = Some(current_branch(&root));
+        git.handle(
+            GitAction::RequestBranchOp {
+                kind: BranchOpKind::Merge,
+                target: current_branch(&root),
+                source: "conflict-branch".into(),
+            },
+            Some(&paths),
+            &ctx,
+        );
+        git.handle(GitAction::ConfirmBranchOp, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(
+            git.conflict_notice,
+            Some(vec!["contracts/sample.json".to_string()])
+        );
+    }
+
+    #[test]
+    fn conflict_notice_opens_for_a_second_mid_merge_repo() {
+        if !git_available() {
+            return;
+        }
+        let a = conflict_fixture();
+        let b = conflict_fixture();
+        let (mut git, pa) = git_at(&a);
+        let (_, pb) = git_at(&b);
+        let ctx = egui::Context::default();
+        git.handle(GitAction::Refresh, Some(&pa), &ctx);
+        settle_git(&mut git, &pa, &ctx);
+        assert!(git.conflict_notice.is_some());
+        git.conflict_notice = None;
+        git.handle(GitAction::Refresh, Some(&pb), &ctx);
+        settle_git(&mut git, &pb, &ctx);
+        assert_eq!(
+            git.conflict_notice,
+            Some(vec!["contracts/sample.json".to_string()])
+        );
+    }
 
     /// The text of the last `GitEvent::Status`, the value the app shell would
     /// leave in its status line.

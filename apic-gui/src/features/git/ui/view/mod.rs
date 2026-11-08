@@ -23,7 +23,9 @@ use crate::features::git::domain::diff as domain_diff;
 use crate::features::git::domain::status::{Status, split_conflicts};
 use crate::features::git::ui::state::GitAction;
 use crate::features::git::ui::state::GitState;
-use crate::ui::components::{ButtonKind, DialogButton, dialog, empty_state, text_button};
+use crate::ui::components::{
+    ButtonKind, DialogButton, detail_box, dialog, empty_state, text_button,
+};
 use crate::ui::theme::*;
 
 /// What the Git section header should render, decided purely from a `Status`: the label
@@ -207,7 +209,39 @@ pub(crate) fn dialogs(ctx: &egui::Context, state: &mut GitState) -> Option<GitAc
     if let Some(a) = branch_op_dialog(ctx, state) {
         action = Some(a);
     }
+    conflict_notice_dialog(ctx, state);
     action
+}
+
+/// The "Merge conflict" popup, shown while `conflict_notice` is set: it
+/// lists every conflicted path. OK or closing dismisses it until a new path
+/// conflicts.
+fn conflict_notice_dialog(ctx: &egui::Context, state: &mut GitState) {
+    let Some(paths) = state.conflict_notice.clone() else {
+        return;
+    };
+    let p = palette(ctx);
+    let outcome = dialog(
+        ctx,
+        "conflict_notice_modal",
+        "Merge conflict",
+        |ui| {
+            ui.label(
+                RichText::new("These files have conflicts. Resolve them in Changes.")
+                    .color(p.on_surface_variant),
+            );
+            ui.add_space(SPACE_SMALL);
+            detail_box(ui, |ui| {
+                for path in &paths {
+                    ui.label(RichText::new(path).color(p.on_surface).monospace());
+                }
+            });
+        },
+        &[DialogButton::new("OK", ButtonKind::Primary)],
+    );
+    if outcome.clicked.is_some() || outcome.closed {
+        state.conflict_notice = None;
+    }
 }
 
 /// Amend confirmation modal, shown while `confirm_amend` is set: the commit
@@ -866,6 +900,96 @@ mod tests {
         }
     }
 
+    /// Every AccessKit node in `out` that has a label (egui puts a `Label`
+    /// widget's text in the node's value), with its bounds.
+    fn labelled_nodes(out: egui::FullOutput) -> Vec<(String, egui::Rect)> {
+        out.platform_output
+            .accesskit_update
+            .map(|update| {
+                update
+                    .nodes
+                    .into_iter()
+                    .filter_map(|(_, node)| {
+                        let b = node.bounds()?;
+                        Some((
+                            node.label().or_else(|| node.value())?.to_string(),
+                            egui::Rect::from_min_max(
+                                egui::pos2(b.x0 as f32, b.y0 as f32),
+                                egui::pos2(b.x1 as f32, b.y1 as f32),
+                            ),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// One headless frame of `dialogs` fed `events`, returning labelled nodes.
+    fn dialogs_frame(
+        ctx: &egui::Context,
+        state: &mut GitState,
+        events: Vec<egui::Event>,
+    ) -> Vec<(String, egui::Rect)> {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        labelled_nodes(ctx.run_ui(input, |ui| {
+            dialogs(ui.ctx(), state);
+        }))
+    }
+
+    #[test]
+    fn conflict_notice_popup_lists_paths_and_ok_dismisses_it() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut state = GitState {
+            conflict_notice: Some(vec!["contracts/a.json".into()]),
+            ..GitState::default()
+        };
+        dialogs_frame(&ctx, &mut state, vec![]);
+        let nodes = dialogs_frame(&ctx, &mut state, vec![]);
+        node(&nodes, "Merge conflict");
+        node(&nodes, "contracts/a.json");
+        let pos = node(&nodes, "OK").center();
+        for events in [
+            vec![egui::Event::PointerMoved(pos)],
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        ] {
+            dialogs_frame(&ctx, &mut state, events);
+        }
+        assert_eq!(state.conflict_notice, None);
+    }
+
+    #[test]
+    fn conflict_notice_popup_stays_open_until_dismissed() {
+        for preference in BOTH_THEMES {
+            let mut state = GitState {
+                conflict_notice: Some(vec!["contracts/a.json".into()]),
+                ..GitState::default()
+            };
+            run_in_theme(preference, |ui| {
+                dialogs(ui.ctx(), &mut state);
+            });
+            assert!(state.conflict_notice.is_some());
+        }
+    }
+
     /// One headless frame of `branch_menu` fed `events`. Stores any action
     /// it returns into `action` and returns every AccessKit node that has a
     /// label, with its bounds.
@@ -888,25 +1012,7 @@ mod tests {
                 *action = Some(a);
             }
         });
-        out.platform_output
-            .accesskit_update
-            .map(|update| {
-                update
-                    .nodes
-                    .into_iter()
-                    .filter_map(|(_, node)| {
-                        let b = node.bounds()?;
-                        Some((
-                            node.label()?.to_string(),
-                            egui::Rect::from_min_max(
-                                egui::pos2(b.x0 as f32, b.y0 as f32),
-                                egui::pos2(b.x1 as f32, b.y1 as f32),
-                            ),
-                        ))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+        labelled_nodes(out)
     }
 
     /// Moves the pointer to the centre of `rect` and clicks there, then runs
