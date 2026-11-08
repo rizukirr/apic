@@ -2438,7 +2438,7 @@ Added after Task 6's first attempt: the installed clippy flags `chunks_exact_to_
 - Modify: `GUI.md:47-49`
 - Modify: `CHANGELOG.md:10-12`
 
-- [ ] Step 1: In `settings.rs`, add a field to `Settings` after `env`:
+- [x] Step 1: In `settings.rs`, add a field to `Settings` after `env`:
 
 ```rust
 
@@ -2477,7 +2477,7 @@ In the test `body_round_trips_both_settings`, add `git_log_open: true,` to its `
     }
 ```
 
-- [ ] Step 2: In `app/mod.rs`, change the import at line 26 to:
+- [x] Step 2: In `app/mod.rs`, change the import at line 26 to:
 
 ```rust
 use crate::features::git::ui::state::{BranchOpKind, GitAction, GitEvent, GitState, LogState};
@@ -2489,7 +2489,7 @@ In `App::new`, add right after `let settings = Settings::load();` (line 134):
         app.git.log.open = settings.git_log_open;
 ```
 
-- [ ] Step 3: In `top_bar`, replace lines 288-292 with:
+- [x] Step 3: In `top_bar`, replace lines 288-292 with:
 
 ```rust
                         if self.shell.repo_root.is_some() {
@@ -2508,7 +2508,7 @@ In `App::new`, add right after `let settings = Settings::load();` (line 134):
                         }
 ```
 
-- [ ] Step 4: Add after `sidebar` (line 464):
+- [x] Step 4: Add after `sidebar` (line 464):
 
 ```rust
     /// The git log, docked under the central area while it is open and the
@@ -2527,7 +2527,7 @@ In `App::new`, add right after `let settings = Settings::load();` (line 134):
     }
 ```
 
-- [ ] Step 5: In `read_project`, replace lines 677-689 with:
+- [x] Step 5: In `read_project`, replace lines 677-689 with:
 
 ```rust
         if repo_root != self.shell.repo_root {
@@ -2550,7 +2550,7 @@ In `App::new`, add right after `let settings = Settings::load();` (line 134):
         }
 ```
 
-- [ ] Step 6: In `apply`, replace the guard arm and the generic git arm (lines 780-806) with:
+- [x] Step 6: In `apply`, replace the guard arm and the generic git arm (lines 780-806) with:
 
 ```rust
             Action::Git(
@@ -2594,7 +2594,7 @@ In `App::new`, add right after `let settings = Settings::load();` (line 134):
             }
 ```
 
-- [ ] Step 7: In `ui`, insert between the `top.or(side)` block (lines 826-828) and `self.central(ui);` (line 829):
+- [x] Step 7: In `ui`, insert between the `top.or(side)` block (lines 826-828) and `self.central(ui);` (line 829):
 
 ```rust
         if let Some(a) = self.log_panel(ui) {
@@ -2602,7 +2602,7 @@ In `App::new`, add right after `let settings = Settings::load();` (line 134):
         }
 ```
 
-- [ ] Step 8: Add to the `app/mod.rs` tests module:
+- [x] Step 8: Add to the `app/mod.rs` tests module:
 
 ```rust
     #[test]
@@ -2684,7 +2684,7 @@ In `App::new`, add right after `let settings = Settings::load();` (line 134):
     }
 ```
 
-- [ ] Step 9: In `GUI.md`, add a bullet after the Conflicts bullet (line 47):
+- [x] Step 9: In `GUI.md`, add a bullet after the Conflicts bullet (line 47):
 
 ```markdown
 - **Log.** The clock button next to the branch dropdown opens the git log at the bottom of the window, and whether it is open is remembered. It lists one branch's commits, 500 at a time with Load more at the end, each with its graph, branch and tag labels, subject, author and date. Merge commits are dimmed. The toolbar filters by text or hash (`.*` for a regular expression, `Cc` to match case), Branch (local then remote branches, nothing is checked out), User, Date (last 24 hours, 7 days, 30 days or year) and Paths (the contracts folder or a typed path), and Refresh rereads. Clicking a commit lists its changed files on the right, and clicking a file shows that commit's diff of it in the main area, with Show field changes for a contract. Right-click a commit to Copy hash or Revert it. Revert asks first and adds a commit that undoes it. It is not offered for a merge commit or for another branch than the current one, and it is refused while a contract has unsaved edits. A conflicting revert goes to the conflict resolver.
@@ -2696,15 +2696,15 @@ and replace the last line (line 49) with:
 Not included: push, rebase, stash, cherry-pick, reset, aborting a merge or a revert, and checking out remote branches or commits. Those stay in your terminal.
 ```
 
-- [ ] Step 10: In `CHANGELOG.md`, add as the first bullet under Unreleased, Added (before line 12):
+- [x] Step 10: In `CHANGELOG.md`, add as the first bullet under Unreleased, Added (before line 12):
 
 ```markdown
 - **Git log panel.** The clock button next to the branch dropdown opens a resizable log at the bottom of the window, remembered across launches. It shows a branch's commits with a painted graph, ref labels, author and date, 500 at a time with Load more, and filters by text or hash, branch, user, date range and path. Clicking a commit lists its changed files, and clicking a file shows that commit's diff in the main area. Right-click a commit to copy its hash or revert it after a confirmation. A conflicting revert lands in the conflict resolver.
 ```
 
-- [ ] Step 11: Run `cargo test -p apic-gui log_app_`
-- [ ] Step 12: Run `cargo fmt --all`, then `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`
-- [ ] Step 13: Commit `feat(gui): open the git log from the app bar and remember it`
+- [x] Step 11: Run `cargo test -p apic-gui log_app_`
+- [x] Step 12: Run `cargo fmt --all`, then `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`
+- [x] Step 13: Commit `feat(gui): open the git log from the app bar and remember it`
 
 ## Coverage map
 
