@@ -255,7 +255,9 @@ const LOG_FORMAT: &str = "%H%x00%P%x00%an%x00%ad%x00%D%x00%s";
 /// contracts folder relative to the repo root, used by the Contracts folder
 /// path filter. A hash prefix is not applied here, see `LogFilter::keeps`.
 /// `--topo-order` lists children before parents even with skewed commit
-/// dates, which `lanes` relies on.
+/// dates, which `lanes` relies on. `grep.patternType=basic` pins the mode
+/// an `--author` without grep text is read in, which `LogFilter::args`
+/// escapes for, over the user's own config.
 pub(crate) fn log(
     root: &Path,
     rev: &str,
@@ -265,6 +267,8 @@ pub(crate) fn log(
     limit: usize,
 ) -> Result<Vec<Commit>, String> {
     let mut args = vec![
+        "-c".to_string(),
+        "grep.patternType=basic".to_string(),
         "log".to_string(),
         "-z".to_string(),
         "--parents".to_string(),
@@ -1036,5 +1040,25 @@ mod tests {
         let got = subjects(&dir, &LogFilter::default(), "");
         let pos = |s: &str| got.iter().position(|g| g == s).unwrap();
         assert!(pos("S") < pos("A"), "{got:?}");
+    }
+
+    #[test]
+    fn history_author_ignores_grep_pattern_type_config() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        assert!(run(&dir, &["config", "grep.patternType", "extended"]).is_ok());
+        for (name, subject) in [("a|b", "by a|b"), ("a", "by a")] {
+            fs::write(dir.join("file.txt"), format!("{subject}\n")).unwrap();
+            let user = format!("user.name={name}");
+            assert!(run(&dir, &["-c", &user, "commit", "-am", subject]).is_ok());
+        }
+        let filter = LogFilter {
+            author: Some("a|b".into()),
+            ..LogFilter::default()
+        };
+        assert_eq!(subjects(&dir, &filter, ""), ["by a|b"]);
     }
 }

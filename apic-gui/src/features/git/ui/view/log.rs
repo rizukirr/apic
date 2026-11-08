@@ -442,10 +442,12 @@ fn commit_files(ui: &mut egui::Ui, state: &GitState) -> Option<GitAction> {
 }
 
 /// The revert confirmation, shown while `pending_revert` is set: the short
-/// hash and subject, Cancel and Revert.
+/// hash and subject, Cancel and Revert. Revert is disabled while a git job
+/// runs, with "Waiting for git" under the commit.
 pub(super) fn revert_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
     let p = palette(ctx);
     let commit = state.log.pending_revert.clone()?;
+    let busy = state.pending.is_some();
     let outcome = dialog(
         ctx,
         "revert_modal",
@@ -461,10 +463,17 @@ pub(super) fn revert_dialog(ctx: &egui::Context, state: &mut GitState) -> Option
                 );
                 ui.label(RichText::new(&commit.subject).color(p.on_surface).strong());
             });
+            if busy {
+                ui.add_space(SPACE_SMALL);
+                ui.label(RichText::new("Waiting for git").color(p.on_surface_variant));
+            }
         },
         &[
             DialogButton::new("Cancel", ButtonKind::Secondary),
-            DialogButton::new("Revert", ButtonKind::Danger),
+            DialogButton {
+                enabled: !busy,
+                ..DialogButton::new("Revert", ButtonKind::Danger)
+            },
         ],
     );
     if outcome.clicked == Some(1) {

@@ -208,6 +208,10 @@ pub(crate) struct LogState {
     /// The commit a revert would undo, while its confirmation is open.
     pub(crate) pending_revert: Option<Commit>,
 
+    /// The branch checked out when the revert was asked for, which must
+    /// still be checked out when it is confirmed.
+    pub(crate) revert_branch: Option<String>,
+
     /// A read from the start is owed.
     pub(crate) needs_load: bool,
 
@@ -299,10 +303,6 @@ pub(crate) struct GitState {
     /// A branch listing is owed after a switch, create or delete, and starts
     /// once the mutation's own job has finished.
     pub(crate) needs_branches: bool,
-
-    /// Mutations asked for while another job held the slot, started in
-    /// order by `poll` once nothing is pending.
-    pub(crate) queued_mutations: std::collections::VecDeque<Mutation>,
 
     /// A diff of the selected Changes file is owed, asked for while another
     /// job held the slot.
@@ -601,10 +601,23 @@ impl GitState {
                     && self.revert_block(commit).is_none()
                 {
                     self.log.pending_revert = Some(commit.clone());
+                    self.log.revert_branch = self.branches.current.clone();
                 }
             }
+            // While a job is pending the popup stays open with Revert
+            // disabled, so the confirmation is neither lost nor run later.
             GitAction::ConfirmRevert => {
-                if let Some(commit) = self.log.pending_revert.take() {
+                if self.pending.is_some() {
+                    return;
+                }
+                let Some(commit) = self.log.pending_revert.take() else {
+                    return;
+                };
+                if self.branches.current != self.log.revert_branch {
+                    self.log.error = "The branch changed, so the revert was not run".into();
+                } else if let Some(reason) = self.revert_block(&commit) {
+                    self.log.error = reason.into();
+                } else {
                     self.start_mutation(paths, ctx, Mutation::Revert { hash: commit.hash });
                 }
             }
@@ -612,8 +625,8 @@ impl GitState {
     }
 
     /// Collects the in-flight job's result if it has finished, then starts
-    /// queued work when nothing is pending: a queued mutation first, then a
-    /// branch listing, an amend read, a status refresh, a Changes diff, and
+    /// queued work when nothing is pending: a branch listing first, then an
+    /// amend read, a status refresh, a Changes diff, and
     /// last the log's work. Called every frame. Returns what the app shell must
     /// apply, in order.
     pub(crate) fn poll(&mut self, paths: Option<&RepoPaths>, ctx: &egui::Context) -> Vec<GitEvent> {
@@ -634,9 +647,7 @@ impl GitState {
             }
         }
         if self.pending.is_none() {
-            if let Some(mutation) = self.queued_mutations.pop_front() {
-                self.start_mutation(paths, ctx, mutation);
-            } else if self.needs_branches {
+            if self.needs_branches {
                 self.needs_branches = false;
                 self.start_branches(paths, ctx);
             } else if self.needs_amend_info {
@@ -818,7 +829,9 @@ impl GitState {
         self.pending = Some(jobs::diff(request, notifier(ctx)));
     }
 
-    /// Starts `mutation`, or queues it for `poll` while a job is pending.
+    /// Starts `mutation`, under the same one-job rule. A mutation asked for
+    /// while a job is pending is dropped, never run later against whatever
+    /// repo or branch is current by then.
     fn start_mutation(
         &mut self,
         paths: Option<&RepoPaths>,
@@ -826,7 +839,6 @@ impl GitState {
         mutation: Mutation,
     ) {
         if self.pending.is_some() {
-            self.queued_mutations.push_back(mutation);
             return;
         }
         let Some(paths) = paths else {
@@ -2041,7 +2053,7 @@ mod tests {
     }
 
     #[test]
-    fn log_state_revert_confirmed_during_a_log_read_still_runs() {
+    fn log_state_revert_confirm_waits_while_a_log_read_runs() {
         if !git_available() {
             return;
         }
@@ -2055,10 +2067,70 @@ mod tests {
         git.poll(Some(&paths), &ctx);
         assert!(git.pending.is_some(), "the log read holds the slot");
         git.handle(GitAction::ConfirmRevert, Some(&paths), &ctx);
+        assert!(git.log.pending_revert.is_some(), "the popup stays open");
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(
+            git_output(&root, &["log", "-1", "--format=%s"]).trim(),
+            "change"
+        );
+        git.handle(GitAction::ConfirmRevert, Some(&paths), &ctx);
         settle_git(&mut git, &paths, &ctx);
         assert_eq!(
             git_output(&root, &["log", "-1", "--format=%s"]).trim(),
             "Revert \"change\""
+        );
+    }
+
+    #[test]
+    fn log_state_revert_rechecks_the_branch_at_confirm() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+        git_output(&root, &["commit", "-am", "change"]);
+        let (mut git, paths, ctx) = open_log(&root);
+        let hash = git.log.commits[0].hash.clone();
+        git.handle(GitAction::RequestRevert { hash }, Some(&paths), &ctx);
+        git.handle(
+            GitAction::SwitchBranch {
+                name: "apic-second".into(),
+            },
+            Some(&paths),
+            &ctx,
+        );
+        settle_git(&mut git, &paths, &ctx);
+        let head = git_output(&root, &["rev-parse", "HEAD"]);
+        git.handle(GitAction::ConfirmRevert, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(git_output(&root, &["rev-parse", "HEAD"]), head);
+        assert!(git.log.pending_revert.is_none());
+        assert!(!git.log.error.is_empty(), "the refusal is explained");
+    }
+
+    #[test]
+    fn log_state_a_mutation_requested_during_a_job_never_runs_later() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+        let (mut git, paths, ctx) = open_log(&root);
+        git.handle(GitAction::RefreshLog, Some(&paths), &ctx);
+        git.poll(Some(&paths), &ctx);
+        assert!(git.pending.is_some(), "the log read holds the slot");
+        git.handle(
+            GitAction::RequestDiscard {
+                path: "contracts/sample.json".into(),
+            },
+            Some(&paths),
+            &ctx,
+        );
+        git.handle(GitAction::ConfirmDiscard, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert!(
+            git_output(&root, &["status", "--porcelain"]).contains("contracts/sample.json"),
+            "the discard was dropped, not run later"
         );
     }
 

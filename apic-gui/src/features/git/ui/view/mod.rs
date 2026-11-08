@@ -1381,6 +1381,22 @@ mod tests {
         node(&nodes, "first commit");
     }
 
+    #[test]
+    fn log_view_revert_popup_waits_while_a_job_runs() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut state = log_view_state();
+        state.log.pending_revert = Some(state.log.commits[0].clone());
+        let (_tx, rx) = std::sync::mpsc::channel();
+        state.pending = Some(rx);
+        dialogs_frame(&ctx, &mut state, vec![]);
+        let nodes = dialogs_frame(&ctx, &mut state, vec![]);
+        node(&nodes, "Waiting for git");
+        state.pending = None;
+        let nodes = dialogs_frame(&ctx, &mut state, vec![]);
+        assert!(nodes.iter().all(|(label, _)| label != "Waiting for git"));
+    }
+
     /// Every state the panel draws: loading, nothing matched, a failed
     /// read over rows, a selected commit with files and Load more, and dots
     /// only under a text filter.

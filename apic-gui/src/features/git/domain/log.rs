@@ -164,8 +164,9 @@ impl LogFilter {
         }
         if let Some(author) = &self.author {
             // `--author` follows the grep's pattern mode: literal under
-            // `-F`, extended under `-E`, basic otherwise. Escape the picked
-            // name so it only ever matches itself.
+            // `-F`, extended under `-E`, basic otherwise, as `cli::log`
+            // pins `grep.patternType=basic`. Escape the picked name so it
+            // only ever matches itself.
             let special = match (grep, self.regex) {
                 (true, false) => "",
                 (true, true) => ".[*^$\\+?(){|",
