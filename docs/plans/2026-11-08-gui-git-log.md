@@ -603,14 +603,14 @@ mod tests {
 **Files:**
 - Modify: `apic-gui/src/features/git/data/cli.rs` (the import at line 8, new functions after `merge` at lines 243-245, the tests module at lines 247-634)
 
-- [ ] Step 1: Replace the import at line 8 with:
+- [x] Step 1: Replace the import at line 8 with:
 
 ```rust
 use crate::features::git::domain::log::{Commit, LogFilter, parse_log, parse_name_status};
 use crate::features::git::domain::status::{Branches, FileStatus, Status, parse_status};
 ```
 
-- [ ] Step 2: Add after `merge` (line 245), before `#[cfg(test)]`:
+- [x] Step 2: Add after `merge` (line 245), before `#[cfg(test)]`:
 
 ```rust
 /// The `git log` format: hash, parents, author, author date, refs and
@@ -694,7 +694,7 @@ pub(crate) fn revert(root: &Path, hash: &str) -> Result<(), String> {
 }
 ```
 
-- [ ] Step 3: Add to the tests module (it already has `tempdir`, `git_missing`, `init_repo` at lines 273-283 and `commit_file` at lines 516-521):
+- [x] Step 3: Add to the tests module (it already has `tempdir`, `git_missing`, `init_repo` at lines 273-283 and `commit_file` at lines 516-521):
 
 ```rust
     use crate::features::git::domain::log::{PathFilter, Since};
@@ -898,9 +898,9 @@ pub(crate) fn revert(root: &Path, hash: &str) -> Result<(), String> {
     }
 ```
 
-- [ ] Step 4: Run `cargo test -p apic-gui history_`
-- [ ] Step 5: Run `cargo fmt --all`
-- [ ] Step 6: Commit `feat(gui): read the git log, a commit's files and diff, and revert in cli`
+- [x] Step 4: Run `cargo test -p apic-gui history_`
+- [x] Step 5: Run `cargo fmt --all`
+- [x] Step 6: Commit `feat(gui): read the git log, a commit's files and diff, and revert in cli`
 
 ### Task 3: log jobs, Revert mutation and LogState → verify: `cargo test -p apic-gui log_state_` exits 0 and runs at least 1 test, and `cargo test -p apic-gui features::git` exits 0
 
