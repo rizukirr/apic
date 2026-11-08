@@ -25,7 +25,7 @@ use crate::features::contracts::ui::view::{
 };
 use crate::features::git::ui::state::{BranchOpKind, GitAction, GitEvent, GitState};
 use crate::features::git::ui::view;
-use crate::features::project::data::project_root_of;
+use crate::features::project::data::{NewKind, project_root_of};
 use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
 use crate::features::project::ui::view::welcome;
 use crate::platform::settings::Settings;
@@ -104,6 +104,21 @@ fn relative_slash_path(root: &Path, path: &Path) -> Option<String> {
             .collect::<Vec<_>>()
             .join("/"),
     )
+}
+
+/// Sends "+ New request" and "+ New template" to the folder picker while no
+/// project is open, since both need a project to write into. Every other
+/// action, and both of these with a project open, pass through.
+fn route_new_without_project(action: ContractsAction, has_project: bool) -> Action {
+    match action {
+        ContractsAction::OpenNewRequest(_) if !has_project => {
+            Action::Project(ProjectAction::PickForNew(NewKind::Request))
+        }
+        ContractsAction::OpenNewTemplate if !has_project => {
+            Action::Project(ProjectAction::PickForNew(NewKind::Template))
+        }
+        other => Action::Contracts(other),
+    }
 }
 
 impl App {
@@ -589,7 +604,7 @@ impl App {
             Guarded::Load(_) | Guarded::LoadTemplate(_) | Guarded::CancelEdit => return,
         };
         let events = self.project.handle(action, ctx);
-        self.apply_project_events(events);
+        self.apply_project_events(events, ctx);
     }
 
     /// Holds a window close request for the unsaved-changes popup while the
@@ -675,7 +690,7 @@ impl App {
     }
 
     /// Applies what the project view model asked the shell to do.
-    fn apply_project_events(&mut self, events: Vec<ProjectEvent>) {
+    fn apply_project_events(&mut self, events: Vec<ProjectEvent>, ctx: &egui::Context) {
         for event in events {
             match event {
                 ProjectEvent::Opened(folder) => {
@@ -687,6 +702,13 @@ impl App {
                 }
                 ProjectEvent::ContractsChanged => self.reload_project(),
                 ProjectEvent::Status(text) => self.shell.status = text,
+                ProjectEvent::OpenNewDialog(kind) => {
+                    let action = match kind {
+                        NewKind::Request => ContractsAction::OpenNewRequest(String::new()),
+                        NewKind::Template => ContractsAction::OpenNewTemplate,
+                    };
+                    self.handle_contracts(action, ctx);
+                }
             }
         }
     }
@@ -718,13 +740,15 @@ impl App {
                 let guarded = match action {
                     ProjectAction::Open => Some(Guarded::OpenProject),
                     ProjectAction::New => Some(Guarded::NewProject),
-                    ProjectAction::ImportPostman | ProjectAction::DismissRefusal => None,
+                    ProjectAction::ImportPostman
+                    | ProjectAction::DismissRefusal
+                    | ProjectAction::PickForNew(_) => None,
                 };
                 if guarded.is_some_and(|g| self.contracts.guard(g)) {
                     return;
                 }
                 let events = self.project.handle(action, ctx);
-                self.apply_project_events(events);
+                self.apply_project_events(events, ctx);
             }
             Action::Shell(ShellAction::ToggleSidebar) => {
                 self.shell.sidebar_open = !self.shell.sidebar_open;
@@ -742,7 +766,12 @@ impl App {
             Action::Shell(ShellAction::ToggleTemplatesSection) => {
                 self.shell.templates_open = !self.shell.templates_open;
             }
-            Action::Contracts(action) => self.handle_contracts(action, ctx),
+            Action::Contracts(action) => {
+                match route_new_without_project(action, self.project.project_root.is_some()) {
+                    Action::Contracts(action) => self.handle_contracts(action, ctx),
+                    other => self.apply(other, ctx),
+                }
+            }
             Action::Git(action @ (GitAction::SwitchBranch { .. } | GitAction::ConfirmBranchOp))
                 if self.contracts.has_unsaved_edits() =>
             {
@@ -783,7 +812,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.guard_close_request(&ctx);
         let events = self.project.poll(&ctx);
-        self.apply_project_events(events);
+        self.apply_project_events(events, &ctx);
         self.poll_git(&ctx);
         self.contracts.send.poll(&ctx);
         let top = self.top_bar(ui);
@@ -1896,5 +1925,55 @@ mod tests {
             Some(key),
             "the redirect must fetch the selected file's diff"
         );
+    }
+
+    #[test]
+    fn new_request_and_template_go_to_the_picker_without_a_project() {
+        assert!(matches!(
+            route_new_without_project(ContractsAction::OpenNewRequest(String::new()), false),
+            Action::Project(ProjectAction::PickForNew(NewKind::Request))
+        ));
+        assert!(matches!(
+            route_new_without_project(ContractsAction::OpenNewTemplate, false),
+            Action::Project(ProjectAction::PickForNew(NewKind::Template))
+        ));
+        assert!(matches!(
+            route_new_without_project(ContractsAction::OpenNewRequest("auth/".into()), true),
+            Action::Contracts(ContractsAction::OpenNewRequest(p)) if p == "auth/"
+        ));
+        assert!(matches!(
+            route_new_without_project(ContractsAction::OpenNewTemplate, true),
+            Action::Contracts(ContractsAction::OpenNewTemplate)
+        ));
+    }
+
+    #[test]
+    fn a_folder_picked_for_new_opens_the_matching_dialog() {
+        if !git_available() {
+            return;
+        }
+        let ctx = egui::Context::default();
+
+        let root = project_fixture();
+        let mut app = app_at(root.clone());
+        app.apply_project_events(
+            vec![
+                ProjectEvent::Opened(root.clone()),
+                ProjectEvent::OpenNewDialog(NewKind::Request),
+            ],
+            &ctx,
+        );
+        assert_eq!(app.contracts.new_request, Some(String::new()));
+
+        let root = project_fixture();
+        let mut app = app_at(root.clone());
+        app.apply_project_events(
+            vec![
+                ProjectEvent::Opened(root.clone()),
+                ProjectEvent::OpenNewDialog(NewKind::Template),
+            ],
+            &ctx,
+        );
+        assert_eq!(app.contracts.new_template, Some(String::new()));
     }
 }
