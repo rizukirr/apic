@@ -2424,11 +2424,11 @@ Added after Task 6's first attempt: the installed clippy flags `chunks_exact_to_
 **Files:**
 - Modify: `apic-gui/src/features/git/domain/log.rs` (`parse_log`, `parse_name_status`, the test string in `parse_log_reads_unicode_empty_refs_and_a_root_commit`)
 
-- [ ] Step 1: In `parse_log`, replace `.chunks_exact(6)` with `.as_chunks::<6>().0.iter()`. The closure keeps indexing `f[0]`..`f[5]`.
-- [ ] Step 2: In `parse_name_status`, replace `.chunks_exact(2)` with `.as_chunks::<2>().0.iter()`.
-- [ ] Step 3: In the test string `"h1\0p1 p2\0Ann\02026-11-08 ..."`, replace every `\0` with `\x00`. Do not change any assertion.
-- [ ] Step 4: Run `cargo fmt --all`, `cargo test -p apic-gui domain::log::`, `cargo clippy -p apic-gui --all-targets`
-- [ ] Step 5: Commit `fix(gui): clear clippy lints in the commit log parser`
+- [x] Step 1: In `parse_log`, replace `.chunks_exact(6)` with `.as_chunks::<6>().0.iter()`. The closure keeps indexing `f[0]`..`f[5]`.
+- [x] Step 2: In `parse_name_status`, replace `.chunks_exact(2)` with `.as_chunks::<2>().0.iter()`.
+- [x] Step 3: In the test string `"h1\0p1 p2\0Ann\02026-11-08 ..."`, replace every `\0` with `\x00`. Do not change any assertion.
+- [x] Step 4: Run `cargo fmt --all`, `cargo test -p apic-gui domain::log::`, `cargo clippy -p apic-gui --all-targets`
+- [x] Step 5: Commit `fix(gui): clear clippy lints in the commit log parser`
 
 ### Task 6: app wiring, persisted open flag and docs → verify: `cargo test -p apic-gui log_app_` exits 0 and runs at least 1 test, and `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` each exit 0
 
@@ -2710,11 +2710,11 @@ Not included: push, rebase, stash, cherry-pick, reset, aborting a merge or a rev
 
 | Spec goal | Tasks |
 |---|---|
-| 1. Clock button, bottom panel, persisted open flag | 3 (open flag, ToggleLog), 5 (button, `Panel::bottom`, settings) |
+| 1. Clock button, bottom panel, persisted open flag | 3 (open flag, ToggleLog), 6 (button, `Panel::bottom`, settings) |
 | 2. Branch commits, 500 per page with Load more, row contents, dimmed merges, virtualised rows | 1 (Commit, parser), 2 (`cli::log` paging), 3 (Load more, branch reset after a switch), 4 (`show_rows`, pills, dimming) |
 | 3. Graph from `%H %P`, dots only under text or User, lines under Paths with rewritten parents | 1 (`lanes`, `dots_only`), 2 (`--parents`), 4 (`paint_graph`) |
 | 4. Toolbar filters mapped onto `git log`, hash prefix, debounce, Refresh, reread from the start | 1 (`LogFilter::args`, `path`, `hash_prefix`, `keeps`), 2 (flags against real git), 3 (`SetLogFilter`, `RefreshLog`), 4 (toolbar, `debounced`) |
-| 5. Commit files nested by folder, file diff in the central area with Show field changes | 2 (`commit_files`, `commit_diff_text`), 3 (jobs, `SelectCommit`, `SelectCommitFile`), 4 (`RowMode::Commit`, `diff_body`), 5 (`CentralView::Git`) |
-| 6. Right-click Revert and Copy hash, disabled reasons, confirm popup, revert mutation, conflict notice, unsaved-edits refusal | 2 (`cli::revert`), 3 (`Mutation::Revert`, `revert_block`, conflict reread), 4 (context menu, `revert_dialog`), 5 (guard arm) |
+| 5. Commit files nested by folder, file diff in the central area with Show field changes | 2 (`commit_files`, `commit_diff_text`), 3 (jobs, `SelectCommit`, `SelectCommitFile`), 4 (`RowMode::Commit`, `diff_body`), 6 (`CentralView::Git`) |
+| 6. Right-click Revert and Copy hash, disabled reasons, confirm popup, revert mutation, conflict notice, unsaved-edits refusal | 2 (`cli::revert`), 3 (`Mutation::Revert`, `revert_block`, conflict reread), 4 (context menu, `revert_dialog`), 6 (guard arm) |
 | 7. Error keeps rows, empty message, refresh after commit, revert, merge, pull and switch | 3 (`Log` error arm, `request_log` after mutations), 4 (empty state text, error label) |
-| 8. GUI.md and CHANGELOG.md | 5 |
+| 8. GUI.md and CHANGELOG.md | 6 |
