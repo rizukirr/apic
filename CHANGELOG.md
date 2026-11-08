@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-08
+
+The first stable release. The desktop GUI now covers the whole loop of working on API contracts in git: edit a contract, send it, review and commit the change, pull, merge and resolve conflicts, and read the history with the new git log panel. The CLI moves to curl-style `create` and `edit`, gains `apic send` with environments, and apic is now licensed under GPL-3.0-only. The contract format is unchanged, so existing projects need no migration.
+
 ### Added
 
 - **Git log panel.** The clock button next to the branch dropdown opens a resizable log at the bottom of the window, remembered across launches. It shows a branch's commits with a painted graph, ref labels, author and date, 500 at a time with Load more, and filters by text or hash, branch, user, date range and path. Clicking a commit lists its changed files, and clicking a file shows that commit's diff in the main area. Right-click a commit to copy its hash or revert it after a confirmation. A conflicting revert lands in the conflict resolver.
@@ -449,7 +453,8 @@ Initial beta release.
 - CI (fmt, clippy, build, test) and unit + end-to-end test suites.
 - MIT license.
 
-[Unreleased]: https://github.com/rizukirr/apic/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/rizukirr/apic/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/rizukirr/apic/compare/v0.5.1...v1.0.0
 [0.5.1]: https://github.com/rizukirr/apic/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/rizukirr/apic/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/rizukirr/apic/compare/v0.4.0...v0.4.1
