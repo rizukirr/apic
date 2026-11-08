@@ -24,11 +24,11 @@ Every git test returns early when git is missing, the way the existing ones do (
 - Modify: `apic-gui/src/features/git/domain/mod.rs:7-9` (the module list, parent of the new module)
 - Modify: `apic-gui/src/features/git/domain/status.rs:24` (`fn from_code` becomes `pub(crate) fn from_code`)
 
-- [ ] Step 1: In `domain/mod.rs`, add `pub(crate) mod log;` between `pub(crate) mod diff;` and `pub(crate) mod status;`, and replace the doc line `//! status, field-level contract diffs, and merge conflict markers.` with `//! status, field-level contract diffs, merge conflict markers and the commit log.`
+- [x] Step 1: In `domain/mod.rs`, add `pub(crate) mod log;` between `pub(crate) mod diff;` and `pub(crate) mod status;`, and replace the doc line `//! status, field-level contract diffs, and merge conflict markers.` with `//! status, field-level contract diffs, merge conflict markers and the commit log.`
 
-- [ ] Step 2: In `domain/status.rs` line 24, change `fn from_code(c: u8) -> Change {` to `pub(crate) fn from_code(c: u8) -> Change {`.
+- [x] Step 2: In `domain/status.rs` line 24, change `fn from_code(c: u8) -> Change {` to `pub(crate) fn from_code(c: u8) -> Change {`.
 
-- [ ] Step 3: Create `domain/log.rs`:
+- [x] Step 3: Create `domain/log.rs`:
 
 ```rust
 //! The commit log as plain data: the commit and filter types, the parsers for
@@ -593,10 +593,10 @@ mod tests {
 }
 ```
 
-- [ ] Step 4: Run `cargo test -p apic-gui domain::log::`
-- [ ] Step 5: Run `cargo test -p apic-gui layer_rules`
-- [ ] Step 6: Run `cargo fmt --all`
-- [ ] Step 7: Commit `feat(gui): add the commit log domain: parsers, filter and lanes`
+- [x] Step 4: Run `cargo test -p apic-gui domain::log::`
+- [x] Step 5: Run `cargo test -p apic-gui layer_rules`
+- [x] Step 6: Run `cargo fmt --all`
+- [x] Step 7: Commit `feat(gui): add the commit log domain: parsers, filter and lanes`
 
 ### Task 2: cli log, commit files, commit diff and revert → verify: `cargo test -p apic-gui history_` exits 0 and runs at least 1 test
 
