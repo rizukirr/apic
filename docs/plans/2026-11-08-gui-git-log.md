@@ -908,7 +908,7 @@ pub(crate) fn revert(root: &Path, hash: &str) -> Result<(), String> {
 - Modify: `apic-gui/src/features/git/data/jobs.rs` (imports at lines 11-13, `MutateKind` at lines 40-49, `JobResult` at lines 52-73, after `diff_job` ending at line 125, `Mutation` at lines 197-252, `kind` at lines 256-267, `success_message` at lines 270-293, `run` at lines 296-336, after `branches` ending at line 439)
 - Modify: `apic-gui/src/features/git/ui/state.rs` (imports at lines 7-11, `GitAction` at lines 49-113, `GitState` at lines 135-240, `request_refresh` at lines 268-270, the `Select` arm at lines 346-352, the end of `handle`'s match at line 450, `poll` at lines 475-486, `apply_result` at lines 491-565, after `start_branches` ending at line 658, the tests module from line 672)
 
-- [ ] Step 1: In `jobs.rs`, replace the imports at lines 11-13 with:
+- [x] Step 1: In `jobs.rs`, replace the imports at lines 11-13 with:
 
 ```rust
 use crate::features::git::data::cli;
@@ -917,9 +917,9 @@ use crate::features::git::domain::log::{Commit, LogFilter, short};
 use crate::features::git::domain::status::{Branches, FileStatus, Status};
 ```
 
-- [ ] Step 2: Add `Revert,` as the last variant of `MutateKind` (after `Merge,` at line 48).
+- [x] Step 2: Add `Revert,` as the last variant of `MutateKind` (after `Merge,` at line 48).
 
-- [ ] Step 3: Add these variants at the end of `JobResult` (after `Amend(...)` at line 72):
+- [x] Step 3: Add these variants at the end of `JobResult` (after `Amend(...)` at line 72):
 
 ```rust
 
@@ -935,7 +935,7 @@ use crate::features::git::domain::status::{Branches, FileStatus, Status};
     CommitDiff((String, String), Result<DiffData, String>),
 ```
 
-- [ ] Step 4: Add after `diff_job` (line 125):
+- [x] Step 4: Add after `diff_job` (line 125):
 
 ```rust
 /// How many commits one log read lists, and Load more appends.
@@ -963,7 +963,7 @@ pub(crate) fn commit_diff_job(root: &Path, hash: &str, path: &str) -> Result<Dif
 }
 ```
 
-- [ ] Step 5: Add a variant at the end of `Mutation` (after `Resolve { .. }`, line 251):
+- [x] Step 5: Add a variant at the end of `Mutation` (after `Resolve { .. }`, line 251):
 
 ```rust
 
@@ -976,7 +976,7 @@ pub(crate) fn commit_diff_job(root: &Path, hash: &str, path: &str) -> Result<Dif
 
 Then add `Mutation::Revert { .. } => MutateKind::Revert,` to `kind`, `Mutation::Revert { hash } => format!("reverted {}", short(hash)),` to `success_message`, and `Mutation::Revert { hash } => cli::revert(root, hash),` to `run`.
 
-- [ ] Step 6: Add after `branches` (line 439):
+- [x] Step 6: Add after `branches` (line 439):
 
 ```rust
 /// Starts one page of `git log` for `filter`, skipping `skip` commits.
@@ -1036,13 +1036,13 @@ pub(crate) fn commit_diff(
 }
 ```
 
-- [ ] Step 7: In `state.rs`, add to the imports at lines 7-11:
+- [x] Step 7: In `state.rs`, add to the imports at lines 7-11:
 
 ```rust
 use crate::features::git::domain::log::{Commit, LogFilter, Row, lanes};
 ```
 
-- [ ] Step 8: Add these variants at the end of `GitAction` (after `ResolveConflict`, line 112):
+- [x] Step 8: Add these variants at the end of `GitAction` (after `ResolveConflict`, line 112):
 
 ```rust
 
@@ -1072,7 +1072,7 @@ use crate::features::git::domain::log::{Commit, LogFilter, Row, lanes};
     ConfirmRevert,
 ```
 
-- [ ] Step 9: Add above `GitState` (before line 133):
+- [x] Step 9: Add above `GitState` (before line 133):
 
 ```rust
 /// Everything the log panel remembers.
@@ -1149,7 +1149,7 @@ and add a field at the end of `GitState` (after `status_repo`, line 239):
     pub(crate) log: LogState,
 ```
 
-- [ ] Step 10: Add after `request_refresh` (line 270):
+- [x] Step 10: Add after `request_refresh` (line 270):
 
 ```rust
     /// Queues a log read from the start, when the panel is open.
@@ -1177,7 +1177,7 @@ and add a field at the end of `GitState` (after `status_repo`, line 239):
     }
 ```
 
-- [ ] Step 11: In `handle`, add `self.log.selected_file = None;` as the first line of the `GitAction::Select` arm (line 347), and add these arms after the `ResolveConflict` arm (line 450):
+- [x] Step 11: In `handle`, add `self.log.selected_file = None;` as the first line of the `GitAction::Select` arm (line 347), and add these arms after the `ResolveConflict` arm (line 450):
 
 ```rust
             GitAction::ToggleLog => {
@@ -1215,7 +1215,7 @@ and add a field at the end of `GitState` (after `status_repo`, line 239):
             }
 ```
 
-- [ ] Step 12: In `poll`, extend the queue (lines 476-485) with a final branch so it reads:
+- [x] Step 12: In `poll`, extend the queue (lines 476-485) with a final branch so it reads:
 
 ```rust
             if self.needs_branches {
@@ -1232,7 +1232,7 @@ and add a field at the end of `GitState` (after `status_repo`, line 239):
             }
 ```
 
-- [ ] Step 13: In `apply_result`, add these arms before `JobResult::Mutate(kind, message, Ok(status))` (line 522):
+- [x] Step 13: In `apply_result`, add these arms before `JobResult::Mutate(kind, message, Ok(status))` (line 522):
 
 ```rust
             JobResult::Log(append, Ok(page)) => {
@@ -1314,7 +1314,7 @@ Replace the `Mutate(kind, _, Err(e))` arm (lines 552-563) with:
             }
 ```
 
-- [ ] Step 14: Add after `start_branches` (line 658):
+- [x] Step 14: Add after `start_branches` (line 658):
 
 ```rust
     /// Starts the first owed log job, under the one-job rule: a read from
@@ -1354,7 +1354,7 @@ Replace the `Mutate(kind, _, Err(e))` arm (lines 552-563) with:
     }
 ```
 
-- [ ] Step 15: Add to the tests module in `state.rs`:
+- [x] Step 15: Add to the tests module in `state.rs`:
 
 ```rust
     /// A git state on `root` with the log opened and read.
@@ -1611,10 +1611,10 @@ Replace the `Mutate(kind, _, Err(e))` arm (lines 552-563) with:
     }
 ```
 
-- [ ] Step 16: Run `cargo test -p apic-gui log_state_`
-- [ ] Step 17: Run `cargo test -p apic-gui features::git`
-- [ ] Step 18: Run `cargo fmt --all`
-- [ ] Step 19: Commit `feat(gui): run git log, commit file and revert jobs from GitState`
+- [x] Step 16: Run `cargo test -p apic-gui log_state_`
+- [x] Step 17: Run `cargo test -p apic-gui features::git`
+- [x] Step 18: Run `cargo fmt --all`
+- [x] Step 19: Commit `feat(gui): run git log, commit file and revert jobs from GitState`
 
 ### Task 4: the log panel view and the commit file diff → verify: `cargo test -p apic-gui log_view_` exits 0 and runs at least 1 test, and `cargo test -p apic-gui features::git` exits 0
 
