@@ -16,7 +16,7 @@
 **Files:**
 - Modify: `apic-gui/src/app/mod.rs` (`read_project`, tests module)
 
-- [ ] Step 1: In the `app/mod.rs` tests module, add the guard test:
+- [x] Step 1: In the `app/mod.rs` tests module, add the guard test:
 
 ```rust
     /// Draws the branch dropdown once, the way the app bar does every frame,
@@ -59,9 +59,9 @@
     }
 ```
 
-- [ ] Step 2: Run `cargo test -p apic-gui opening_another_project_reloads_its_branches` and confirm it fails with the stale list.
+- [x] Step 2: Run `cargo test -p apic-gui opening_another_project_reloads_its_branches` and confirm it fails with the stale list.
 
-- [ ] Step 3: In `read_project`, replace the whole `match crate::features::git::data::cli::discover(&root) { .. }` block with:
+- [x] Step 3: In `read_project`, replace the whole `match crate::features::git::data::cli::discover(&root) { .. }` block with:
 
 ```rust
         let repo_root = match crate::features::git::data::cli::discover(&root) {
@@ -86,7 +86,7 @@
         }
 ```
 
-- [ ] Step 4: Run `cargo fmt --all`.
-- [ ] Step 5: Run `cargo test -p apic-gui`.
-- [ ] Step 6: Run `cargo clippy --workspace --all-targets -- -D warnings`.
-- [ ] Step 7: Commit: `fix(gui): reload the branch list when a project in another repository opens`.
+- [x] Step 4: Run `cargo fmt --all`.
+- [x] Step 5: Run `cargo test -p apic-gui`.
+- [x] Step 6: Run `cargo clippy --workspace --all-targets -- -D warnings`.
+- [x] Step 7: Commit: `fix(gui): reload the branch list when a project in another repository opens`.
