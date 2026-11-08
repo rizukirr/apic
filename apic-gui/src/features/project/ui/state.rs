@@ -6,7 +6,7 @@ use std::sync::mpsc::Receiver;
 
 use eframe::egui;
 
-use crate::features::project::data::{self, PickKind};
+use crate::features::project::data::{self, NewKind, PickKind};
 use crate::features::project::domain::open_refusal;
 
 /// Everything the project feature owns. `App` holds one of these; no other
@@ -46,6 +46,9 @@ pub(crate) enum ProjectAction {
     New,
     /// `[ Import ]` → Postman: launch the file picker.
     ImportPostman,
+    /// "+ New request" or "+ New template" with no project open: launch the
+    /// folder picker for the project to create it in.
+    PickForNew(NewKind),
     /// Close the refused-folder popup.
     DismissRefusal,
 }
@@ -59,6 +62,9 @@ pub(crate) enum ProjectEvent {
     ContractsChanged,
     /// Text for the shell status line.
     Status(String),
+    /// The picked folder is now the project: open the new request or new
+    /// template dialog. Always follows `Opened`.
+    OpenNewDialog(NewKind),
 }
 
 impl ProjectState {
@@ -81,6 +87,7 @@ impl ProjectState {
             ProjectAction::Open => self.start_pick(PickKind::OpenProject, ctx),
             ProjectAction::New => self.start_pick(PickKind::NewProject, ctx),
             ProjectAction::ImportPostman => self.start_pick(PickKind::ImportPostman, ctx),
+            ProjectAction::PickForNew(kind) => self.start_pick(PickKind::NewTarget(kind), ctx),
             ProjectAction::DismissRefusal => {
                 self.refusal = None;
                 Vec::new()
@@ -122,6 +129,7 @@ impl ProjectState {
                         Some(src) => self.finish_import_into_new(folder, src),
                         None => Vec::new(),
                     },
+                    (PickKind::NewTarget(kind), Some(p)) => self.finish_new_for(p, kind),
                     (_, None) => self.cancel_pick(),
                 };
                 if events.is_empty() {
@@ -181,6 +189,14 @@ impl ProjectState {
         match data::init(&folder) {
             Ok(()) | Err(_) => self.activate(folder), // Err = already a project
         }
+    }
+
+    /// Makes `folder` the active project, initializing it unless it already
+    /// is one, then asks for the new request or new template dialog.
+    pub(crate) fn finish_new_for(&mut self, folder: PathBuf, kind: NewKind) -> Vec<ProjectEvent> {
+        let mut events = self.finish_new(folder);
+        events.push(ProjectEvent::OpenNewDialog(kind));
+        events
     }
 
     /// Makes `folder` the active project.
@@ -405,5 +421,87 @@ mod tests {
         assert!(state.root.is_none());
         assert!(state.pending.is_none());
         assert_eq!(state.idle_status(), "No project open. Use Open or New.");
+    }
+
+    #[test]
+    fn new_for_a_plain_folder_initializes_opens_and_asks_for_the_dialog() {
+        let folder = tempdir();
+        let mut state = ProjectState::default();
+
+        let events = state.finish_new_for(folder.clone(), NewKind::Request);
+
+        assert_eq!(
+            events,
+            vec![
+                ProjectEvent::Opened(folder.clone()),
+                ProjectEvent::OpenNewDialog(NewKind::Request),
+            ]
+        );
+        assert!(data::has_config(&folder), "the folder must be a project");
+        assert_eq!(state.project_root, Some(folder));
+    }
+
+    #[test]
+    fn new_for_an_existing_project_keeps_its_config() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let config = root.join(".apic").join("config.toml");
+        let before = std::fs::read_to_string(&config).unwrap();
+        let mut state = ProjectState::default();
+
+        let events = state.finish_new_for(root.clone(), NewKind::Template);
+
+        assert_eq!(
+            events,
+            vec![
+                ProjectEvent::Opened(root.clone()),
+                ProjectEvent::OpenNewDialog(NewKind::Template),
+            ]
+        );
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), before);
+        assert_eq!(state.project_root, Some(root));
+    }
+
+    #[test]
+    fn picked_new_target_opens_the_folder_and_asks_for_the_dialog() {
+        let folder = tempdir();
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Some(folder.clone())).unwrap();
+        let mut state = ProjectState {
+            pending: Some((PickKind::NewTarget(NewKind::Request), rx)),
+            ..ProjectState::default()
+        };
+
+        let events = state.poll(&egui::Context::default());
+
+        assert_eq!(
+            events,
+            vec![
+                ProjectEvent::Opened(folder.clone()),
+                ProjectEvent::OpenNewDialog(NewKind::Request),
+            ]
+        );
+        assert!(state.pending.is_none());
+    }
+
+    #[test]
+    fn cancelled_new_target_pick_opens_nothing() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(None).unwrap();
+        let mut state = ProjectState {
+            pending: Some((PickKind::NewTarget(NewKind::Request), rx)),
+            ..ProjectState::default()
+        };
+
+        let events = state.poll(&egui::Context::default());
+
+        assert!(
+            events.iter().all(|e| matches!(e, ProjectEvent::Status(_))),
+            "{events:?}"
+        );
+        assert!(state.project_root.is_none());
+        assert!(state.pending.is_none());
     }
 }

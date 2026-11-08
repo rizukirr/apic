@@ -17,7 +17,7 @@ apic-gui
 
 ## Contracts
 
-- **Browse.** The sidebar lists every contract as a folder tree with its method badge. The search icon filters the tree, and `+` starts a new request. Hover a row for its `⋮` menu, or right-click it: a folder offers New request here and Delete folder, and a contract offers Delete. Templates live in the collapsible Templates section at the bottom.
+- **Browse.** The sidebar lists every contract as a folder tree with its method badge. The search icon filters the tree, and `+` starts a new request. With no project open, `+` and the Templates section's `+` first ask for a folder, set it up as a project unless it already is one, open it, and then show the dialog. Hover a row for its `⋮` menu, or right-click it: a folder offers New request here and Delete folder, and a contract offers Delete. Templates live in the collapsible Templates section at the bottom.
 - **Read and edit.** Selecting a contract shows its name and description, the method and URL, and the Headers, Query and Request sections, with the responses on the right. The pencil enters edit mode, and the disk saves. A dot next to the disk means unsaved edits.
   - Headers, query params and response headers are grid tables. While editing, the trash icon removes a row and typing into the empty last row adds one.
   - Variables in the URL and in values, `$name`, `${name}`, `{{name}}` and `{name}`, are highlighted in the variable colour. With an environment selected, a name it does not define is drawn in the warning colour instead, unless the path-param popup has a value for it.

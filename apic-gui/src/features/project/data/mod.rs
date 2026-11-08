@@ -16,6 +16,17 @@ pub(crate) enum PickKind {
     ImportPostman,
     /// Pick the folder that becomes the project an import is written into.
     ImportTarget,
+    /// Pick the folder that becomes the project a new request or template
+    /// is created in, when none is open.
+    NewTarget(NewKind),
+}
+
+/// Which dialog a folder picked for a new request or template goes on to
+/// open once it is the project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NewKind {
+    Request,
+    Template,
 }
 
 /// Spawns a native dialog on a background thread (so the portal call never
@@ -37,10 +48,15 @@ pub(crate) fn pick(
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let picked = match kind {
-            PickKind::OpenProject | PickKind::NewProject | PickKind::ImportTarget => {
+            PickKind::OpenProject
+            | PickKind::NewProject
+            | PickKind::ImportTarget
+            | PickKind::NewTarget(_) => {
                 let title = match kind {
                     PickKind::OpenProject => "Open apic project",
                     PickKind::ImportTarget => "Folder for the imported project",
+                    PickKind::NewTarget(NewKind::Request) => "Folder for the new request",
+                    PickKind::NewTarget(NewKind::Template) => "Folder for the new template",
                     PickKind::NewProject | PickKind::ImportPostman => "New apic project",
                 };
                 pollster::block_on(rfd::AsyncFileDialog::new().set_title(title).pick_folder())
