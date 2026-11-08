@@ -5,7 +5,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::features::git::domain::status::{Branches, Status, parse_status};
+use crate::features::git::domain::log::{Commit, LogFilter, parse_log, parse_name_status};
+use crate::features::git::domain::status::{Branches, FileStatus, Status, parse_status};
 
 /// Runs `git -C <root> <args>` and returns stdout bytes.
 ///
@@ -242,6 +243,93 @@ pub(crate) fn fetch_all(root: &Path) -> Result<(), String> {
 /// resolver.
 pub(crate) fn merge(root: &Path, source: &str) -> Result<(), String> {
     run(root, &["merge", "--no-edit", source]).map(|_| ())
+}
+
+/// The `git log` format: hash, parents, author, author date, refs and
+/// subject, NUL-separated. `-z` ends each commit with NUL too.
+const LOG_FORMAT: &str = "%H%x00%P%x00%an%x00%ad%x00%D%x00%s";
+
+/// One page of `rev`'s history under `filter`: at most `limit` commits after
+/// skipping `skip`. `--parents` makes `%P` carry git's rewritten parents
+/// under a path filter, so the graph keeps its lines. `contracts` is the
+/// contracts folder relative to the repo root, used by the Contracts folder
+/// path filter. A hash prefix is not applied here, see `LogFilter::keeps`.
+/// `--topo-order` lists children before parents even with skewed commit
+/// dates, which `lanes` relies on. `grep.patternType=basic` pins the mode
+/// an `--author` without grep text is read in, which `LogFilter::args`
+/// escapes for, over the user's own config.
+pub(crate) fn log(
+    root: &Path,
+    rev: &str,
+    filter: &LogFilter,
+    contracts: &str,
+    skip: usize,
+    limit: usize,
+) -> Result<Vec<Commit>, String> {
+    let mut args = vec![
+        "-c".to_string(),
+        "grep.patternType=basic".to_string(),
+        "log".to_string(),
+        "-z".to_string(),
+        "--parents".to_string(),
+        "--topo-order".to_string(),
+        "--date=format-local:%Y-%m-%d %H:%M".to_string(),
+        format!("--format={LOG_FORMAT}"),
+        format!("--skip={skip}"),
+        format!("--max-count={limit}"),
+    ];
+    args.extend(filter.args());
+    args.push(rev.to_string());
+    args.push("--".to_string());
+    args.extend(filter.path(contracts).map(str::to_string));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    Ok(parse_log(&run(root, &args)?))
+}
+
+/// The files `hash` changed, against its first parent, or against nothing
+/// for a root commit.
+pub(crate) fn commit_files(root: &Path, hash: &str) -> Result<Vec<FileStatus>, String> {
+    let out = run(
+        root,
+        &[
+            "diff-tree",
+            "--no-commit-id",
+            "--name-status",
+            "-r",
+            "--root",
+            "--diff-merges=first-parent",
+            "-z",
+            hash,
+        ],
+    )?;
+    Ok(parse_name_status(&out))
+}
+
+/// The line diff of `path` in `hash`: the same as `git diff <hash>^ <hash>
+/// -- <path>`, and against the empty tree for a root commit.
+pub(crate) fn commit_diff_text(root: &Path, hash: &str, path: &str) -> Result<String, String> {
+    let out = run(
+        root,
+        &[
+            "diff-tree",
+            "-p",
+            "--no-color",
+            "--no-commit-id",
+            "-r",
+            "--root",
+            "--diff-merges=first-parent",
+            hash,
+            "--",
+            path,
+        ],
+    )?;
+    Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// Adds a commit that undoes `hash`. A conflict exits non-zero and leaves
+/// the repository mid-revert for the resolver.
+pub(crate) fn revert(root: &Path, hash: &str) -> Result<(), String> {
+    run(root, &["revert", "--no-edit", hash]).map(|_| ())
 }
 
 #[cfg(test)]
@@ -630,5 +718,347 @@ mod tests {
             "got: {remotes:?}"
         );
         assert_eq!(branches(&clone).unwrap().remotes, remotes);
+    }
+
+    use crate::features::git::domain::log::{PathFilter, Since};
+    use crate::features::git::domain::status::Change;
+
+    /// Subjects of `git log HEAD` under `filter`, newest first.
+    fn subjects(dir: &Path, filter: &LogFilter, contracts: &str) -> Vec<String> {
+        log(dir, "HEAD", filter, contracts, 0, 500)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.subject)
+            .collect()
+    }
+
+    #[test]
+    fn history_log_reads_commits_newest_first() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        commit_file(&dir, "second\n", "second ✓");
+        let commits = log(&dir, "HEAD", &LogFilter::default(), "", 0, 500).unwrap();
+        let got: Vec<&str> = commits.iter().map(|c| c.subject.as_str()).collect();
+        assert_eq!(got, ["second ✓", "initial"]);
+        assert_eq!(commits[0].parents, vec![commits[1].hash.clone()]);
+        assert!(commits[1].parents.is_empty());
+        assert_eq!(commits[0].author, "Test User");
+        assert!(
+            commits[0].refs.iter().any(|r| r.starts_with("HEAD -> ")),
+            "{:?}",
+            commits[0].refs
+        );
+        assert!(commits[1].refs.is_empty());
+    }
+
+    #[test]
+    fn history_log_pages_with_skip_and_limit() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        commit_file(&dir, "second\n", "second");
+        let page = |skip| -> Vec<String> {
+            log(&dir, "HEAD", &LogFilter::default(), "", skip, 1)
+                .unwrap()
+                .into_iter()
+                .map(|c| c.subject)
+                .collect()
+        };
+        assert_eq!(page(0), ["second"]);
+        assert_eq!(page(1), ["initial"]);
+    }
+
+    #[test]
+    fn history_log_grep_follows_regex_and_case() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        commit_file(&dir, "1\n", "Fix a.b");
+        commit_file(&dir, "2\n", "fix axb");
+        let text = |text: &str, regex: bool, match_case: bool| LogFilter {
+            text: text.into(),
+            regex,
+            match_case,
+            ..LogFilter::default()
+        };
+        assert_eq!(subjects(&dir, &text("a.b", false, false), ""), ["Fix a.b"]);
+        assert_eq!(
+            subjects(&dir, &text("a.b", true, false), ""),
+            ["fix axb", "Fix a.b"]
+        );
+        assert_eq!(subjects(&dir, &text("fix", false, true), ""), ["fix axb"]);
+        assert_eq!(
+            subjects(&dir, &text("fix", false, false), ""),
+            ["fix axb", "Fix a.b"]
+        );
+    }
+
+    #[test]
+    fn history_log_filters_by_author_since_path_and_branch() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        fs::write(dir.join("file.txt"), "other\n").unwrap();
+        assert!(
+            run(
+                &dir,
+                &["-c", "user.name=Other Person", "commit", "-am", "by other"]
+            )
+            .is_ok()
+        );
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub").join("a.txt"), "a\n").unwrap();
+        assert!(run(&dir, &["add", "--", "sub"]).is_ok());
+        assert!(commit(&dir, "sub only", false).is_ok());
+
+        let author = LogFilter {
+            author: Some("Other".into()),
+            ..LogFilter::default()
+        };
+        assert_eq!(subjects(&dir, &author, ""), ["by other"]);
+        let day = LogFilter {
+            since: Since::Day,
+            ..LogFilter::default()
+        };
+        assert_eq!(
+            subjects(&dir, &day, ""),
+            ["sub only", "by other", "initial"]
+        );
+        let contracts = LogFilter {
+            path: PathFilter::Contracts,
+            ..LogFilter::default()
+        };
+        assert_eq!(subjects(&dir, &contracts, "sub"), ["sub only"]);
+        let typed = LogFilter {
+            path: PathFilter::Typed("file.txt".into()),
+            ..LogFilter::default()
+        };
+        assert_eq!(subjects(&dir, &typed, ""), ["by other", "initial"]);
+
+        let base = branches(&dir).unwrap().current.unwrap();
+        create_branch(&dir, "feature").unwrap();
+        switch_branch(&dir, "feature").unwrap();
+        commit_file(&dir, "feature\n", "feature work");
+        switch_branch(&dir, &base).unwrap();
+        let feature: Vec<String> = log(&dir, "feature", &LogFilter::default(), "", 0, 500)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.subject)
+            .collect();
+        assert_eq!(feature[0], "feature work");
+    }
+
+    #[test]
+    fn history_log_reads_a_hash_prefix_without_grep() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        commit_file(&dir, "second\n", "second");
+        let all = log(&dir, "HEAD", &LogFilter::default(), "", 0, 500).unwrap();
+        let filter = LogFilter {
+            text: all[1].hash[..7].to_string(),
+            ..LogFilter::default()
+        };
+        let page = log(&dir, "HEAD", &filter, "", 0, 500).unwrap();
+        assert_eq!(
+            page.len(),
+            all.len(),
+            "a hash prefix must not become a --grep"
+        );
+        let kept: Vec<&str> = page
+            .iter()
+            .filter(|c| filter.keeps(c))
+            .map(|c| c.subject.as_str())
+            .collect();
+        assert_eq!(kept, ["initial"]);
+    }
+
+    #[test]
+    fn history_commit_files_lists_a_root_commit() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        let root = log(&dir, "HEAD", &LogFilter::default(), "", 0, 1).unwrap()[0]
+            .hash
+            .clone();
+        assert_eq!(
+            commit_files(&dir, &root).unwrap(),
+            vec![FileStatus {
+                path: "file.txt".into(),
+                index: Change::Added,
+                worktree: Change::Unmodified,
+                conflicted: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn history_commit_diff_text_of_a_root_commit_adds_every_line() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        let root = log(&dir, "HEAD", &LogFilter::default(), "", 0, 1).unwrap()[0]
+            .hash
+            .clone();
+        let diff = commit_diff_text(&dir, &root, "file.txt").unwrap();
+        assert!(diff.contains("+original"), "got: {diff}");
+    }
+
+    #[test]
+    fn history_revert_adds_a_commit_that_undoes_one() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        commit_file(&dir, "second\n", "second");
+        let head = log(&dir, "HEAD", &LogFilter::default(), "", 0, 1).unwrap()[0]
+            .hash
+            .clone();
+        revert(&dir, &head).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("file.txt")).unwrap(),
+            "original\n"
+        );
+        assert!(
+            last_commit_message(&dir)
+                .unwrap()
+                .starts_with("Revert \"second\"")
+        );
+    }
+
+    #[test]
+    fn history_conflicting_revert_fails_and_leaves_the_conflict() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        commit_file(&dir, "a\n", "a");
+        let a = log(&dir, "HEAD", &LogFilter::default(), "", 0, 1).unwrap()[0]
+            .hash
+            .clone();
+        commit_file(&dir, "b\n", "b");
+        assert!(revert(&dir, &a).is_err());
+        assert!(
+            status(&dir, &[])
+                .unwrap()
+                .find("file.txt")
+                .is_some_and(|f| f.conflicted)
+        );
+    }
+
+    #[test]
+    fn history_author_with_regex_characters_matches_its_commits() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        fs::write(dir.join("file.txt"), "bot\n").unwrap();
+        assert!(
+            run(
+                &dir,
+                &[
+                    "-c",
+                    "user.name=dependabot[bot]",
+                    "commit",
+                    "-am",
+                    "bump deps"
+                ]
+            )
+            .is_ok()
+        );
+        for (text, regex) in [
+            ("", false),
+            ("", true),
+            ("bump", false),
+            ("bump", true),
+            ("b.mp", true),
+        ] {
+            let filter = LogFilter {
+                author: Some("dependabot[bot]".into()),
+                text: text.into(),
+                regex,
+                ..LogFilter::default()
+            };
+            assert_eq!(
+                subjects(&dir, &filter, ""),
+                ["bump deps"],
+                "text {text:?}, regex {regex}"
+            );
+        }
+    }
+
+    #[test]
+    fn history_log_lists_children_before_parents_with_skewed_dates() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        let commit_at = |time: u64, args: &[&str]| {
+            let date = format!("@{time} +0000");
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(&dir)
+                .args(args)
+                .env("GIT_AUTHOR_DATE", &date)
+                .env("GIT_COMMITTER_DATE", &date)
+                .env("GIT_MERGE_AUTOEDIT", "no")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{out:?}");
+        };
+        let base = branches(&dir).unwrap().current.unwrap();
+        fs::write(dir.join("file.txt"), "a\n").unwrap();
+        commit_at(1_100_000_000, &["commit", "-am", "A"]);
+        create_branch(&dir, "side").unwrap();
+        switch_branch(&dir, "side").unwrap();
+        fs::write(dir.join("side.txt"), "s\n").unwrap();
+        assert!(run(&dir, &["add", "--", "side.txt"]).is_ok());
+        commit_at(1_050_000_000, &["commit", "-m", "S"]);
+        switch_branch(&dir, &base).unwrap();
+        fs::write(dir.join("file.txt"), "b\n").unwrap();
+        commit_at(1_200_000_000, &["commit", "-am", "B"]);
+        commit_at(1_300_000_000, &["merge", "--no-ff", "-m", "M", "side"]);
+        let got = subjects(&dir, &LogFilter::default(), "");
+        let pos = |s: &str| got.iter().position(|g| g == s).unwrap();
+        assert!(pos("S") < pos("A"), "{got:?}");
+    }
+
+    #[test]
+    fn history_author_ignores_grep_pattern_type_config() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        assert!(run(&dir, &["config", "grep.patternType", "extended"]).is_ok());
+        for (name, subject) in [("a|b", "by a|b"), ("a", "by a")] {
+            fs::write(dir.join("file.txt"), format!("{subject}\n")).unwrap();
+            let user = format!("user.name={name}");
+            assert!(run(&dir, &["-c", &user, "commit", "-am", subject]).is_ok());
+        }
+        let filter = LogFilter {
+            author: Some("a|b".into()),
+            ..LogFilter::default()
+        };
+        assert_eq!(subjects(&dir, &filter, ""), ["by a|b"]);
     }
 }

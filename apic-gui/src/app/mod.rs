@@ -23,7 +23,7 @@ use crate::features::contracts::ui::view::{
     FOCUS_NEW_REQUEST, FOCUS_NEW_TEMPLATE, central_body, env_menu, header_actions, sidebar_body,
     templates_body,
 };
-use crate::features::git::ui::state::{BranchOpKind, GitAction, GitEvent, GitState};
+use crate::features::git::ui::state::{BranchOpKind, GitAction, GitEvent, GitState, LogState};
 use crate::features::git::ui::view;
 use crate::features::project::data::{NewKind, project_root_of};
 use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
@@ -132,6 +132,7 @@ impl App {
             settings_path: Settings::path(),
         };
         let settings = Settings::load();
+        app.git.log.open = settings.git_log_open;
         if let Some(root) = settings.last_project
             && root.is_dir()
         {
@@ -285,10 +286,20 @@ impl App {
                                 ui.close();
                             }
                         });
-                        if self.shell.repo_root.is_some()
-                            && let Some(a) = view::branch_menu(ui, &mut self.git)
-                        {
-                            action = Some(Action::Git(a));
+                        if self.shell.repo_root.is_some() {
+                            if let Some(a) = view::branch_menu(ui, &mut self.git) {
+                                action = Some(Action::Git(a));
+                            }
+                            let clock =
+                                RichText::new(egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE)
+                                    .color(p.on_surface_variant);
+                            if ui
+                                .add(egui::Button::selectable(self.git.log.open, clock))
+                                .on_hover_text("Git log")
+                                .clicked()
+                            {
+                                action = Some(Action::Git(GitAction::ToggleLog));
+                            }
                         }
                         if let Some(apic_dir) = self.project.apic_dir.as_deref()
                             && let Some(a) = env_menu(ui, &mut self.contracts, apic_dir)
@@ -461,6 +472,21 @@ impl App {
                 }
             });
         action
+    }
+
+    /// The git log, docked under the central area while it is open and the
+    /// project is inside a repository.
+    fn log_panel(&mut self, ui: &mut egui::Ui) -> Option<Action> {
+        if !self.git.log.open || self.shell.repo_root.is_none() {
+            return None;
+        }
+        egui::Panel::bottom("git_log")
+            .resizable(true)
+            .default_size(260.0)
+            .min_size(120.0)
+            .show(ui, |ui| view::log_panel(ui, &mut self.git))
+            .inner
+            .map(Action::Git)
     }
 
     /// The central panel frame, plus the action its body returned, applied
@@ -675,10 +701,14 @@ impl App {
             }
         };
         if repo_root != self.shell.repo_root {
-            // Another repository, or none: the branch list belongs to the old
-            // one, and the dropdown only lists branches once on its own.
+            // Another repository, or none: the branch list and the log belong
+            // to the old one, and the dropdown only lists branches once on its own.
             self.git.branches = Default::default();
             self.git.needs_branches = repo_root.is_some();
+            self.git.log = LogState {
+                open: self.git.log.open,
+                ..LogState::default()
+            };
         }
         self.shell.repo_root = repo_root;
         // The Git section header's dirty indicator must be correct before the
@@ -686,6 +716,7 @@ impl App {
         // itself instead of waiting for tab activation.
         if self.shell.repo_root.is_some() {
             self.git.request_refresh();
+            self.git.request_log();
         }
 
         if let Err(err) = self.project.locate() {
@@ -777,9 +808,11 @@ impl App {
                     other => self.apply(other, ctx),
                 }
             }
-            Action::Git(action @ (GitAction::SwitchBranch { .. } | GitAction::ConfirmBranchOp))
-                if self.contracts.has_unsaved_edits() =>
-            {
+            Action::Git(
+                action @ (GitAction::SwitchBranch { .. }
+                | GitAction::ConfirmBranchOp
+                | GitAction::ConfirmRevert),
+            ) if self.contracts.has_unsaved_edits() => {
                 let open = self
                     .contracts
                     .path
@@ -787,6 +820,7 @@ impl App {
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|| "the open contract".to_string());
                 let what = match (&action, &self.git.pending_branch_op) {
+                    (GitAction::ConfirmRevert, _) => "revert",
                     (GitAction::ConfirmBranchOp, Some(op)) if op.kind == BranchOpKind::Pull => {
                         "pull"
                     }
@@ -794,12 +828,21 @@ impl App {
                     _ => "switch branch",
                 };
                 self.git.pending_branch_op = None;
+                self.git.log.pending_revert = None;
                 let msg = format!("cannot {what}, {open} has unsaved edits");
                 self.git.error = msg.clone();
                 self.shell.status = msg;
             }
+            Action::Git(GitAction::ToggleLog) => {
+                self.handle_git(GitAction::ToggleLog, ctx);
+                let open = self.git.log.open;
+                self.update_settings(|s| s.git_log_open = open);
+            }
             Action::Git(action) => {
-                if matches!(action, GitAction::Select { .. }) {
+                if matches!(
+                    action,
+                    GitAction::Select { .. } | GitAction::SelectCommitFile { .. }
+                ) {
                     self.shell.central = CentralView::Git;
                 }
                 self.handle_git(action, ctx);
@@ -824,6 +867,9 @@ impl eframe::App for App {
         self.bottom_bar(ui);
         let side = self.sidebar(ui);
         if let Some(a) = top.or(side) {
+            self.apply(a, &ctx);
+        }
+        if let Some(a) = self.log_panel(ui) {
             self.apply(a, &ctx);
         }
         self.central(ui);
@@ -2026,5 +2072,86 @@ mod tests {
             !all.contains(&"only-in-first".to_string()),
             "stale list: {all:?}"
         );
+    }
+
+    #[test]
+    fn log_app_toggle_opens_the_panel_and_remembers_it() {
+        if !git_available() {
+            return;
+        }
+        let mut app = app_at(project_fixture());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        settle(&mut app, &ctx);
+
+        app.apply(Action::Git(GitAction::ToggleLog), &ctx);
+        assert!(app.git.log.open);
+        settle(&mut app, &ctx);
+        assert!(!app.git.log.commits.is_empty());
+        let settings_path = app
+            .settings_path
+            .clone()
+            .expect("test app has a settings path");
+        assert!(Settings::load_from(&settings_path).git_log_open);
+
+        for preference in crate::ui::theme::BOTH_THEMES {
+            crate::ui::theme::run_in_theme(preference, |ui| {
+                let _ = app.top_bar(ui);
+                let _ = app.log_panel(ui);
+            });
+        }
+
+        app.apply(Action::Git(GitAction::ToggleLog), &ctx);
+        assert!(!Settings::load_from(&settings_path).git_log_open);
+    }
+
+    #[test]
+    fn log_app_clicking_a_commit_file_shows_git_in_the_central_panel() {
+        let mut app = app_at(tempdir());
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::Git(GitAction::SelectCommitFile {
+                path: "contracts/sample.json".to_string(),
+            }),
+            &ctx,
+        );
+        assert_eq!(app.shell.central, CentralView::Git);
+    }
+
+    #[test]
+    fn log_app_revert_is_refused_with_unsaved_edits() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let mut app = app_at(root.clone());
+        let ctx = egui::Context::default();
+        app.reload_project();
+        settle(&mut app, &ctx);
+        let i = app
+            .contracts
+            .entries
+            .iter()
+            .position(|e| e.rel == "sample.json")
+            .expect("sample.json is in the fixture");
+        app.apply(Action::Contracts(ContractsAction::Load(i)), &ctx);
+        app.apply(Action::Contracts(ContractsAction::ToggleEdit), &ctx);
+        app.contracts.model.as_mut().unwrap().name = "dirtied".to_string();
+        let head = git_output(&root, &["rev-parse", "HEAD"]);
+
+        app.git.log.pending_revert = Some(crate::features::git::domain::log::Commit {
+            hash: head.trim().to_string(),
+            parents: vec![],
+            author: "Test User".into(),
+            date: String::new(),
+            refs: vec![],
+            subject: "initial".into(),
+        });
+        app.apply(Action::Git(GitAction::ConfirmRevert), &ctx);
+        settle(&mut app, &ctx);
+
+        assert_eq!(git_output(&root, &["rev-parse", "HEAD"]), head);
+        assert!(app.git.error.contains("revert"), "{}", app.git.error);
+        assert!(app.git.log.pending_revert.is_none());
     }
 }

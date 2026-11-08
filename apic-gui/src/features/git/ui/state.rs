@@ -8,6 +8,7 @@ use crate::features::git::data::jobs::{
     self, DiffData, DiffRequest, JobResult, MutateKind, Mutation, RepoPaths,
 };
 use crate::features::git::domain::conflict::{self, Choice, ConflictFile, Segment};
+use crate::features::git::domain::log::{Commit, LogFilter, Row, lanes};
 use crate::features::git::domain::status::{Branches, FileStatus, Status};
 
 /// One completed diff fetch: the raw line diff plus each side's file content,
@@ -110,6 +111,31 @@ pub(crate) enum GitAction {
     /// stage it. The text is already rendered, this action carries no
     /// markers for the job to parse.
     ResolveConflict { path: String, text: String },
+
+    /// Open or close the log panel. Opening reads the log.
+    ToggleLog,
+
+    /// Reread the log from the start with this filter.
+    SetLogFilter(LogFilter),
+
+    /// Reread the log from the start with the same filter.
+    RefreshLog,
+
+    /// Append the next page of commits.
+    LoadMoreLog,
+
+    /// List the changed files of this commit.
+    SelectCommit { hash: String },
+
+    /// Show the selected commit's diff of this repo-relative path.
+    SelectCommitFile { path: String },
+
+    /// Open the revert confirmation for this commit, unless `revert_block`
+    /// refuses it.
+    RequestRevert { hash: String },
+
+    /// The pending revert was confirmed, run it.
+    ConfirmRevert,
 }
 
 /// Which branch operation the pull/merge popup runs.
@@ -128,6 +154,78 @@ pub(crate) struct BranchOp {
     pub(crate) kind: BranchOpKind,
     pub(crate) target: String,
     pub(crate) source: String,
+}
+
+/// Everything the log panel remembers.
+#[derive(Default)]
+pub(crate) struct LogState {
+    /// Whether the panel is shown. Persisted by the app shell.
+    pub(crate) open: bool,
+
+    /// The filter the loaded commits were read with, or are being read with.
+    pub(crate) filter: LogFilter,
+
+    /// The search box, applied to `filter.text` once typing pauses.
+    pub(crate) draft: String,
+
+    /// The `ui.input` time of the last keystroke in the search box.
+    pub(crate) edited_at: f64,
+
+    /// The Paths menu's text field.
+    pub(crate) typed_path: String,
+
+    /// The loaded commits, newest first, hash prefix applied.
+    pub(crate) commits: Vec<Commit>,
+
+    /// `lanes(&commits)`, rebuilt whenever `commits` changes.
+    pub(crate) rows: Vec<Row>,
+
+    /// How many commits git returned so far, before the hash prefix, which
+    /// is where Load more skips to.
+    pub(crate) fetched: usize,
+
+    /// The last page was full, so Load more is offered.
+    pub(crate) more: bool,
+
+    /// A read has finished, so an empty list means nothing matched.
+    pub(crate) loaded: bool,
+
+    /// The last log error, shown above the rows it leaves in place.
+    pub(crate) error: String,
+
+    /// The hash of the commit whose files are listed.
+    pub(crate) selected: Option<String>,
+
+    /// The selected commit's changed files, `None` while they load.
+    pub(crate) files: Option<Vec<FileStatus>>,
+
+    /// The commit file whose diff the central panel shows.
+    pub(crate) selected_file: Option<String>,
+
+    /// The diff for `(selected, selected_file)`, keyed the same way.
+    pub(crate) diff: Option<((String, String), DiffData)>,
+
+    /// The commit a revert would undo, while its confirmation is open.
+    pub(crate) pending_revert: Option<Commit>,
+
+    /// The branch checked out when the revert was asked for, which must
+    /// still be checked out when it is confirmed.
+    pub(crate) revert_branch: Option<String>,
+
+    /// A read from the start is owed.
+    pub(crate) needs_load: bool,
+
+    /// A read from the start is running, so `commits` may be stale.
+    pub(crate) reloading: bool,
+
+    /// A Load more is owed.
+    pub(crate) needs_more: bool,
+
+    /// The selected commit's file list is owed.
+    pub(crate) needs_files: bool,
+
+    /// The selected commit file's diff is owed.
+    pub(crate) needs_diff: bool,
 }
 
 /// Everything the git feature owns. `App` holds one of these; no other
@@ -209,6 +307,10 @@ pub(crate) struct GitState {
     /// once the mutation's own job has finished.
     pub(crate) needs_branches: bool,
 
+    /// A diff of the selected Changes file is owed, asked for while another
+    /// job held the slot.
+    pub(crate) needs_diff: bool,
+
     /// Whether the next commit amends the last one.
     pub(crate) amend: bool,
 
@@ -237,6 +339,9 @@ pub(crate) struct GitState {
     pub(crate) job_repo: Option<std::path::PathBuf>,
     /// Repository `status` was read from.
     pub(crate) status_repo: Option<std::path::PathBuf>,
+
+    /// The log panel.
+    pub(crate) log: LogState,
 }
 
 /// Something a finished git job asks the app shell to do, because it touches
@@ -267,6 +372,30 @@ impl GitState {
     /// here means a refresh requested while another job runs is not dropped.
     pub(crate) fn request_refresh(&mut self) {
         self.needs_refresh = true;
+    }
+
+    /// Queues a log read from the start, when the panel is open.
+    pub(crate) fn request_log(&mut self) {
+        if self.log.open {
+            self.log.needs_load = true;
+        }
+    }
+
+    /// Why `commit` cannot be reverted from the log, or `None` when it can.
+    pub(crate) fn revert_block(&self, commit: &Commit) -> Option<&'static str> {
+        if commit.is_merge() {
+            Some("Reverting a merge commit is not supported")
+        } else if self
+            .log
+            .filter
+            .branch
+            .as_ref()
+            .is_some_and(|b| Some(b) != self.branches.current.as_ref())
+        {
+            Some("Revert works on the current branch only")
+        } else {
+            None
+        }
     }
 
     /// Whether `file` is ticked for the next commit: the user's choice when
@@ -344,6 +473,7 @@ impl GitState {
         match action {
             GitAction::Refresh => self.start_status(paths, ctx),
             GitAction::Select { path, staged } => {
+                self.log.selected_file = None;
                 self.selected = Some((path.clone(), staged));
                 let cached = matches!(&self.diff, Some((key, _)) if *key == (path.clone(), staged));
                 if !cached {
@@ -448,12 +578,66 @@ impl GitState {
             GitAction::ResolveConflict { path, text } => {
                 self.start_mutation(paths, ctx, Mutation::Resolve { path, text })
             }
+            GitAction::ToggleLog => {
+                self.log.open = !self.log.open;
+                self.log.needs_load = self.log.open;
+            }
+            GitAction::SetLogFilter(filter) => {
+                self.log.filter = filter;
+                self.log.needs_load = true;
+            }
+            GitAction::RefreshLog => self.log.needs_load = true,
+            GitAction::LoadMoreLog => self.log.needs_more = true,
+            GitAction::SelectCommit { hash } => {
+                self.log.selected = Some(hash);
+                self.log.files = None;
+                self.log.selected_file = None;
+                self.log.needs_files = true;
+            }
+            GitAction::SelectCommitFile { path } => {
+                self.selected = None;
+                self.log.selected_file = Some(path);
+                self.log.needs_diff = true;
+            }
+            GitAction::RequestRevert { hash } => {
+                if self.log.needs_load || self.log.reloading {
+                    self.log.error = "The log is reloading, try the revert again".into();
+                } else if let Some(commit) = self.log.commits.iter().find(|c| c.hash == hash)
+                    && self.revert_block(commit).is_none()
+                {
+                    self.log.pending_revert = Some(commit.clone());
+                    self.log.revert_branch = self.branches.current.clone();
+                }
+            }
+            // While a job is pending the popup stays open with Revert
+            // disabled, so the confirmation is neither lost nor run later.
+            GitAction::ConfirmRevert => {
+                if self.pending.is_some() {
+                    return;
+                }
+                let Some(commit) = self.log.pending_revert.take() else {
+                    return;
+                };
+                if self.log.needs_load
+                    || self.log.reloading
+                    || !self.log.commits.iter().any(|c| c.hash == commit.hash)
+                {
+                    self.log.error = "The log changed, so the revert was not run".into();
+                } else if self.branches.current != self.log.revert_branch {
+                    self.log.error = "The branch changed, so the revert was not run".into();
+                } else if let Some(reason) = self.revert_block(&commit) {
+                    self.log.error = reason.into();
+                } else {
+                    self.start_mutation(paths, ctx, Mutation::Revert { hash: commit.hash });
+                }
+            }
         }
     }
 
     /// Collects the in-flight job's result if it has finished, then starts
-    /// queued work when nothing is pending: a branch listing first, otherwise
-    /// a status refresh. Called every frame. Returns what the app shell must
+    /// queued work when nothing is pending: a branch listing first, then an
+    /// amend read, a status refresh, a Changes diff, and
+    /// last the log's work. Called every frame. Returns what the app shell must
     /// apply, in order.
     pub(crate) fn poll(&mut self, paths: Option<&RepoPaths>, ctx: &egui::Context) -> Vec<GitEvent> {
         let mut events = Vec::new();
@@ -468,6 +652,7 @@ impl GitState {
                 // forever: clear `pending` and surface an error instead.
                 Err(TryRecvError::Disconnected) => {
                     self.pending = None;
+                    self.log.reloading = false;
                     self.error = "git worker disconnected".into();
                 }
             }
@@ -482,6 +667,13 @@ impl GitState {
             } else if self.needs_refresh {
                 self.needs_refresh = false;
                 self.start_status(paths, ctx);
+            } else if self.needs_diff {
+                self.needs_diff = false;
+                if let Some((path, staged)) = self.selected.clone() {
+                    self.start_diff(paths, ctx, path, staged);
+                }
+            } else {
+                self.start_log_work(paths, ctx);
             }
         }
         events
@@ -519,6 +711,37 @@ impl GitState {
             | JobResult::Branches(Err(e)) => {
                 self.error = e;
             }
+            JobResult::Log(append, Ok(page)) => {
+                self.log.reloading &= append;
+                if !append {
+                    self.log.commits.clear();
+                    self.log.fetched = 0;
+                }
+                self.log.fetched += page.len();
+                self.log.more = page.len() == jobs::LOG_PAGE;
+                let filter = &self.log.filter;
+                self.log
+                    .commits
+                    .extend(page.into_iter().filter(|c| filter.keeps(c)));
+                self.log.rows = lanes(&self.log.commits);
+                self.log.loaded = true;
+                self.log.error.clear();
+            }
+            JobResult::Log(append, Err(e)) => {
+                self.log.reloading &= append;
+                self.log.error = e;
+            }
+            JobResult::CommitFiles(hash, Ok(files)) => {
+                if self.log.selected.as_ref() == Some(&hash) {
+                    self.log.files = Some(files);
+                }
+            }
+            JobResult::CommitFiles(_, Err(e)) => {
+                self.log.files = Some(Vec::new());
+                self.log.error = e;
+            }
+            JobResult::CommitDiff(key, Ok(data)) => self.log.diff = Some((key, data)),
+            JobResult::CommitDiff(_, Err(e)) => self.log.error = e,
             JobResult::Mutate(kind, message, Ok(status)) => {
                 self.set_job_status(status);
                 self.error.clear();
@@ -535,10 +758,17 @@ impl GitState {
                         self.amend = false;
                         self.message_before_amend = None;
                         self.amend_pushed_to = None;
+                        self.request_log();
                     }
                     MutateKind::SwitchBranch | MutateKind::Merge => {
                         self.needs_branches = true;
+                        self.log.filter.branch = None;
+                        self.request_log();
                         events.push(GitEvent::BranchSwitched);
+                    }
+                    MutateKind::Revert => {
+                        self.request_log();
+                        events.push(GitEvent::WorkingTreeChanged);
                     }
                     MutateKind::CreateBranch | MutateKind::DeleteBranch => {
                         self.needs_branches = true;
@@ -552,13 +782,24 @@ impl GitState {
             JobResult::Mutate(kind, _, Err(e)) => {
                 self.error = e.clone();
                 events.push(GitEvent::Status(e));
-                if matches!(kind, MutateKind::Merge) {
+                match kind {
                     // A failed merge may already have switched branch or
                     // left conflicts behind: reread both so the resolver
                     // shows them, and reconcile the open contract.
-                    self.needs_branches = true;
-                    self.needs_refresh = true;
-                    events.push(GitEvent::BranchSwitched);
+                    MutateKind::Merge => {
+                        self.needs_branches = true;
+                        self.needs_refresh = true;
+                        self.log.filter.branch = None;
+                        self.request_log();
+                        events.push(GitEvent::BranchSwitched);
+                    }
+                    // A conflicting revert writes markers into the working
+                    // tree: the status reread raises the conflict notice.
+                    MutateKind::Revert => {
+                        self.needs_refresh = true;
+                        events.push(GitEvent::WorkingTreeChanged);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -577,7 +818,8 @@ impl GitState {
         self.pending = Some(jobs::status(paths.clone(), notifier(ctx)));
     }
 
-    /// Starts the diff fetch for `(path, staged)`, under the same one-job rule.
+    /// Starts the diff fetch for `(path, staged)`. While a job is pending it
+    /// marks the diff owed, and `poll` fetches the selected file's later.
     fn start_diff(
         &mut self,
         paths: Option<&RepoPaths>,
@@ -586,6 +828,7 @@ impl GitState {
         staged: bool,
     ) {
         if self.pending.is_some() {
+            self.needs_diff = true;
             return;
         }
         let Some(paths) = paths else {
@@ -601,7 +844,9 @@ impl GitState {
         self.pending = Some(jobs::diff(request, notifier(ctx)));
     }
 
-    /// Starts `mutation`, under the same one-job rule.
+    /// Starts `mutation`, under the same one-job rule. A mutation asked for
+    /// while a job is pending is dropped, never run later against whatever
+    /// repo or branch is current by then.
     fn start_mutation(
         &mut self,
         paths: Option<&RepoPaths>,
@@ -655,6 +900,48 @@ impl GitState {
             return;
         };
         self.pending = Some(jobs::branches(paths.repo_root.clone(), notifier(ctx)));
+    }
+
+    /// Starts the first owed log job, under the one-job rule: a read from
+    /// the start, then Load more, then the selected commit's files, then
+    /// its file diff.
+    fn start_log_work(&mut self, paths: Option<&RepoPaths>, ctx: &egui::Context) {
+        if self.pending.is_some() {
+            return;
+        }
+        let Some(paths) = paths else {
+            return;
+        };
+        let log = &mut self.log;
+        let job = if log.needs_load || log.needs_more {
+            let append = !log.needs_load;
+            log.needs_load = false;
+            log.needs_more = false;
+            log.reloading = !append;
+            let skip = if append { log.fetched } else { 0 };
+            jobs::log(
+                paths.clone(),
+                log.filter.clone(),
+                skip,
+                append,
+                notifier(ctx),
+            )
+        } else if log.needs_files {
+            log.needs_files = false;
+            let Some(hash) = log.selected.clone() else {
+                return;
+            };
+            jobs::commit_files(paths.repo_root.clone(), hash, notifier(ctx))
+        } else if log.needs_diff {
+            log.needs_diff = false;
+            let (Some(hash), Some(path)) = (log.selected.clone(), log.selected_file.clone()) else {
+                return;
+            };
+            jobs::commit_diff(paths.repo_root.clone(), hash, path, notifier(ctx))
+        } else {
+            return;
+        };
+        self.pending = Some(job);
     }
 }
 
@@ -1507,5 +1794,426 @@ mod tests {
         assert!(git.needs_branches && git.needs_refresh);
         assert_eq!(git.error, "conflict");
         assert!(events.contains(&GitEvent::BranchSwitched));
+    }
+
+    /// A git state on `root` with the log opened and read.
+    fn open_log(root: &std::path::Path) -> (GitState, RepoPaths, egui::Context) {
+        let (mut git, paths) = git_at(root);
+        let ctx = egui::Context::default();
+        git.handle(GitAction::ToggleLog, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        (git, paths, ctx)
+    }
+
+    fn subjects(git: &GitState) -> Vec<&str> {
+        git.log.commits.iter().map(|c| c.subject.as_str()).collect()
+    }
+
+    fn log_commit(hash: &str, parents: &[&str]) -> Commit {
+        Commit {
+            hash: hash.to_string(),
+            parents: parents.iter().map(|p| p.to_string()).collect(),
+            author: "Ann".into(),
+            date: String::new(),
+            refs: Vec::new(),
+            subject: hash.to_string(),
+        }
+    }
+
+    #[test]
+    fn log_state_toggle_opens_reads_and_closes() {
+        if !git_available() {
+            return;
+        }
+        let (mut git, paths, ctx) = open_log(&project_fixture());
+        assert!(git.log.open);
+        assert!(git.log.loaded);
+        assert_eq!(subjects(&git), ["initial"]);
+        git.handle(GitAction::ToggleLog, Some(&paths), &ctx);
+        assert!(!git.log.open);
+        assert!(!git.log.needs_load);
+    }
+
+    #[test]
+    fn log_state_filter_change_rereads_from_the_start() {
+        if !git_available() {
+            return;
+        }
+        let (mut git, paths, ctx) = open_log(&project_fixture());
+        let second = LogFilter {
+            branch: Some("apic-second".into()),
+            ..LogFilter::default()
+        };
+        git.handle(GitAction::SetLogFilter(second), Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(subjects(&git), ["second branch contracts", "initial"]);
+
+        let nothing = LogFilter {
+            text: "no commit says this".into(),
+            ..LogFilter::default()
+        };
+        git.handle(GitAction::SetLogFilter(nothing), Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert!(git.log.commits.is_empty());
+        assert!(git.log.loaded);
+        assert!(git.log.error.is_empty(), "{}", git.log.error);
+    }
+
+    #[test]
+    fn log_state_load_more_appends_the_next_page() {
+        if !git_available() {
+            return;
+        }
+        let (mut git, paths, ctx) = open_log(&project_fixture());
+        let second = LogFilter {
+            branch: Some("apic-second".into()),
+            ..LogFilter::default()
+        };
+        git.handle(GitAction::SetLogFilter(second), Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        git.log.commits.truncate(1);
+        git.log.fetched = 1;
+
+        git.handle(GitAction::LoadMoreLog, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+
+        assert_eq!(subjects(&git), ["second branch contracts", "initial"]);
+        assert_eq!(git.log.rows.len(), git.log.commits.len());
+        assert!(!git.log.more);
+    }
+
+    #[test]
+    fn log_state_a_failed_read_keeps_the_rows() {
+        let mut git = GitState::default();
+        git.log.commits = vec![log_commit("a", &[])];
+        let mut events = Vec::new();
+        git.apply_result(
+            JobResult::Log(false, Err("bad revision".into())),
+            &mut events,
+        );
+        assert_eq!(git.log.commits.len(), 1);
+        assert_eq!(git.log.error, "bad revision");
+    }
+
+    #[test]
+    fn log_state_select_commit_then_file_reads_the_commit_diff() {
+        if !git_available() {
+            return;
+        }
+        let (mut git, paths, ctx) = open_log(&project_fixture());
+        let hash = git.log.commits[0].hash.clone();
+        git.handle(
+            GitAction::SelectCommit { hash: hash.clone() },
+            Some(&paths),
+            &ctx,
+        );
+        settle_git(&mut git, &paths, &ctx);
+        let files: Vec<&str> = git
+            .log
+            .files
+            .as_ref()
+            .expect("the files load")
+            .iter()
+            .map(|f| f.path.as_str())
+            .collect();
+        assert!(files.contains(&"contracts/sample.json"), "{files:?}");
+
+        git.selected = Some(("contracts/sample.json".into(), false));
+        git.handle(
+            GitAction::SelectCommitFile {
+                path: "contracts/sample.json".into(),
+            },
+            Some(&paths),
+            &ctx,
+        );
+        settle_git(&mut git, &paths, &ctx);
+        let ((key_hash, key_path), data) = git.log.diff.as_ref().expect("the diff loads");
+        assert_eq!(key_hash, &hash);
+        assert_eq!(key_path, "contracts/sample.json");
+        assert!(data.old_blob.is_none(), "the root commit has no old side");
+        assert!(data.new_blob.is_some());
+        assert!(!data.rows.is_empty());
+        assert!(
+            git.selected.is_none(),
+            "a commit file replaces the working-tree selection"
+        );
+    }
+
+    #[test]
+    fn log_state_confirm_revert_adds_a_revert_commit_on_top() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+        git_output(&root, &["commit", "-am", "change"]);
+        let (mut git, paths, ctx) = open_log(&root);
+        let hash = git.log.commits[0].hash.clone();
+        git.handle(GitAction::RequestRevert { hash }, Some(&paths), &ctx);
+        assert!(git.log.pending_revert.is_some());
+        git.handle(GitAction::ConfirmRevert, Some(&paths), &ctx);
+        let events = settle_git(&mut git, &paths, &ctx);
+        assert_eq!(
+            git_output(&root, &["log", "-1", "--format=%s"]).trim(),
+            "Revert \"change\""
+        );
+        assert_eq!(subjects(&git)[0], "Revert \"change\"");
+        assert!(events.contains(&GitEvent::WorkingTreeChanged), "{events:?}");
+    }
+
+    #[test]
+    fn log_state_conflicting_revert_sets_the_conflict_notice() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        let path = root.join("contracts").join("sample.json");
+        let named = |prefix: &str| {
+            apic_core::template::DEFAULT.replace("\"name\": \"", &format!("\"name\": \"{prefix}"))
+        };
+        std::fs::write(&path, named("a-")).unwrap();
+        git_output(&root, &["commit", "-am", "a"]);
+        std::fs::write(&path, named("b-")).unwrap();
+        git_output(&root, &["commit", "-am", "b"]);
+        let (mut git, paths, ctx) = open_log(&root);
+        let a = git
+            .log
+            .commits
+            .iter()
+            .find(|c| c.subject == "a")
+            .expect("commit a is listed")
+            .hash
+            .clone();
+        git.handle(GitAction::RequestRevert { hash: a }, Some(&paths), &ctx);
+        git.handle(GitAction::ConfirmRevert, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(
+            git.conflict_notice,
+            Some(vec!["contracts/sample.json".to_string()])
+        );
+    }
+
+    #[test]
+    fn log_state_revert_is_refused_for_a_merge_and_another_branch() {
+        let ctx = egui::Context::default();
+        let mut git = GitState::default();
+        git.log.commits = vec![log_commit("m", &["a", "b"]), log_commit("p", &["a"])];
+        git.handle(GitAction::RequestRevert { hash: "m".into() }, None, &ctx);
+        assert!(
+            git.log.pending_revert.is_none(),
+            "a merge commit is refused"
+        );
+
+        git.branches.current = Some("main".into());
+        git.log.filter.branch = Some("other".into());
+        git.handle(GitAction::RequestRevert { hash: "p".into() }, None, &ctx);
+        assert!(
+            git.log.pending_revert.is_none(),
+            "another branch is refused"
+        );
+
+        git.log.filter.branch = Some("main".into());
+        git.handle(GitAction::RequestRevert { hash: "p".into() }, None, &ctx);
+        assert_eq!(
+            git.log.pending_revert.map(|c| c.hash),
+            Some("p".to_string())
+        );
+    }
+
+    #[test]
+    fn log_state_a_commit_reloads_the_log() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+        let (mut git, paths, ctx) = open_log(&root);
+        git.handle(GitAction::Refresh, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        git.handle(
+            GitAction::SetTicked {
+                paths: vec!["contracts/sample.json".to_string()],
+                ticked: true,
+            },
+            Some(&paths),
+            &ctx,
+        );
+        git.commit_message = "log me".to_string();
+        git.handle(GitAction::Commit, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(subjects(&git)[0], "log me");
+    }
+
+    #[test]
+    fn log_state_a_branch_switch_resets_the_branch_filter() {
+        if !git_available() {
+            return;
+        }
+        let (mut git, paths, ctx) = open_log(&project_fixture());
+        let second = LogFilter {
+            branch: Some("apic-second".into()),
+            ..LogFilter::default()
+        };
+        git.handle(GitAction::SetLogFilter(second), Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        git.handle(
+            GitAction::SwitchBranch {
+                name: "apic-second".into(),
+            },
+            Some(&paths),
+            &ctx,
+        );
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(git.log.filter.branch, None);
+        assert_eq!(subjects(&git)[0], "second branch contracts");
+    }
+
+    #[test]
+    fn log_state_revert_confirm_waits_while_a_log_read_runs() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+        git_output(&root, &["commit", "-am", "change"]);
+        let (mut git, paths, ctx) = open_log(&root);
+        let hash = git.log.commits[0].hash.clone();
+        git.handle(GitAction::RequestRevert { hash }, Some(&paths), &ctx);
+        git.handle(GitAction::RefreshLog, Some(&paths), &ctx);
+        git.poll(Some(&paths), &ctx);
+        assert!(git.pending.is_some(), "the log read holds the slot");
+        git.handle(GitAction::ConfirmRevert, Some(&paths), &ctx);
+        assert!(git.log.pending_revert.is_some(), "the popup stays open");
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(
+            git_output(&root, &["log", "-1", "--format=%s"]).trim(),
+            "change"
+        );
+        git.handle(GitAction::ConfirmRevert, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(
+            git_output(&root, &["log", "-1", "--format=%s"]).trim(),
+            "Revert \"change\""
+        );
+    }
+
+    #[test]
+    fn log_state_revert_rechecks_the_branch_at_confirm() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+        git_output(&root, &["commit", "-am", "change"]);
+        let (mut git, paths, ctx) = open_log(&root);
+        git.handle(GitAction::RefreshBranches, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        let hash = git.log.commits[0].hash.clone();
+        git.handle(GitAction::RequestRevert { hash }, Some(&paths), &ctx);
+        assert_eq!(git.log.revert_branch.as_deref(), Some("apic-test"));
+        git.handle(
+            GitAction::SwitchBranch {
+                name: "apic-second".into(),
+            },
+            Some(&paths),
+            &ctx,
+        );
+        settle_git(&mut git, &paths, &ctx);
+        let head = git_output(&root, &["rev-parse", "HEAD"]);
+        git.handle(GitAction::ConfirmRevert, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(git_output(&root, &["rev-parse", "HEAD"]), head);
+        assert!(git.log.pending_revert.is_none());
+        assert!(!git.log.error.is_empty(), "the refusal is explained");
+    }
+
+    #[test]
+    fn log_state_revert_of_a_stale_row_after_a_switch_is_refused() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+        git_output(&root, &["commit", "-am", "change"]);
+        let (mut git, paths, ctx) = open_log(&root);
+        git.handle(
+            GitAction::SwitchBranch {
+                name: "apic-second".into(),
+            },
+            Some(&paths),
+            &ctx,
+        );
+        for _ in 0..200 {
+            git.poll(Some(&paths), &ctx);
+            if git.branches.current.as_deref() == Some("apic-second") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(git.branches.current.as_deref(), Some("apic-second"));
+        assert!(git.pending.is_some(), "the log reload is still running");
+        let hash = git.log.commits.iter().find(|c| c.subject == "change");
+        let hash = hash.expect("the stale row is still shown").hash.clone();
+        git.handle(GitAction::RequestRevert { hash }, Some(&paths), &ctx);
+        // The reload landing clears `log.error`, so the refusal is checked
+        // before settling.
+        assert!(!git.log.error.is_empty(), "the refusal is explained");
+        settle_git(&mut git, &paths, &ctx);
+        let head = git_output(&root, &["rev-parse", "HEAD"]);
+        if git.log.pending_revert.is_some() {
+            git.handle(GitAction::ConfirmRevert, Some(&paths), &ctx);
+        }
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(git_output(&root, &["rev-parse", "HEAD"]), head);
+    }
+
+    #[test]
+    fn log_state_a_mutation_requested_during_a_job_never_runs_later() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+        let (mut git, paths, ctx) = open_log(&root);
+        git.handle(GitAction::RefreshLog, Some(&paths), &ctx);
+        git.poll(Some(&paths), &ctx);
+        assert!(git.pending.is_some(), "the log read holds the slot");
+        git.handle(
+            GitAction::RequestDiscard {
+                path: "contracts/sample.json".into(),
+            },
+            Some(&paths),
+            &ctx,
+        );
+        git.handle(GitAction::ConfirmDiscard, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert!(
+            git_output(&root, &["status", "--porcelain"]).contains("contracts/sample.json"),
+            "the discard was dropped, not run later"
+        );
+    }
+
+    #[test]
+    fn log_state_select_during_a_log_read_still_loads_the_diff() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+        let (mut git, paths, ctx) = open_log(&root);
+        git.handle(GitAction::RefreshLog, Some(&paths), &ctx);
+        git.poll(Some(&paths), &ctx);
+        assert!(git.pending.is_some(), "the log read holds the slot");
+        git.handle(
+            GitAction::Select {
+                path: "contracts/sample.json".into(),
+                staged: false,
+            },
+            Some(&paths),
+            &ctx,
+        );
+        settle_git(&mut git, &paths, &ctx);
+        let (key, _) = git.diff.as_ref().expect("the diff loads");
+        assert_eq!(key, &("contracts/sample.json".to_string(), false));
     }
 }

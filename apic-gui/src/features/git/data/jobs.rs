@@ -10,7 +10,8 @@ use std::sync::mpsc::{self, Receiver};
 
 use crate::features::git::data::cli;
 use crate::features::git::domain::diff::{DiffRow, parse_unified};
-use crate::features::git::domain::status::{Branches, Status};
+use crate::features::git::domain::log::{Commit, LogFilter, short};
+use crate::features::git::domain::status::{Branches, FileStatus, Status};
 
 /// fetched only for a `.json` path since that is the only shape `diff::parse`
 /// can turn into a semantic comparison.
@@ -46,6 +47,7 @@ pub(crate) enum MutateKind {
     DeleteBranch,
     Resolve,
     Merge,
+    Revert,
 }
 
 /// The result of a completed background git job, sent back over `pending`.
@@ -70,6 +72,17 @@ pub(crate) enum JobResult {
 
     /// What amending would rewrite, read when Amend is ticked.
     Amend(Result<AmendInfo, String>),
+
+    /// One page of `git log`. Appended to the loaded commits when the bool
+    /// is set, replacing them otherwise.
+    Log(bool, Result<Vec<Commit>, String>),
+
+    /// One commit's changed files, keyed by its hash so a reply for a commit
+    /// the user has since left is dropped.
+    CommitFiles(String, Result<Vec<FileStatus>, String>),
+
+    /// One file's diff in one commit, keyed by `(hash, path)`.
+    CommitDiff((String, String), Result<DiffData, String>),
 }
 
 /// Builds one `DiffData`: the line diff plus, for a `.json` path or a
@@ -119,6 +132,30 @@ pub(crate) fn diff_job(
     Ok(DiffData {
         raw,
         rows,
+        old_blob,
+        new_blob,
+    })
+}
+
+/// How many commits one log read lists, and Load more appends.
+pub(crate) const LOG_PAGE: usize = 500;
+
+/// Builds the `DiffData` for `path` in commit `hash`: its line diff against
+/// the first parent, plus for a `.json` path the blobs at `<hash>^` and
+/// `<hash>`. A root commit has no `<hash>^`, which `cli::blob` reads as `None`.
+pub(crate) fn commit_diff_job(root: &Path, hash: &str, path: &str) -> Result<DiffData, String> {
+    let raw = cli::commit_diff_text(root, hash, path)?;
+    let (old_blob, new_blob) = if path.ends_with(".json") {
+        (
+            cli::blob(root, &format!("{hash}^"), path)?,
+            cli::blob(root, hash, path)?,
+        )
+    } else {
+        (None, None)
+    };
+    Ok(DiffData {
+        rows: parse_unified(&raw),
+        raw,
         old_blob,
         new_blob,
     })
@@ -249,6 +286,12 @@ pub(crate) enum Mutation {
         path: String,
         text: String,
     },
+
+    /// Adds a commit that undoes `hash`, after the revert confirmation. A
+    /// conflict leaves the repository mid-revert for the resolver.
+    Revert {
+        hash: String,
+    },
 }
 
 impl Mutation {
@@ -263,6 +306,7 @@ impl Mutation {
             Mutation::DeleteBranch { .. } => MutateKind::DeleteBranch,
             Mutation::Resolve { .. } => MutateKind::Resolve,
             Mutation::Merge { .. } => MutateKind::Merge,
+            Mutation::Revert { .. } => MutateKind::Revert,
         }
     }
 
@@ -277,6 +321,7 @@ impl Mutation {
             Mutation::CreateBranch { name } => format!("created branch {name}"),
             Mutation::DeleteBranch { name } => format!("deleted branch {name}"),
             Mutation::Resolve { path, .. } => format!("resolved {path}"),
+            Mutation::Revert { hash } => format!("reverted {}", short(hash)),
             Mutation::Merge {
                 target,
                 source,
@@ -332,6 +377,7 @@ impl Mutation {
                 std::fs::write(root.join(path), text).map_err(|e| e.to_string())?;
                 cli::stage(root, path)
             }
+            Mutation::Revert { hash } => cli::revert(root, hash),
         }
     }
 }
@@ -434,6 +480,62 @@ pub(crate) fn branches(
 ) -> Receiver<JobResult> {
     spawn(
         move || JobResult::Branches(cli::branches(&repo_root)),
+        notify,
+    )
+}
+
+/// Starts one page of `git log` for `filter`, skipping `skip` commits.
+/// `append` travels back with the result.
+pub(crate) fn log(
+    paths: RepoPaths,
+    filter: LogFilter,
+    skip: usize,
+    append: bool,
+    notify: impl Fn() + Send + 'static,
+) -> Receiver<JobResult> {
+    spawn(
+        move || {
+            let contracts = scopes(&paths.root, None, &paths.repo_root)
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            let rev = filter.branch.clone().unwrap_or_else(|| "HEAD".to_string());
+            JobResult::Log(
+                append,
+                cli::log(&paths.repo_root, &rev, &filter, &contracts, skip, LOG_PAGE),
+            )
+        },
+        notify,
+    )
+}
+
+/// Starts listing the files commit `hash` changed.
+pub(crate) fn commit_files(
+    repo_root: PathBuf,
+    hash: String,
+    notify: impl Fn() + Send + 'static,
+) -> Receiver<JobResult> {
+    spawn(
+        move || {
+            let result = cli::commit_files(&repo_root, &hash);
+            JobResult::CommitFiles(hash, result)
+        },
+        notify,
+    )
+}
+
+/// Starts the diff of `path` in commit `hash`.
+pub(crate) fn commit_diff(
+    repo_root: PathBuf,
+    hash: String,
+    path: String,
+    notify: impl Fn() + Send + 'static,
+) -> Receiver<JobResult> {
+    spawn(
+        move || {
+            let result = commit_diff_job(&repo_root, &hash, &path);
+            JobResult::CommitDiff((hash, path), result)
+        },
         notify,
     )
 }

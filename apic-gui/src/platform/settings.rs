@@ -25,6 +25,9 @@ pub struct Settings {
     /// with the most recent last. The name is untrusted: whoever reads it
     /// keeps it only when the project still lists that environment.
     pub env: Vec<(PathBuf, String)>,
+
+    /// Whether the git log panel was open, restored on the next launch.
+    pub git_log_open: bool,
 }
 
 /// How many projects keep a remembered last file, and how many keep a remembered environment. The oldest is dropped past this.
@@ -150,6 +153,7 @@ impl Settings {
             theme: parse_theme(&top),
             last_file,
             env,
+            git_log_open: parse_flag(&top, "git_log_open"),
         }
     }
 
@@ -159,6 +163,7 @@ impl Settings {
             body.push_str(&format!("last_project = {:?}\n", p.to_string_lossy()));
         }
         body.push_str(&format!("theme = \"{}\"\n", theme_name(self.theme)));
+        body.push_str(&format!("git_log_open = {}\n", self.git_log_open));
         body.push_str("\n[last_file]\n");
         for (root, rel) in &self.last_file {
             body.push_str(&format!("{:?} = {:?}\n", root.to_string_lossy(), rel));
@@ -210,6 +215,18 @@ fn parse_theme(text: &str) -> ThemePreference {
             _ => None,
         })
         .unwrap_or_default()
+}
+
+/// Extracts `key = true`, false when it is missing or holds anything else.
+fn parse_flag(text: &str, key: &str) -> bool {
+    text.lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix(key)?
+                .trim_start()
+                .strip_prefix('=')
+        })
+        .any(|value| value.trim() == "true")
 }
 
 /// Parses one `"<root>" = "<value>"` line of the `[last_file]` or `[env]` section, or `None` when the line has any other shape.
@@ -303,8 +320,19 @@ mod tests {
             theme: ThemePreference::Light,
             last_file: Vec::new(),
             env: Vec::new(),
+            git_log_open: true,
         };
         assert_eq!(Settings::parse(&settings.body()), settings);
+    }
+
+    #[test]
+    fn log_app_open_flag_round_trips_in_settings() {
+        let path = temp_settings_path("git-log-open");
+        assert!(!Settings::load_from(&path).git_log_open);
+        Settings::update_at(&path, |s| s.git_log_open = true);
+        Settings::update_at(&path, |s| s.theme = ThemePreference::Dark);
+        assert!(Settings::load_from(&path).git_log_open);
+        assert!(!parse_flag("git_log_open = false\n", "git_log_open"));
     }
 
     #[test]
