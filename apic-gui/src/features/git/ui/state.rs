@@ -232,6 +232,11 @@ pub(crate) struct GitState {
     /// previous status did not have. Drives the "Merge conflict" popup, which
     /// clears it on OK. Cleared too by a status with no conflicts.
     pub(crate) conflict_notice: Option<Vec<String>>,
+
+    /// Repository the in-flight status or mutation job runs against.
+    pub(crate) job_repo: Option<std::path::PathBuf>,
+    /// Repository `status` was read from.
+    pub(crate) status_repo: Option<std::path::PathBuf>,
 }
 
 /// Something a finished git job asks the app shell to do, because it touches
@@ -316,6 +321,16 @@ impl GitState {
         }
         self.ticks.retain(|path, _| status.find(path).is_some());
         self.status = status;
+    }
+
+    /// Files a status from the job's repository. A status from another repo
+    /// than the held one is compared against no previous conflicts.
+    fn set_job_status(&mut self, status: Status) {
+        if self.job_repo != self.status_repo {
+            self.status = Status::default();
+            self.status_repo = self.job_repo.clone();
+        }
+        self.set_status(status);
     }
 
     /// Applies one action from the git panel. `paths` is `None` when the
@@ -476,7 +491,7 @@ impl GitState {
     fn apply_result(&mut self, result: JobResult, events: &mut Vec<GitEvent>) {
         match result {
             JobResult::Status(Ok(status)) => {
-                self.set_status(status);
+                self.set_job_status(status);
                 self.error.clear();
             }
             JobResult::Diff(key, Ok(data)) => {
@@ -505,7 +520,7 @@ impl GitState {
                 self.error = e;
             }
             JobResult::Mutate(kind, message, Ok(status)) => {
-                self.set_status(status);
+                self.set_job_status(status);
                 self.error.clear();
                 events.push(GitEvent::Status(message));
                 if let Some((path, _)) = &self.selected
@@ -558,6 +573,7 @@ impl GitState {
         let Some(paths) = paths else {
             return;
         };
+        self.job_repo = Some(paths.repo_root.clone());
         self.pending = Some(jobs::status(paths.clone(), notifier(ctx)));
     }
 
@@ -598,6 +614,7 @@ impl GitState {
         let Some(paths) = paths else {
             return;
         };
+        self.job_repo = Some(paths.repo_root.clone());
         self.pending = Some(jobs::mutate(paths.clone(), mutation, notifier(ctx)));
     }
 
@@ -748,6 +765,28 @@ mod tests {
         );
         git.handle(GitAction::ConfirmBranchOp, Some(&paths), &ctx);
         settle_git(&mut git, &paths, &ctx);
+        assert_eq!(
+            git.conflict_notice,
+            Some(vec!["contracts/sample.json".to_string()])
+        );
+    }
+
+    #[test]
+    fn conflict_notice_opens_for_a_second_mid_merge_repo() {
+        if !git_available() {
+            return;
+        }
+        let a = conflict_fixture();
+        let b = conflict_fixture();
+        let (mut git, pa) = git_at(&a);
+        let (_, pb) = git_at(&b);
+        let ctx = egui::Context::default();
+        git.handle(GitAction::Refresh, Some(&pa), &ctx);
+        settle_git(&mut git, &pa, &ctx);
+        assert!(git.conflict_notice.is_some());
+        git.conflict_notice = None;
+        git.handle(GitAction::Refresh, Some(&pb), &ctx);
+        settle_git(&mut git, &pb, &ctx);
         assert_eq!(
             git.conflict_notice,
             Some(vec!["contracts/sample.json".to_string()])
