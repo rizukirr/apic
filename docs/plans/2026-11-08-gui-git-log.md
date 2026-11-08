@@ -13,7 +13,7 @@
 - Commits carry no `Co-Authored-By` line.
 - CI: fmt --check, clippy -D warnings, test --workspace on ubuntu, macos and windows, MSRV 1.92.
 
-`apic-gui` is a binary crate (`apic-gui/Cargo.toml` has only a `[[bin]]`), so code added in Tasks 1 to 4 that the app does not call yet raises `dead_code` warnings until Task 5 wires it. Tasks 1 to 4 verify with tests, and Task 5 runs the full CI trio.
+`apic-gui` is a binary crate (`apic-gui/Cargo.toml` has only a `[[bin]]`), so code added in Tasks 1 to 4 that the app does not call yet raises `dead_code` warnings until Task 6 wires it. Tasks 1 to 4 verify with tests, and Task 6 runs the full CI trio.
 
 Every git test returns early when git is missing, the way the existing ones do (`git_missing()` in `cli.rs` tests, `git_available()` from `app/test_support.rs` elsewhere).
 
@@ -2417,7 +2417,20 @@ fn diff_body(ui: &mut egui::Ui, show_fields: &mut bool, path: &str, side: &str, 
 - [x] Step 9: Run `cargo fmt --all`
 - [x] Step 10: Commit `feat(gui): draw the git log panel, its file list and the revert popup`
 
-### Task 5: app wiring, persisted open flag and docs → verify: `cargo test -p apic-gui log_app_` exits 0 and runs at least 1 test, and `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` each exit 0
+### Task 5: clear clippy lints in domain/log.rs → verify: `cargo test -p apic-gui domain::log::` exits 0, and `cargo clippy -p apic-gui --all-targets 2>&1 | grep -cE "chunks_exact_to_as_chunks|octal"` prints 0
+
+Added after Task 6's first attempt: the installed clippy flags `chunks_exact_to_as_chunks` at log.rs `parse_log` and `parse_name_status`, and an octal-looking escape in the `parse_log_reads_unicode_empty_refs_and_a_root_commit` test string. `as_chunks` is stable since Rust 1.88, inside MSRV 1.92.
+
+**Files:**
+- Modify: `apic-gui/src/features/git/domain/log.rs` (`parse_log`, `parse_name_status`, the test string in `parse_log_reads_unicode_empty_refs_and_a_root_commit`)
+
+- [ ] Step 1: In `parse_log`, replace `.chunks_exact(6)` with `.as_chunks::<6>().0.iter()`. The closure keeps indexing `f[0]`..`f[5]`.
+- [ ] Step 2: In `parse_name_status`, replace `.chunks_exact(2)` with `.as_chunks::<2>().0.iter()`.
+- [ ] Step 3: In the test string `"h1\0p1 p2\0Ann\02026-11-08 ..."`, replace every `\0` with `\x00`. Do not change any assertion.
+- [ ] Step 4: Run `cargo fmt --all`, `cargo test -p apic-gui domain::log::`, `cargo clippy -p apic-gui --all-targets`
+- [ ] Step 5: Commit `fix(gui): clear clippy lints in the commit log parser`
+
+### Task 6: app wiring, persisted open flag and docs → verify: `cargo test -p apic-gui log_app_` exits 0 and runs at least 1 test, and `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` each exit 0
 
 **Files:**
 - Modify: `apic-gui/src/platform/settings.rs` (`Settings` at lines 10-28, `parse` at lines 148-153, `body` at lines 156-171, after `parse_theme` ending at line 213, the test at lines 299-308)
