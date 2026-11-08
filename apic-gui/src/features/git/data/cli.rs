@@ -254,6 +254,8 @@ const LOG_FORMAT: &str = "%H%x00%P%x00%an%x00%ad%x00%D%x00%s";
 /// under a path filter, so the graph keeps its lines. `contracts` is the
 /// contracts folder relative to the repo root, used by the Contracts folder
 /// path filter. A hash prefix is not applied here, see `LogFilter::keeps`.
+/// `--topo-order` lists children before parents even with skewed commit
+/// dates, which `lanes` relies on.
 pub(crate) fn log(
     root: &Path,
     rev: &str,
@@ -266,6 +268,7 @@ pub(crate) fn log(
         "log".to_string(),
         "-z".to_string(),
         "--parents".to_string(),
+        "--topo-order".to_string(),
         "--date=format-local:%Y-%m-%d %H:%M".to_string(),
         format!("--format={LOG_FORMAT}"),
         format!("--skip={skip}"),
@@ -954,5 +957,84 @@ mod tests {
                 .find("file.txt")
                 .is_some_and(|f| f.conflicted)
         );
+    }
+
+    #[test]
+    fn history_author_with_regex_characters_matches_its_commits() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        fs::write(dir.join("file.txt"), "bot\n").unwrap();
+        assert!(
+            run(
+                &dir,
+                &[
+                    "-c",
+                    "user.name=dependabot[bot]",
+                    "commit",
+                    "-am",
+                    "bump deps"
+                ]
+            )
+            .is_ok()
+        );
+        for (text, regex) in [
+            ("", false),
+            ("", true),
+            ("bump", false),
+            ("bump", true),
+            ("b.mp", true),
+        ] {
+            let filter = LogFilter {
+                author: Some("dependabot[bot]".into()),
+                text: text.into(),
+                regex,
+                ..LogFilter::default()
+            };
+            assert_eq!(
+                subjects(&dir, &filter, ""),
+                ["bump deps"],
+                "text {text:?}, regex {regex}"
+            );
+        }
+    }
+
+    #[test]
+    fn history_log_lists_children_before_parents_with_skewed_dates() {
+        if git_missing() {
+            return;
+        }
+        let dir = tempdir();
+        init_repo(&dir);
+        let commit_at = |time: u64, args: &[&str]| {
+            let date = format!("@{time} +0000");
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(&dir)
+                .args(args)
+                .env("GIT_AUTHOR_DATE", &date)
+                .env("GIT_COMMITTER_DATE", &date)
+                .env("GIT_MERGE_AUTOEDIT", "no")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{out:?}");
+        };
+        let base = branches(&dir).unwrap().current.unwrap();
+        fs::write(dir.join("file.txt"), "a\n").unwrap();
+        commit_at(1_100_000_000, &["commit", "-am", "A"]);
+        create_branch(&dir, "side").unwrap();
+        switch_branch(&dir, "side").unwrap();
+        fs::write(dir.join("side.txt"), "s\n").unwrap();
+        assert!(run(&dir, &["add", "--", "side.txt"]).is_ok());
+        commit_at(1_050_000_000, &["commit", "-m", "S"]);
+        switch_branch(&dir, &base).unwrap();
+        fs::write(dir.join("file.txt"), "b\n").unwrap();
+        commit_at(1_200_000_000, &["commit", "-am", "B"]);
+        commit_at(1_300_000_000, &["merge", "--no-ff", "-m", "M", "side"]);
+        let got = subjects(&dir, &LogFilter::default(), "");
+        let pos = |s: &str| got.iter().position(|g| g == s).unwrap();
+        assert!(pos("S") < pos("A"), "{got:?}");
     }
 }

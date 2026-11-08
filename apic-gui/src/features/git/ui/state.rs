@@ -300,6 +300,14 @@ pub(crate) struct GitState {
     /// once the mutation's own job has finished.
     pub(crate) needs_branches: bool,
 
+    /// Mutations asked for while another job held the slot, started in
+    /// order by `poll` once nothing is pending.
+    pub(crate) queued_mutations: std::collections::VecDeque<Mutation>,
+
+    /// A diff of the selected Changes file is owed, asked for while another
+    /// job held the slot.
+    pub(crate) needs_diff: bool,
+
     /// Whether the next commit amends the last one.
     pub(crate) amend: bool,
 
@@ -604,8 +612,9 @@ impl GitState {
     }
 
     /// Collects the in-flight job's result if it has finished, then starts
-    /// queued work when nothing is pending: a branch listing first, otherwise
-    /// a status refresh. Called every frame. Returns what the app shell must
+    /// queued work when nothing is pending: a queued mutation first, then a
+    /// branch listing, an amend read, a status refresh, a Changes diff, and
+    /// last the log's work. Called every frame. Returns what the app shell must
     /// apply, in order.
     pub(crate) fn poll(&mut self, paths: Option<&RepoPaths>, ctx: &egui::Context) -> Vec<GitEvent> {
         let mut events = Vec::new();
@@ -625,7 +634,9 @@ impl GitState {
             }
         }
         if self.pending.is_none() {
-            if self.needs_branches {
+            if let Some(mutation) = self.queued_mutations.pop_front() {
+                self.start_mutation(paths, ctx, mutation);
+            } else if self.needs_branches {
                 self.needs_branches = false;
                 self.start_branches(paths, ctx);
             } else if self.needs_amend_info {
@@ -634,6 +645,11 @@ impl GitState {
             } else if self.needs_refresh {
                 self.needs_refresh = false;
                 self.start_status(paths, ctx);
+            } else if self.needs_diff {
+                self.needs_diff = false;
+                if let Some((path, staged)) = self.selected.clone() {
+                    self.start_diff(paths, ctx, path, staged);
+                }
             } else {
                 self.start_log_work(paths, ctx);
             }
@@ -776,7 +792,8 @@ impl GitState {
         self.pending = Some(jobs::status(paths.clone(), notifier(ctx)));
     }
 
-    /// Starts the diff fetch for `(path, staged)`, under the same one-job rule.
+    /// Starts the diff fetch for `(path, staged)`. While a job is pending it
+    /// marks the diff owed, and `poll` fetches the selected file's later.
     fn start_diff(
         &mut self,
         paths: Option<&RepoPaths>,
@@ -785,6 +802,7 @@ impl GitState {
         staged: bool,
     ) {
         if self.pending.is_some() {
+            self.needs_diff = true;
             return;
         }
         let Some(paths) = paths else {
@@ -800,7 +818,7 @@ impl GitState {
         self.pending = Some(jobs::diff(request, notifier(ctx)));
     }
 
-    /// Starts `mutation`, under the same one-job rule.
+    /// Starts `mutation`, or queues it for `poll` while a job is pending.
     fn start_mutation(
         &mut self,
         paths: Option<&RepoPaths>,
@@ -808,6 +826,7 @@ impl GitState {
         mutation: Mutation,
     ) {
         if self.pending.is_some() {
+            self.queued_mutations.push_back(mutation);
             return;
         }
         let Some(paths) = paths else {
@@ -2019,5 +2038,51 @@ mod tests {
         settle_git(&mut git, &paths, &ctx);
         assert_eq!(git.log.filter.branch, None);
         assert_eq!(subjects(&git)[0], "second branch contracts");
+    }
+
+    #[test]
+    fn log_state_revert_confirmed_during_a_log_read_still_runs() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+        git_output(&root, &["commit", "-am", "change"]);
+        let (mut git, paths, ctx) = open_log(&root);
+        let hash = git.log.commits[0].hash.clone();
+        git.handle(GitAction::RequestRevert { hash }, Some(&paths), &ctx);
+        git.handle(GitAction::RefreshLog, Some(&paths), &ctx);
+        git.poll(Some(&paths), &ctx);
+        assert!(git.pending.is_some(), "the log read holds the slot");
+        git.handle(GitAction::ConfirmRevert, Some(&paths), &ctx);
+        settle_git(&mut git, &paths, &ctx);
+        assert_eq!(
+            git_output(&root, &["log", "-1", "--format=%s"]).trim(),
+            "Revert \"change\""
+        );
+    }
+
+    #[test]
+    fn log_state_select_during_a_log_read_still_loads_the_diff() {
+        if !git_available() {
+            return;
+        }
+        let root = project_fixture();
+        dirty(&root.join("contracts").join("sample.json"));
+        let (mut git, paths, ctx) = open_log(&root);
+        git.handle(GitAction::RefreshLog, Some(&paths), &ctx);
+        git.poll(Some(&paths), &ctx);
+        assert!(git.pending.is_some(), "the log read holds the slot");
+        git.handle(
+            GitAction::Select {
+                path: "contracts/sample.json".into(),
+                staged: false,
+            },
+            Some(&paths),
+            &ctx,
+        );
+        settle_git(&mut git, &paths, &ctx);
+        let (key, _) = git.diff.as_ref().expect("the diff loads");
+        assert_eq!(key, &("contracts/sample.json".to_string(), false));
     }
 }

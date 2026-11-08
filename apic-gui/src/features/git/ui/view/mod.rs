@@ -1449,4 +1449,26 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn log_view_load_more_shows_when_a_page_keeps_no_rows() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut state = log_view_state();
+        state.log.commits.clear();
+        state.log.rows.clear();
+        state.log.more = true;
+        let mut action = None;
+        log_frame(&ctx, &mut state, vec![], &mut action);
+        let nodes = log_frame(&ctx, &mut state, vec![], &mut action);
+        let more = node(&nodes, "Load more");
+        log_click(
+            &ctx,
+            &mut state,
+            more,
+            egui::PointerButton::Primary,
+            &mut action,
+        );
+        assert!(matches!(action, Some(GitAction::LoadMoreLog)));
+    }
 }

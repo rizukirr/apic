@@ -240,7 +240,8 @@ fn commit_table(ui: &mut egui::Ui, state: &GitState) -> Option<GitAction> {
             "Loading log..."
         };
         empty_state(ui, title, "");
-        return None;
+        // A page can keep no rows under a hash prefix, yet older pages remain.
+        return (log.more && ui.button("Load more").clicked()).then_some(GitAction::LoadMoreLog);
     }
     let dots_only = log.filter.dots_only();
     let lanes = if dots_only {

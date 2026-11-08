@@ -154,7 +154,8 @@ impl LogFilter {
     /// The filter flags for `git log`, without the revision or the path.
     pub(crate) fn args(&self) -> Vec<String> {
         let mut args = Vec::new();
-        if !self.text.trim().is_empty() && self.hash_prefix().is_none() {
+        let grep = !self.text.trim().is_empty() && self.hash_prefix().is_none();
+        if grep {
             args.push(format!("--grep={}", self.text));
             args.push(if self.regex { "-E" } else { "-F" }.to_string());
             if !self.match_case {
@@ -162,7 +163,22 @@ impl LogFilter {
             }
         }
         if let Some(author) = &self.author {
-            args.push(format!("--author={author}"));
+            // `--author` follows the grep's pattern mode: literal under
+            // `-F`, extended under `-E`, basic otherwise. Escape the picked
+            // name so it only ever matches itself.
+            let special = match (grep, self.regex) {
+                (true, false) => "",
+                (true, true) => ".[*^$\\+?(){|",
+                (false, _) => ".[*^$\\",
+            };
+            let mut escaped = String::new();
+            for c in author.chars() {
+                if special.contains(c) {
+                    escaped.push('\\');
+                }
+                escaped.push(c);
+            }
+            args.push(format!("--author={escaped}"));
         }
         if let Some(since) = self.since.arg() {
             args.push(format!("--since={since}"));
