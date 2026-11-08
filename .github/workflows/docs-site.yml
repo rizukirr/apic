@@ -31,4 +31,4 @@ jobs:
           fi
           gh api --method POST repos/rizukirr/apic-web/dispatches \
             -f event_type=docs-updated \
-            -F "client_payload[sha]=$GITHUB_SHA"
+            -f "client_payload[sha]=$GITHUB_SHA"
