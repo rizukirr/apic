@@ -13,7 +13,9 @@ use eframe::egui;
 use egui::RichText;
 
 pub(crate) use self::branches::branch_menu;
-use self::branches::{create_branch_dialog, delete_branch_dialog, discard_dialog};
+use self::branches::{
+    branch_op_dialog, create_branch_dialog, delete_branch_dialog, discard_dialog,
+};
 use self::diff::{inline_diff_view, semantic_diff_view};
 use self::files::{FileTree, RowMode, file_row};
 use self::resolver::conflict_resolver;
@@ -202,6 +204,9 @@ pub(crate) fn dialogs(ctx: &egui::Context, state: &mut GitState) -> Option<GitAc
     if let Some(a) = delete_branch_dialog(ctx, state) {
         action = Some(a);
     }
+    if let Some(a) = branch_op_dialog(ctx, state) {
+        action = Some(a);
+    }
     action
 }
 
@@ -318,6 +323,7 @@ mod tests {
     use crate::features::git::domain::conflict::{self, Choice};
     use crate::features::git::domain::status::fixtures::{file, untracked};
     use crate::features::git::domain::status::{Branches, Change, FileStatus};
+    use crate::features::git::ui::state::{BranchOp, BranchOpKind};
 
     const CONTRACT_GET: &str =
         r#"{"name":"x","method":"GET","url":"http://a","headers":[],"responses":[]}"#;
@@ -768,6 +774,7 @@ mod tests {
                 branches: Branches {
                     current: Some("main".into()),
                     all: vec!["main".into(), "feature".into()],
+                    remotes: Vec::new(),
                 },
                 ..GitState::default()
             };
@@ -784,6 +791,7 @@ mod tests {
                 branches: Branches {
                     current: None,
                     all: vec!["main".into()],
+                    remotes: Vec::new(),
                 },
                 ..GitState::default()
             };
@@ -800,6 +808,7 @@ mod tests {
                 branches: Branches {
                     current: Some("main".into()),
                     all: vec!["main".into()],
+                    remotes: Vec::new(),
                 },
                 new_branch: Some("feature".into()),
                 ..GitState::default()
@@ -821,6 +830,7 @@ mod tests {
                 branches: Branches {
                     current: Some("main".into()),
                     all: vec!["main".into(), "feature".into()],
+                    remotes: Vec::new(),
                 },
                 pending_branch_delete: Some("feature".into()),
                 ..GitState::default()
@@ -832,6 +842,196 @@ mod tests {
             // The dialog stays open until the user confirms or cancels: a bare
             // render must not clear it.
             assert!(state.pending_branch_delete.is_some());
+        }
+    }
+
+    #[test]
+    fn branch_op_popup_renders_in_both_themes() {
+        for preference in BOTH_THEMES {
+            for kind in [BranchOpKind::Pull, BranchOpKind::Merge] {
+                let mut state = GitState {
+                    pending_branch_op: Some(BranchOp {
+                        kind,
+                        target: "main".into(),
+                        source: "origin/main".into(),
+                    }),
+                    ..GitState::default()
+                };
+                run_in_theme(preference, |ui| {
+                    dialogs(ui.ctx(), &mut state);
+                });
+                // The popup stays open until the user confirms or cancels.
+                assert!(state.pending_branch_op.is_some());
+            }
+        }
+    }
+
+    /// One headless frame of `branch_menu` fed `events`. Stores any action
+    /// it returns into `action` and returns every AccessKit node that has a
+    /// label, with its bounds.
+    fn menu_frame(
+        ctx: &egui::Context,
+        state: &mut GitState,
+        events: Vec<egui::Event>,
+        action: &mut Option<GitAction>,
+    ) -> Vec<(String, egui::Rect)> {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let out = ctx.run_ui(input, |ui| {
+            if let Some(a) = branch_menu(ui, state) {
+                *action = Some(a);
+            }
+        });
+        out.platform_output
+            .accesskit_update
+            .map(|update| {
+                update
+                    .nodes
+                    .into_iter()
+                    .filter_map(|(_, node)| {
+                        let b = node.bounds()?;
+                        Some((
+                            node.label()?.to_string(),
+                            egui::Rect::from_min_max(
+                                egui::pos2(b.x0 as f32, b.y0 as f32),
+                                egui::pos2(b.x1 as f32, b.y1 as f32),
+                            ),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Moves the pointer to the centre of `rect` and clicks there, then runs
+    /// two idle frames. Returns the nodes from the last frame.
+    fn click_at(
+        ctx: &egui::Context,
+        state: &mut GitState,
+        rect: egui::Rect,
+        action: &mut Option<GitAction>,
+    ) -> Vec<(String, egui::Rect)> {
+        let pos = rect.center();
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut nodes = Vec::new();
+        for events in [
+            vec![egui::Event::PointerMoved(pos)],
+            vec![button(true)],
+            vec![button(false)],
+            vec![],
+            vec![],
+        ] {
+            nodes = menu_frame(ctx, state, events, action);
+        }
+        nodes
+    }
+
+    /// The bounds of the first node whose label starts with `label`. Sub
+    /// menu buttons carry a trailing arrow, hence `starts_with`.
+    fn node(nodes: &[(String, egui::Rect)], label: &str) -> egui::Rect {
+        nodes
+            .iter()
+            .find(|(l, _)| l.starts_with(label))
+            .map(|(_, r)| *r)
+            .unwrap_or_else(|| {
+                let labels: Vec<&String> = nodes.iter().map(|(l, _)| l).collect();
+                panic!("no node {label:?} in {labels:?}")
+            })
+    }
+
+    /// Drives the real dropdown with pointer events: open it, click ⋮ on a
+    /// non-current row, open Pull, click a remote branch. Guards against the
+    /// right-click menu bug, where the dropdown closed under the menu.
+    #[test]
+    fn kebab_menu_picks_a_pull_source_through_nested_menus() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut state = GitState {
+            branches: Branches {
+                current: Some("main".into()),
+                all: vec!["main".into(), "feature".into()],
+                remotes: vec!["origin/main".into()],
+            },
+            branches_loaded: true,
+            ..GitState::default()
+        };
+        let mut action = None;
+
+        let nodes = menu_frame(&ctx, &mut state, vec![], &mut action);
+        let title = node(&nodes, egui_phosphor::regular::GIT_BRANCH);
+        let nodes = click_at(&ctx, &mut state, title, &mut action);
+        let row = node(&nodes, "feature");
+        let kebab = nodes
+            .iter()
+            .find(|(l, r)| {
+                l.starts_with(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+                    && (r.center().y - row.center().y).abs() < 2.0
+            })
+            .map(|(_, r)| *r)
+            .expect("the feature row has a ⋮ button");
+        let nodes = click_at(&ctx, &mut state, kebab, &mut action);
+        let pull = node(&nodes, "Pull");
+        let nodes = click_at(&ctx, &mut state, pull, &mut action);
+        let source = node(&nodes, "origin/main");
+        click_at(&ctx, &mut state, source, &mut action);
+
+        state.handle(
+            action.expect("picking a source returns an action"),
+            None,
+            &ctx,
+        );
+        assert_eq!(
+            state.pending_branch_op,
+            Some(BranchOp {
+                kind: BranchOpKind::Pull,
+                target: "feature".into(),
+                source: "origin/main".into(),
+            })
+        );
+    }
+
+    /// The ⋮ buttons line up in one column at the right edge of the
+    /// dropdown, whatever the branch name lengths.
+    #[test]
+    fn kebab_buttons_share_one_column() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut state = GitState {
+            branches: Branches {
+                current: Some("main".into()),
+                all: vec!["main".into(), "feature/a-much-longer-branch-name".into()],
+                remotes: Vec::new(),
+            },
+            branches_loaded: true,
+            ..GitState::default()
+        };
+        let mut action = None;
+
+        let nodes = menu_frame(&ctx, &mut state, vec![], &mut action);
+        let title = node(&nodes, egui_phosphor::regular::GIT_BRANCH);
+        let nodes = click_at(&ctx, &mut state, title, &mut action);
+
+        let kebabs: Vec<egui::Rect> = nodes
+            .iter()
+            .filter(|(l, _)| l.starts_with(egui_phosphor::regular::DOTS_THREE_VERTICAL))
+            .map(|(_, r)| *r)
+            .collect();
+        assert!(kebabs.len() >= 2, "one ⋮ per branch: {kebabs:?}");
+        let new_branch = node(&nodes, egui_phosphor::regular::PLUS);
+        for r in &kebabs {
+            assert!((r.min.x - kebabs[0].min.x).abs() < 0.5, "{kebabs:?}");
+            assert!(r.max.x <= new_branch.max.x + 0.5, "{r:?} vs {new_branch:?}");
         }
     }
 
