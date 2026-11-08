@@ -667,20 +667,25 @@ impl App {
             return None;
         };
 
-        match crate::features::git::data::cli::discover(&root) {
-            Ok(repo_root) => {
-                self.shell.repo_root = repo_root;
-                // The Git section header's dirty indicator must be correct before the
-                // Git section is ever opened, so a project load fetches status
-                // itself instead of waiting for tab activation.
-                if self.shell.repo_root.is_some() {
-                    self.git.request_refresh();
-                }
-            }
+        let repo_root = match crate::features::git::data::cli::discover(&root) {
+            Ok(repo_root) => repo_root,
             Err(err) => {
-                self.shell.repo_root = None;
                 self.shell.status = err;
+                None
             }
+        };
+        if repo_root != self.shell.repo_root {
+            // Another repository, or none: the branch list belongs to the old
+            // one, and the dropdown only lists branches once on its own.
+            self.git.branches = Default::default();
+            self.git.needs_branches = repo_root.is_some();
+        }
+        self.shell.repo_root = repo_root;
+        // The Git section header's dirty indicator must be correct before the
+        // Git section is ever opened, so a project load fetches status
+        // itself instead of waiting for tab activation.
+        if self.shell.repo_root.is_some() {
+            self.git.request_refresh();
         }
 
         if let Err(err) = self.project.locate() {
@@ -1975,5 +1980,51 @@ mod tests {
             &ctx,
         );
         assert_eq!(app.contracts.new_template, Some(String::new()));
+    }
+
+    /// Draws the branch dropdown once, the way the app bar does every frame,
+    /// and applies the action it returns.
+    fn draw_branch_menu(app: &mut App, ctx: &egui::Context) {
+        let mut action = None;
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            action = crate::features::git::ui::view::branch_menu(ui, &mut app.git);
+        });
+        if let Some(a) = action {
+            app.apply(Action::Git(a), ctx);
+        }
+    }
+
+    /// Opening a project in another repository must replace the branch list,
+    /// not keep the first repository's for the whole session.
+    #[test]
+    fn opening_another_project_reloads_its_branches() {
+        if !git_available() {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let first = project_fixture();
+        git_output(&first, &["branch", "only-in-first"]);
+        let mut app = app_at(first.clone());
+        app.reload_project();
+        draw_branch_menu(&mut app, &ctx);
+        settle(&mut app, &ctx);
+        assert!(app.git.branches.all.contains(&"only-in-first".to_string()));
+
+        let second = project_fixture();
+        git_output(&second, &["branch", "only-in-second"]);
+        app.project.project_root = Some(second.clone());
+        app.apply_project_events(vec![ProjectEvent::Opened(second.clone())], &ctx);
+        draw_branch_menu(&mut app, &ctx);
+        settle(&mut app, &ctx);
+
+        let all = &app.git.branches.all;
+        assert!(
+            all.contains(&"only-in-second".to_string()),
+            "stale list: {all:?}"
+        );
+        assert!(
+            !all.contains(&"only-in-first".to_string()),
+            "stale list: {all:?}"
+        );
     }
 }
