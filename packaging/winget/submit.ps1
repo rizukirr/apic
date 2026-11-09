@@ -115,7 +115,9 @@ function Test-UrlExists {
 
 # `wingetcreate update` copies every locale field from the last published version, so a
 # license change or new release notes never reach the PR on their own (1.0.0 went out as MIT
-# with no ReleaseNotes). Rewrite both fields in the generated locale manifest before submitting.
+# with no ReleaseNotes, and apic-gui 1.0.0 without a PrivacyUrl). Rewrite these fields in the
+# generated locale manifest before submitting.
+$PrivacyUrl = 'https://rizukirr.github.io/apic-web/privacy/'
 $cargoToml = Join-Path $PSScriptRoot '..\..\Cargo.toml'
 $licenseLine = Get-Content $cargoToml | Where-Object { $_ -match '^\s*license\s*=' } | Select-Object -First 1
 if ($licenseLine -match '"([^"]+)"') { $License = $Matches[1] } else { throw "Could not read license from $cargoToml" }
@@ -146,7 +148,7 @@ function Update-LocaleManifest {
     if (-not $file) { throw "No generated locale manifest for $Id under $Dir" }
 
     $lines = [System.IO.File]::ReadAllLines($file.FullName) |
-        Where-Object { $_ -notmatch '^License:' }
+        Where-Object { $_ -notmatch '^(License|PrivacyUrl):' }
     # Drop any carried-over ReleaseNotes block: the key line plus its indented continuation.
     $out = New-Object System.Collections.Generic.List[string]
     $inNotes = $false
@@ -160,8 +162,10 @@ function Update-LocaleManifest {
             foreach ($n in ($Notes -split "`r?`n")) { $out.Add($(if ($n) { "  $n" } else { '' })) }
         }
         $out.Add($l)
+        if ($l -match '^PublisherSupportUrl:') { $out.Add("PrivacyUrl: $PrivacyUrl") }
     }
     if (-not ($out -match '^License:')) { throw "Generated locale manifest for $Id has no LicenseUrl to anchor License on" }
+    if (-not ($out -match '^PrivacyUrl:')) { throw "Generated locale manifest for $Id has no PublisherSupportUrl to anchor PrivacyUrl on" }
     [System.IO.File]::WriteAllLines($file.FullName, $out, (New-Object System.Text.UTF8Encoding $false))
 }
 
@@ -199,7 +203,7 @@ foreach ($p in $packages) {
     $pkgDir = Join-Path $outDir $p.Id
     $params = @('update', $p.Id, '--version', $Version, '--urls', $p.Url, '--out', $pkgDir)
     Write-Host "wingetcreate $($params -join ' ')"
-    Write-Host "  then set License: $License and ReleaseNotes, and run: wingetcreate submit $pkgDir"
+    Write-Host "  then set License: $License, PrivacyUrl and ReleaseNotes, and run: wingetcreate submit $pkgDir"
     if (-not $DryRun) {
         if (-not $notesFetched) { $releaseNotes = Get-ReleaseNotes; $notesFetched = $true }
         if (Test-Path $pkgDir) { Remove-Item -Recurse -Force $pkgDir }
