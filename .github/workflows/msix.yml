@@ -1,0 +1,74 @@
+name: MSIX
+
+# Builds an unsigned MSIX of apic-gui for the Microsoft Store, which signs it
+# on publish, and attaches it to the GitHub release of the given tag. Upload
+# the .msix in Partner Center by hand. release.yml calls this for every non
+# pre-release tag. Run it by hand for an existing release:
+#   gh workflow run msix.yml -f tag=v1.0.0
+# The source is built from the tag, while the manifest and logos come from the
+# ref the workflow runs on, so older tags without packaging/msix still work.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to package, e.g. v1.0.0
+        required: true
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  msix:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag }}
+          path: src
+
+      - name: Build apic-gui
+        run: cargo build --release --locked --manifest-path src/apic-gui/Cargo.toml
+
+      # Identity values come from repository variables, copied from
+      # Partner Center > Product identity.
+      - name: Pack and upload MSIX
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+          DISPLAY_NAME: ${{ vars.MSIX_DISPLAY_NAME }}
+        run: |
+          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+$') { throw "The Store needs a plain numeric version, got $env:TAG" }
+          $tokens = @{
+            IDENTITY_NAME = $env:IDENTITY_NAME
+            PUBLISHER = $env:PUBLISHER
+            PUBLISHER_DISPLAY_NAME = $env:PUBLISHER_DISPLAY_NAME
+            DISPLAY_NAME = $env:DISPLAY_NAME
+            VERSION = "$($env:TAG.TrimStart('v')).0"
+          }
+          $manifest = Get-Content packaging/msix/AppxManifest.xml -Raw
+          foreach ($k in $tokens.Keys) {
+            if (-not $tokens[$k]) { throw "Repository variable for $k is not set" }
+            $manifest = $manifest.Replace("{{$k}}", [Security.SecurityElement]::Escape($tokens[$k]))
+          }
+          $layout = Join-Path $env:RUNNER_TEMP 'msix'
+          New-Item -ItemType Directory $layout -Force | Out-Null
+          Set-Content (Join-Path $layout 'AppxManifest.xml') $manifest -Encoding utf8
+          Copy-Item packaging/msix/Assets $layout -Recurse
+          Copy-Item src/target/release/apic-gui.exe $layout
+          $makeappx = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\makeappx.exe' |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          $msix = "apic-gui-$env:TAG-x86_64.msix"
+          & $makeappx.FullName pack /d $layout /p $msix /o
+          if ($LASTEXITCODE) { throw "makeappx failed" }
+          gh release upload $env:TAG $msix --clobber

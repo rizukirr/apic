@@ -132,6 +132,15 @@ jobs:
           (Get-FileHash $msi -Algorithm SHA256).Hash.ToLower() + "  $msi" | Out-File "$msi.sha256" -Encoding ascii
           gh release upload "$env:GITHUB_REF_NAME" "$msi" "$msi.sha256" --clobber
 
+  # Unsigned MSIX for the Microsoft Store, see msix.yml. Pre-release tags are
+  # skipped since the Store needs a plain numeric version.
+  msix:
+    needs: create-release
+    if: ${{ !contains(github.ref_name, '-') }}
+    uses: ./.github/workflows/msix.yml
+    with:
+      tag: ${{ github.ref_name }}
+
   # Wraps the macOS GUI binary into a double-clickable apic.app (with the icns
   # icon) and uploads it as apic-gui-$tag-<target>.app.zip, alongside the plain
   # binary archives from the job above. Unsigned: first launch needs right-click
