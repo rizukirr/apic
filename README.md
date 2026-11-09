@@ -4,7 +4,7 @@
 
 CLI and desktop GUI, both over one shared core (`apic-core`), so every interface edits the same files and never drifts.
 
-<img width="1898" height="1022" alt="2026-11-04-230314_screenshot" src="https://github.com/user-attachments/assets/c0f0a8e8-9237-41e5-a65f-0c9ef764462f" />
+<img width="1774" height="887" alt="API Contracts for the Agentic Era" src="https://github.com/user-attachments/assets/5ef19eb7-1a55-4b2e-b316-a895b82fceb4" />
 
 ## Why?
 
