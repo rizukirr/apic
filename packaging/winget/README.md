@@ -71,11 +71,18 @@ sync with what's live.
 
 ### Microsoft Store
 
-Partner Center needs an installer URL that does not redirect, and GitHub release links always do. The website hosts a copy of every apic-gui MSI at `https://rizukirr.github.io/apic-web/downloads/<version>/apic-gui-v<version>-x86_64.msi`, copied from the GitHub releases on each site deploy. After a release, rerun the site deploy, then submit that URL in Partner Center:
+The Store gets an MSIX, not the MSI. A Win32 MSI submission must be code signed with a trusted certificate, while an MSIX is signed by the Store on publish. `.github/workflows/msix.yml` builds an unsigned `apic-gui-v<version>-x86_64.msix` from `packaging/msix/` and attaches it to the GitHub release. The release workflow runs it for every non pre-release tag. For an existing release, run it by hand with `gh workflow run msix.yml -f tag=v1.0.0`. Download it and upload it to the submission's Packages page in Partner Center.
 
-```powershell
-gh workflow run deploy.yml -R rizukirr/apic-web
+The manifest identity must match Partner Center > Product identity exactly. Set it once as repository variables:
+
+```sh
+gh variable set MSIX_IDENTITY_NAME --body '<Package/Identity/Name>'
+gh variable set MSIX_PUBLISHER --body '<Package/Identity/Publisher, the CN=... string>'
+gh variable set MSIX_PUBLISHER_DISPLAY_NAME --body '<Package/Properties/PublisherDisplayName>'
+gh variable set MSIX_DISPLAY_NAME --body '<the reserved app name>'
 ```
+
+The MSIX step fails if any of them is unset.
 
 ### Verifying a manifest locally
 
