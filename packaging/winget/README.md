@@ -69,6 +69,14 @@ After publishing a new version, bump the `PackageVersion`, `InstallerUrl`, and
 `InstallerSha256` in the seed manifests here too, so the in-repo copies stay in
 sync with what's live.
 
+### Microsoft Store
+
+Partner Center needs an installer URL that does not redirect, and GitHub release links always do. The website hosts a copy of every apic-gui MSI at `https://rizukirr.github.io/apic-web/downloads/<version>/apic-gui-v<version>-x86_64.msi`, copied from the GitHub releases on each site deploy. After a release, rerun the site deploy, then submit that URL in Partner Center:
+
+```powershell
+gh workflow run deploy.yml -R rizukirr/apic-web
+```
+
 ### Verifying a manifest locally
 
 ```powershell
