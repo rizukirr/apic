@@ -60,8 +60,9 @@ pwsh packaging/winget/submit.ps1 -DryRun             # print commands, submit no
 It runs `wingetcreate update` for both packages, which pulls the
 current manifest from winget-pkgs and bumps the version, URL, and SHA-256.
 `update` copies every other locale field from the last published version, so
-the script then sets `License` from the root `Cargo.toml` and `ReleaseNotes`
-from the GitHub release body (via `gh`) before running `wingetcreate submit`
+the script then sets `License` from the root `Cargo.toml`, `PrivacyUrl` to the
+website's privacy page, and `ReleaseNotes` from the GitHub release body (via
+`gh`) before running `wingetcreate submit`
 to open the PRs — all from your machine.
 
 After publishing a new version, bump the `PackageVersion`, `InstallerUrl`, and
