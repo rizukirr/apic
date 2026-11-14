@@ -1446,3 +1446,101 @@ fn convert_json_reports_written_count() {
     assert!(doc["written"].as_u64().unwrap() >= 1);
     assert!(doc["destination"].is_string());
 }
+
+/// A project with one GET contract pointed at `url`.
+fn json_send_project(tag: &str, url: &str) -> PathBuf {
+    let dir = init_project(tag);
+    fs::write(
+        dir.join("contracts/ping.json"),
+        format!(
+            r#"{{"name":"ping","method":"GET","url":"{url}/ping","headers":[],"responses":[]}}"#
+        ),
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn send_json_embeds_a_json_body() {
+    let (url, _rx) = serve_once(SEND_OK);
+    let dir = json_send_project("json_send_json", &url);
+    let out = apic(&dir)
+        .args(["send", "-f", "ping", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["status"], 201);
+    assert_eq!(doc["body_encoding"], "json");
+    assert_eq!(doc["body"]["ok"], true);
+    assert!(doc["headers"].as_array().unwrap().iter().any(|h| {
+        h["name"].as_str().unwrap().eq_ignore_ascii_case("x-test") && h["value"] == "yes"
+    }));
+    assert!(doc["elapsed_ms"].is_u64());
+}
+
+#[test]
+fn send_json_keeps_a_text_body_as_a_string() {
+    let (url, _rx) =
+        serve_once("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello");
+    let dir = json_send_project("json_send_text", &url);
+    let out = apic(&dir)
+        .args(["send", "-f", "ping", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["body_encoding"], "text");
+    assert_eq!(doc["body"], "hello");
+}
+
+/// Serves one request on 127.0.0.1 with the raw `reply` bytes, for bodies
+/// that are not valid UTF-8.
+fn serve_once_bytes(reply: &'static [u8]) -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = stream.read(&mut chunk).unwrap();
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        stream.write_all(reply).unwrap();
+    });
+    format!("http://{addr}")
+}
+
+#[test]
+fn send_json_encodes_a_binary_body_as_base64() {
+    let url = serve_once_bytes(
+        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n\xff\xfe",
+    );
+    let dir = json_send_project("json_send_binary", &url);
+    let out = apic(&dir)
+        .args(["send", "-f", "ping", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["body_encoding"], "base64");
+    assert_eq!(doc["body"], "//4=");
+}
+
+#[test]
+fn send_json_exits_0_on_a_404() {
+    let (url, _rx) =
+        serve_once("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    let dir = json_send_project("json_send_404", &url);
+    let out = apic(&dir)
+        .args(["send", "-f", "ping", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(json_out(&out)["status"], 404);
+}
