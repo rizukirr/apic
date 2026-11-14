@@ -129,13 +129,14 @@ JSON example payloads:
  }
 ```
 
-## `apic send -f <query> [--env <name>] [--var <name=value>]... [-i] [--timeout <secs>]`
+## `apic send -f <query> [--env <name>] [--var <name=value>]... [-i] [--timeout <secs>] [--dry-run]`
 Resolves `<query>` like `read`, fills the variables and sends the contract's request. The response body goes to stdout, pretty-printed and coloured on a terminal and raw when piped. The status summary and warnings about undefined variables go to stderr. Up to 5 redirects are followed. The exit code is 0 for any HTTP reply, including 4xx and 5xx, 1 for a refusal, and 4 for a connection failure or timeout. Variables, environments and what gets sent are covered in [SENDING.md](SENDING.md).
 
 - `--env <name>` takes values from `.apic/env/<name>.toml`, overlaid by `<name>.local.toml`.
 - `--var <name=value>` sets a variable and overrides the environment. Repeatable.
 - `-i` prints the status line and response headers before the body.
 - `--timeout <secs>` gives up after that many seconds, 30 by default.
+- `--dry-run` prints the request with every variable value shown as `$name`, and sends nothing. See [SENDING.md](SENDING.md#dry-run).
 
 ```bash
 apic send -f auth/login --env dev
@@ -320,6 +321,7 @@ What each command prints with `--json`:
 | `list` | `{"contracts": [...]}`, best match first with `--filter` |
 | `read` | the contract as stored, with `--status` keeping only that response |
 | `send` | `{"status", "reason", "elapsed_ms", "headers": [{"name", "value"}], "body", "body_encoding"}` |
+| `send --dry-run` | `{"dry_run": true, "method", "target", "url", "headers": [{"name", "value"}], "body", "undefined"}`, plus `parts` for a multipart body |
 | `validate` | `{"results": [{"path", "ok", "error"}], "passed", "failed"}` |
 | `check` | `{"results": [{"path", "method", "result", "code", "elapsed_ms", "differences": [{"path", "message"}], "reason", "error"}], "passed", "mismatched", "skipped", "failed"}` |
 | `env` | `{"environments": [{"name", "has_local"}]}`, never the values |

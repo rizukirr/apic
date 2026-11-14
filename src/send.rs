@@ -5,7 +5,7 @@ use crate::output::{CliError, ErrorKind};
 use crate::render::{highlight_json_line, sanitize, use_color};
 use apic_core::config::find_apic_dir;
 use apic_core::file::read_file;
-use apic_core::http;
+use apic_core::http::{self, PartPreview, Preview, PreviewBody};
 use apic_core::json::JsonContent;
 use apic_core::vars::{Vars, substitute};
 use crossterm::style::Stylize;
@@ -25,6 +25,8 @@ pub(crate) struct SendArgs {
     pub(crate) include: bool,
     /// Timeout in seconds.
     pub(crate) timeout: u64,
+    /// Print the redacted request instead of sending it.
+    pub(crate) dry_run: bool,
 }
 
 /// Parses `NAME=VALUE` pairs into `vars`, later ones winning.
@@ -140,6 +142,112 @@ fn reply_json(reply: &http::Reply) -> serde_json::Value {
     })
 }
 
+/// The `send --dry-run --json` document for `preview`.
+fn preview_json(preview: &Preview) -> serde_json::Value {
+    let headers: Vec<serde_json::Value> = preview
+        .headers
+        .iter()
+        .map(|(name, value)| serde_json::json!({"name": name, "value": value}))
+        .collect();
+    let mut doc = serde_json::json!({
+        "dry_run": true,
+        "method": preview.method,
+        "target": preview.target,
+        "url": preview.url,
+        "headers": headers,
+        "body": null,
+        "undefined": preview.undefined,
+    });
+    match &preview.body {
+        PreviewBody::None => {}
+        PreviewBody::Json(body) => doc["body"] = body.clone(),
+        PreviewBody::Parts(parts) => {
+            let parts: Vec<serde_json::Value> = parts
+                .iter()
+                .map(|part| match &part.file {
+                    Some(file) => serde_json::json!({
+                        "name": part.name,
+                        "file": file,
+                        "filename": part.filename,
+                        "content_type": part.content_type,
+                        "size": part.size,
+                    }),
+                    None => serde_json::json!({"name": part.name, "value": part.value}),
+                })
+                .collect();
+            doc["parts"] = serde_json::Value::Array(parts);
+        }
+    }
+    doc
+}
+
+/// One text-mode line for a multipart part.
+fn part_line(part: &PartPreview) -> String {
+    let name = sanitize(&part.name);
+    match &part.file {
+        Some(file) => {
+            let mut line = format!(
+                "part {name}: file {} as {}",
+                sanitize(file),
+                sanitize(part.filename.as_deref().unwrap_or_default())
+            );
+            if let Some(content_type) = &part.content_type {
+                line.push_str(&format!(", {}", sanitize(content_type)));
+            }
+            line.push_str(&format!(", {} bytes", part.size.unwrap_or_default()));
+            line
+        }
+        None => format!(
+            "part {name}: {}",
+            sanitize(part.value.as_deref().unwrap_or_default())
+        ),
+    }
+}
+
+/// Prints what `send` would send for `contract`, with variable values shown
+/// as `$name`, and sends nothing.
+fn dry_run(contract: &JsonContent, vars: &Vars, project_root: &Path) -> Result<(), CliError> {
+    let preview = http::preview(contract, vars, project_root)?;
+    if crate::output::json() {
+        crate::output::emit(&preview_json(&preview));
+        return Ok(());
+    }
+    for name in &preview.undefined {
+        eprintln!("Warning: ${name} is not defined, sent as written");
+    }
+    let mut out = std::io::stdout().lock();
+    let io = |err: std::io::Error| err.to_string();
+    writeln!(out, "Target: {}", sanitize(&preview.target)).map_err(io)?;
+    writeln!(out, "{} {}", preview.method, sanitize(&preview.url)).map_err(io)?;
+    for (name, value) in &preview.headers {
+        writeln!(out, "{}: {}", sanitize(name), sanitize(value)).map_err(io)?;
+    }
+    match &preview.body {
+        PreviewBody::None => {}
+        PreviewBody::Json(body) => {
+            writeln!(out).map_err(io)?;
+            let pretty = serde_json::to_string_pretty(body).map_err(|err| err.to_string())?;
+            let color = use_color();
+            for line in pretty.lines() {
+                let line = sanitize(line);
+                let line = if color {
+                    highlight_json_line(&line)
+                } else {
+                    line
+                };
+                writeln!(out, "{line}").map_err(io)?;
+            }
+        }
+        PreviewBody::Parts(parts) => {
+            writeln!(out).map_err(io)?;
+            for part in parts {
+                writeln!(out, "{}", part_line(part)).map_err(io)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Handles `apic send`.
 pub(crate) fn send_cmd(args: &SendArgs) -> Result<(), CliError> {
     let path = resolve_one(&args.find)?;
@@ -154,6 +262,9 @@ pub(crate) fn send_cmd(args: &SendArgs) -> Result<(), CliError> {
         None => Vars::new(),
     };
     apply_var_flags(&args.vars, &mut vars)?;
+    if args.dry_run {
+        return dry_run(&contract, &vars, &project_root);
+    }
 
     for name in undefined_in_url_and_headers(&contract, &vars) {
         eprintln!("Warning: ${name} is not defined, sent as written");
