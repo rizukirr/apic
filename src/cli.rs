@@ -393,15 +393,20 @@ fn pairs(values: Vec<String>) -> Vec<(String, String)> {
 ///
 /// A `None` value is a no-op. Prints a success message on change; returns the
 /// error message on failure so the caller can set a non-zero exit code.
+/// Updates the configured root working directory when `working_dir` is given.
+/// In `--json` mode it then prints the current working directory.
 fn update_working_dir(working_dir: Option<&str>) -> Result<(), CliError> {
-    match working_dir {
-        Some(dir) => {
-            read_config_file().and_then(|mut conf| conf.update_root_dir(dir))?;
+    if let Some(dir) = working_dir {
+        read_config_file().and_then(|mut conf| conf.update_root_dir(dir))?;
+        if !output::json() {
             println!("Successfully updated");
-            Ok(())
         }
-        None => Ok(()),
     }
+    if output::json() {
+        let root = read_config_file().and_then(|c| c.get_root_dir())?;
+        output::emit(&json!({"working_dir": to_slash(&root)}));
+    }
+    Ok(())
 }
 
 /// Initializes a new `.apic` project, optionally pointing at `working_dir`.
@@ -410,16 +415,21 @@ fn update_working_dir(working_dir: Option<&str>) -> Result<(), CliError> {
 /// On an already-initialized project a missing template is seeded rather than
 /// erroring.
 fn init_cmd(working_dir: Option<&str>) -> Result<(), CliError> {
-    match Config::init(working_dir)? {
+    let status = match Config::init(working_dir)? {
         InitOutcome::Initialized { warning } => {
             if let Some(warning) = warning {
                 eprintln!("Warning: {warning}");
             }
-            println!("Successfully initialized");
+            "initialized"
         }
-        InitOutcome::TemplateSeeded => {
-            println!("Already initialized, created the missing template")
-        }
+        InitOutcome::TemplateSeeded => "template_seeded",
+    };
+    if output::json() {
+        output::emit(&json!({"status": status}));
+    } else if status == "initialized" {
+        println!("Successfully initialized");
+    } else {
+        println!("Already initialized, created the missing template");
     }
     Ok(())
 }
@@ -732,6 +742,11 @@ fn read_cmd(filename: Option<&str>, status: Option<u16>, template: bool) -> Resu
 fn read(content: &str, status: Option<u16>) -> Result<(), CliError> {
     let contract = json_get(content, status)
         .map_err(|err| CliError::new(ErrorKind::Invalid, err.to_string()))?;
+    if output::json() {
+        let value = serde_json::to_value(&contract).map_err(|err| err.to_string())?;
+        output::emit(&value);
+        return Ok(());
+    }
     render(&contract);
     if let Some(status) = status
         && contract.responses.is_empty()
@@ -1286,6 +1301,30 @@ fn open_in_editor(path: &Path, editor: Option<&str>) -> std::io::Result<()> {
 /// When `absolute` is true, paths are absolute: the tree shows the working
 /// directory as a root label and piped output prints absolute paths.
 fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), CliError> {
+    if output::json() {
+        let files = list(absolute)?.unwrap_or_default();
+        let root = read_config_file().and_then(|c| c.get_root_dir()).ok();
+        let mut hits: Vec<(i32, String)> = files
+            .iter()
+            .filter_map(|file| {
+                let rel = root
+                    .as_ref()
+                    .and_then(|r| file.strip_prefix(r).ok())
+                    .unwrap_or(file);
+                let score = match filter {
+                    Some(query) => fuzzy_match_path(query, &to_slash(rel))?.0,
+                    None => 0,
+                };
+                Some((score, to_slash(file)))
+            })
+            .collect();
+        if filter.is_some() {
+            hits.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+        }
+        let contracts: Vec<String> = hits.into_iter().map(|(_, path)| path).collect();
+        output::emit(&json!({"contracts": contracts}));
+        return Ok(());
+    }
     if let Some(files) = list(absolute)? {
         // Fuzzy-match the filter against the sanitized, working-dir-
         // relative form so an absolute prefix can't skew scores and

@@ -1227,3 +1227,151 @@ fn help_exits_0_with_text() {
         .success()
         .stdout(predicate::str::contains("Usage"));
 }
+
+#[test]
+fn list_json_prints_contract_paths() {
+    let dir = init_project("json_list");
+    apic(&dir)
+        .args(["create", "-f", "auth/login.json"])
+        .assert()
+        .success();
+    apic(&dir)
+        .args(["create", "-f", "user.json"])
+        .assert()
+        .success();
+    let out = apic(&dir).args(["list", "--json"]).output().unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    let paths: Vec<&str> = doc["contracts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap())
+        .collect();
+    assert!(
+        paths.iter().any(|p| p.ends_with("auth/login.json")),
+        "{paths:?}"
+    );
+    assert!(paths.iter().any(|p| p.ends_with("user.json")), "{paths:?}");
+
+    // The flag is global: before the subcommand gives the same document.
+    let before = apic(&dir).args(["--json", "list"]).output().unwrap();
+    assert_eq!(json_out(&before), doc);
+
+    let out = apic(&dir)
+        .args(["list", "--filter", "zzz_no_match_zzz", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["contracts"], serde_json::json!([]));
+}
+
+#[test]
+fn read_json_prints_the_stored_contract_filtered_by_status() {
+    let dir = init_project("json_read");
+    apic(&dir)
+        .args([
+            "create",
+            "-f",
+            "a.json",
+            "--response",
+            "200:OK",
+            "--response",
+            "404:Missing",
+        ])
+        .assert()
+        .success();
+    let out = apic(&dir)
+        .args(["read", "-f", "a", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["name"], "a");
+    assert!(doc["responses"].as_array().unwrap().len() >= 2);
+
+    let out = apic(&dir)
+        .args(["read", "-f", "a", "--status", "404", "--json"])
+        .output()
+        .unwrap();
+    let responses = json_out(&out)["responses"].clone();
+    let codes: Vec<u64> = responses
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["code"].as_u64().unwrap())
+        .collect();
+    assert!(!codes.is_empty());
+    assert!(codes.iter().all(|c| *c == 404), "{codes:?}");
+}
+
+#[test]
+fn validate_json_reports_every_contract() {
+    let dir = init_project("json_validate_ok");
+    apic(&dir)
+        .args(["create", "-f", "good.json"])
+        .assert()
+        .success();
+    let out = apic(&dir).args(["validate", "--json"]).output().unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["failed"], 0);
+    assert_eq!(doc["results"][0]["path"], "good.json");
+    assert_eq!(doc["results"][0]["ok"], true);
+
+    let out = apic(&dir)
+        .args(["validate", "--template", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["failed"], 0);
+}
+
+#[test]
+fn config_and_init_json() {
+    let dir = fresh_dir("json_init");
+    let out = apic(&dir).args(["init", "--json"]).output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["status"], "initialized");
+
+    let out = apic(&dir).args(["config", "--json"]).output().unwrap();
+    assert!(out.status.success());
+    assert!(json_out(&out)["working_dir"].is_string());
+}
+
+#[test]
+fn env_json_lists_environments_without_values() {
+    let dir = init_project("json_env");
+    fs::create_dir_all(dir.join(".apic/env")).unwrap();
+    fs::write(dir.join(".apic/env/staging.toml"), "token = \"secret\"\n").unwrap();
+    let out = apic(&dir).args(["env", "--json"]).output().unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["environments"][0]["name"], "staging");
+    assert_eq!(doc["environments"][0]["has_local"], false);
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("secret"));
+}
+
+#[test]
+fn vars_convert_json_reports_files() {
+    let dir = init_project("json_vars");
+    fs::write(
+        dir.join("contracts/a.json"),
+        r#"{"name":"a","method":"GET","url":"{{baseUrl}}/x","headers":[],"responses":[]}"#,
+    )
+    .unwrap();
+    let out = apic(&dir)
+        .args(["vars", "--convert", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["written"], false);
+    assert!(doc["total"].as_u64().unwrap() >= 1);
+    assert!(
+        doc["files"][0]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("a.json")
+    );
+}

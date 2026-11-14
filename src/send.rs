@@ -140,6 +140,14 @@ pub(crate) fn send_cmd(args: &SendArgs) -> Result<(), CliError> {
 pub(crate) fn env_cmd() -> Result<(), CliError> {
     let apic_dir = find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
     let envs = apic_core::env::list(&apic_dir);
+    if crate::output::json() {
+        let rows: Vec<serde_json::Value> = envs
+            .iter()
+            .map(|e| serde_json::json!({"name": e.name, "has_local": e.has_local}))
+            .collect();
+        crate::output::emit(&serde_json::json!({"environments": rows}));
+        return Ok(());
+    }
     if envs.is_empty() {
         println!("No environments. Create .apic/env/<name>.toml");
         return Ok(());
@@ -166,6 +174,8 @@ pub(crate) fn vars_cmd(convert: bool, write: bool) -> Result<(), CliError> {
     let mut files = crate::cli::list(true)?.unwrap_or_default();
     files.extend(apic_core::template::list_templates(&apic_dir));
 
+    let json = crate::output::json();
+    let mut rows = Vec::new();
     let mut total = 0;
     for path in files {
         let content = read_file(&path)
@@ -175,16 +185,19 @@ pub(crate) fn vars_cmd(convert: bool, write: bool) -> Result<(), CliError> {
             continue;
         }
         total += count;
-        println!(
-            "{}: {count}",
-            sanitize(&apic_core::file::relative_slash(&path, &root))
-        );
+        let shown = apic_core::file::relative_slash(&path, &root);
+        if !json {
+            println!("{}: {count}", sanitize(&shown));
+        }
+        rows.push(serde_json::json!({"path": shown, "count": count}));
         if write {
             std::fs::write(&path, converted)
                 .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
         }
     }
-    if total == 0 {
+    if json {
+        crate::output::emit(&serde_json::json!({"files": rows, "total": total, "written": write}));
+    } else if total == 0 {
         println!("No {{{{name}}}} variables found");
     } else if !write {
         println!("Dry run: pass --write to apply");
