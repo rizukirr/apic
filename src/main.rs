@@ -9,6 +9,7 @@
 // analysis see crate-internal items.
 #![warn(unreachable_pub)]
 
+mod check;
 mod cli;
 mod flags;
 mod output;

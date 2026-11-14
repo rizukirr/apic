@@ -128,6 +128,42 @@ enum Commands {
         timeout: u64,
     },
 
+    /// Send contracts' requests and compare the live responses with the
+    /// documented ones.
+    ///
+    /// Targets resolve like `validate`: no query checks every contract, a
+    /// query ending in `/` every contract under that folder, any other query
+    /// one contract. A folder or whole-project run sends only GET, HEAD and
+    /// OPTIONS contracts unless `--unsafe` is given. Exits 5 if any live
+    /// response differs from its contract.
+    Check {
+        /// Contract to check (path, extensionless, or fuzzy), or a folder
+        /// ending in `/`. Omit to check every contract.
+        #[arg(long, short = 'f', value_name = "QUERY")]
+        find: Option<String>,
+
+        /// Environment to take variable values from.
+        #[arg(long, value_name = "NAME")]
+        env: Option<String>,
+
+        /// Set a variable, overriding the environment. Repeatable.
+        #[arg(long = "var", value_name = "NAME=VALUE")]
+        vars: Vec<String>,
+
+        /// Require this live status code.
+        #[arg(long, value_name = "CODE")]
+        status: Option<u16>,
+
+        /// In folder and whole-project runs, also send methods other than
+        /// GET, HEAD and OPTIONS.
+        #[arg(long = "unsafe")]
+        unsafe_methods: bool,
+
+        /// Give up on each request after this many seconds.
+        #[arg(long, value_name = "SECS", default_value_t = 30)]
+        timeout: u64,
+    },
+
     /// List the environments in `.apic/env`, marking those with a local file.
     /// Values are never printed.
     Env,
@@ -777,6 +813,43 @@ fn read(content: &str, status: Option<u16>) -> Result<(), CliError> {
     Ok(())
 }
 
+/// The contracts a `validate` or `check` query names: every contract under
+/// the folder for a query ending in `/`, the one contract another query
+/// resolves to, or every contract with no query. Anything inside `.apic/`
+/// (notably the `template/` dir) is left out: a template may be a partial
+/// that is not a valid stand-alone contract. `None` when the project has no
+/// contracts at all.
+pub(crate) fn query_targets(find: Option<&str>) -> Result<Option<Vec<PathBuf>>, CliError> {
+    let Some(files) = list(true)? else {
+        return Ok(None);
+    };
+    let targets: Vec<PathBuf> = match find {
+        Some(name) if name.ends_with('/') => {
+            let base = read_config_file()
+                .and_then(|c| c.get_root_dir())
+                .ok()
+                .ok_or("Not in an apic project (run `apic init`)")?;
+            let dir = confine_to_dir(&base, Path::new(name))?;
+            if !dir.is_dir() {
+                return Err(CliError::new(
+                    ErrorKind::NotFound,
+                    format!("No such folder: {}", sanitize(name)),
+                ));
+            }
+            files.into_iter().filter(|f| f.starts_with(&dir)).collect()
+        }
+        Some(name) => vec![resolve_one(name)?],
+        None => files,
+    };
+    Ok(Some(match find_apic_dir() {
+        Some(apic_dir) => targets
+            .into_iter()
+            .filter(|p| !p.starts_with(&apic_dir))
+            .collect(),
+        None => targets,
+    }))
+}
+
 /// Validates contracts under the working directory.
 ///
 /// A `find` query ending in `/` validates every contract under that folder,
@@ -789,51 +862,16 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), CliError> {
         return validate_template_cmd();
     }
 
-    let Some(files) = list(true)? else {
+    let Some(targets) = query_targets(find)? else {
         return report_validation(&[], "No contracts found");
     };
+    if targets.is_empty()
+        && let Some(name) = find.filter(|n| n.ends_with('/'))
+    {
+        return report_validation(&[], &format!("No contracts found under {}", sanitize(name)));
+    }
 
     let root = read_config_file().and_then(|c| c.get_root_dir()).ok();
-
-    let targets: Vec<PathBuf> = match find {
-        Some(name) if name.ends_with('/') => {
-            let base = root
-                .clone()
-                .ok_or("Not in an apic project (run `apic init`)")?;
-            let dir = confine_to_dir(&base, Path::new(name))?;
-            if !dir.is_dir() {
-                return Err(CliError::new(
-                    ErrorKind::NotFound,
-                    format!("No such folder: {}", sanitize(name)),
-                ));
-            }
-            let in_dir: Vec<PathBuf> = files
-                .iter()
-                .filter(|f| f.starts_with(&dir))
-                .cloned()
-                .collect();
-            if in_dir.is_empty() {
-                return report_validation(
-                    &[],
-                    &format!("No contracts found under {}", sanitize(name)),
-                );
-            }
-            in_dir
-        }
-        Some(name) => vec![resolve_one(name)?],
-        None => files,
-    };
-
-    // Exclude anything inside `.apic/` (notably the `template/` dir) from the
-    // scan: a template may be a partial that is not a valid stand-alone contract,
-    // and it has its own check via `apic validate --template`.
-    let targets: Vec<PathBuf> = match find_apic_dir() {
-        Some(apic_dir) => targets
-            .into_iter()
-            .filter(|p| !p.starts_with(&apic_dir))
-            .collect(),
-        None => targets,
-    };
 
     // Template-conformance rules from the project template, loaded once and
     // reused for all targets; they enforce nothing when the template is absent.
@@ -1487,6 +1525,21 @@ pub(crate) fn run() {
             env,
             vars,
             include,
+            timeout,
+        }),
+        Commands::Check {
+            find,
+            env,
+            vars,
+            status,
+            unsafe_methods,
+            timeout,
+        } => crate::check::check_cmd(&crate::check::CheckArgs {
+            find,
+            env,
+            vars,
+            status,
+            unsafe_methods,
             timeout,
         }),
         Commands::Env => crate::send::env_cmd(),

@@ -10,6 +10,7 @@ use apic_core::json::JsonContent;
 use apic_core::vars::{Vars, substitute};
 use crossterm::style::Stylize;
 use std::io::{IsTerminal, Write};
+use std::path::Path;
 use std::time::Duration;
 
 /// Parsed `apic send` arguments.
@@ -27,7 +28,7 @@ pub(crate) struct SendArgs {
 }
 
 /// Parses `NAME=VALUE` pairs into `vars`, later ones winning.
-fn apply_var_flags(pairs: &[String], vars: &mut Vars) -> Result<(), String> {
+pub(crate) fn apply_var_flags(pairs: &[String], vars: &mut Vars) -> Result<(), String> {
     for pair in pairs {
         let (name, value) = pair
             .split_once('=')
@@ -35,6 +36,19 @@ fn apply_var_flags(pairs: &[String], vars: &mut Vars) -> Result<(), String> {
         vars.insert(name.trim().to_string(), value.to_string());
     }
     Ok(())
+}
+
+/// Reads and parses the contract at `path`. A file that does not parse is an
+/// `invalid` error.
+pub(crate) fn load_contract(path: &Path) -> Result<JsonContent, CliError> {
+    let content =
+        read_file(path).map_err(|err| format!("Failed to read {}: {}", path.display(), err))?;
+    serde_json::from_str(&content).map_err(|err| {
+        CliError::new(
+            ErrorKind::Invalid,
+            format!("{} is not a valid contract: {}", path.display(), err),
+        )
+    })
 }
 
 /// Undefined variable names used in the URL or header values.
@@ -133,14 +147,7 @@ pub(crate) fn send_cmd(args: &SendArgs) -> Result<(), CliError> {
     let project_root = apic_dir.parent().unwrap_or(&apic_dir).to_path_buf();
     apic_core::env::ensure_gitignore(&apic_dir)?;
 
-    let content =
-        read_file(&path).map_err(|err| format!("Failed to read {}: {}", path.display(), err))?;
-    let contract: JsonContent = serde_json::from_str(&content).map_err(|err| {
-        CliError::new(
-            ErrorKind::Invalid,
-            format!("{} is not a valid contract: {}", path.display(), err),
-        )
-    })?;
+    let contract = load_contract(&path)?;
 
     let mut vars = match &args.env {
         Some(name) => apic_core::env::load(&apic_dir, name)?,

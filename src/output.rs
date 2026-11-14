@@ -31,6 +31,8 @@ pub(crate) enum ErrorKind {
     Ambiguous,
     Invalid,
     Network,
+    /// A live response differs from its contract. Only a run's final status, never an error document.
+    Mismatch,
 }
 
 impl ErrorKind {
@@ -44,6 +46,7 @@ impl ErrorKind {
             ErrorKind::Ambiguous => "ambiguous",
             ErrorKind::Invalid => "invalid",
             ErrorKind::Network => "network",
+            ErrorKind::Mismatch => "mismatch",
         }
     }
 
@@ -54,6 +57,7 @@ impl ErrorKind {
             ErrorKind::NotFound | ErrorKind::Ambiguous => 2,
             ErrorKind::Invalid => 3,
             ErrorKind::Network => 4,
+            ErrorKind::Mismatch => 5,
         }
     }
 }
@@ -105,5 +109,6 @@ mod tests {
         assert_eq!(ErrorKind::Ambiguous.exit_code(), 2);
         assert_eq!(ErrorKind::Invalid.exit_code(), 3);
         assert_eq!(ErrorKind::Network.exit_code(), 4);
+        assert_eq!(ErrorKind::Mismatch.exit_code(), 5);
     }
 }
