@@ -277,7 +277,7 @@ The exit code is the same with or without `--json`:
 |------|-------------|------|
 | 0 | | success, including `send` getting any HTTP status |
 | 1 | `usage`, `not_initialized`, `error` | bad flags, outside a project, a file that cannot be read or written |
-| 2 | `not_found`, `ambiguous` | no contract matches the query, or several do |
+| 2 | `not_found`, `ambiguous` | no contract or template matches the query, or several do |
 | 3 | `invalid` | a contract does not parse or fails the schema, or `validate` found failures |
 | 4 | `network` | the connection failed or timed out |
 
