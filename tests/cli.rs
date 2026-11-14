@@ -192,8 +192,8 @@ fn read_unknown_contract_reports_not_found() {
     apic(&dir)
         .args(["read", "-f", "zzz_no_match_zzz"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("No contract found"));
+        .code(2)
+        .stderr(predicate::str::contains("No contract found"));
 }
 
 #[test]
@@ -1099,4 +1099,131 @@ fn vars_convert_is_dry_until_write() {
     let converted = fs::read_to_string(&file).unwrap();
     assert!(converted.contains("\"$baseUrl/x\""), "{converted}");
     assert!(converted.contains("Bearer $tok"), "{converted}");
+}
+
+/// Parses stdout as exactly one JSON document.
+fn json_out(out: &std::process::Output) -> serde_json::Value {
+    serde_json::from_slice(&out.stdout).expect("stdout is one JSON document")
+}
+
+#[test]
+fn unknown_flag_is_a_usage_error_with_exit_1() {
+    let dir = fresh_dir("json_usage");
+    apic(&dir).args(["list", "--nope"]).assert().code(1);
+    let out = apic(&dir)
+        .args(["list", "--nope", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json_out(&out)["error"]["kind"], "usage");
+}
+
+#[test]
+fn outside_a_project_is_not_initialized_with_exit_1() {
+    let dir = fresh_dir("json_noproject");
+    apic(&dir).arg("list").assert().code(1);
+    let out = apic(&dir).args(["list", "--json"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json_out(&out)["error"]["kind"], "not_initialized");
+}
+
+#[test]
+fn read_with_no_match_is_not_found_with_exit_2() {
+    let dir = init_project("json_read_missing");
+    let out = apic(&dir)
+        .args(["read", "-f", "zzz_no_match_zzz", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(json_out(&out)["error"]["kind"], "not_found");
+}
+
+#[test]
+fn ambiguous_query_exits_2() {
+    let dir = init_project("json_ambiguous");
+    for f in ["user/user.json", "auth/user.json"] {
+        apic(&dir).args(["create", "-f", f]).assert().success();
+    }
+    apic(&dir).args(["read", "-f", "user"]).assert().code(2);
+    let out = apic(&dir)
+        .args(["read", "-f", "user", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(json_out(&out)["error"]["kind"], "ambiguous");
+}
+
+#[test]
+fn validate_failure_exits_3_with_results() {
+    let dir = init_project("json_validate_fail");
+    apic(&dir)
+        .args(["create", "-f", "good.json"])
+        .assert()
+        .success();
+    fs::write(dir.join("contracts/broken.json"), "{ not json").unwrap();
+    apic(&dir).arg("validate").assert().code(3);
+    let out = apic(&dir).args(["validate", "--json"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(3));
+    let doc = json_out(&out);
+    assert_eq!(doc["failed"], 1);
+    assert_eq!(doc["passed"], 1);
+    let broken = doc["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == "broken.json")
+        .expect("broken.json is reported");
+    assert_eq!(broken["ok"], false);
+    assert!(broken["error"].is_string());
+}
+
+#[test]
+fn send_to_a_closed_port_is_network_with_exit_4() {
+    let dir = init_project("json_send_closed");
+    fs::write(
+        dir.join("contracts/down.json"),
+        r#"{"name":"down","method":"GET","url":"http://127.0.0.1:1/","headers":[],"responses":[]}"#,
+    )
+    .unwrap();
+    apic(&dir)
+        .args(["send", "-f", "down", "--timeout", "5"])
+        .assert()
+        .code(4);
+    let out = apic(&dir)
+        .args(["send", "-f", "down", "--timeout", "5", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(4));
+    assert_eq!(json_out(&out)["error"]["kind"], "network");
+}
+
+#[test]
+fn remove_in_json_mode_needs_yes() {
+    let dir = init_project("json_remove_no_yes");
+    apic(&dir)
+        .args(["create", "-f", "a.json"])
+        .assert()
+        .success();
+    let out = apic(&dir)
+        .args(["remove", "-f", "a", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json_out(&out)["error"]["kind"], "usage");
+    assert!(dir.join("contracts/a.json").exists());
+}
+
+#[test]
+fn help_exits_0_with_text() {
+    let dir = fresh_dir("json_help");
+    apic(&dir)
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Usage"));
+    apic(&dir)
+        .args(["--help", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Usage"));
 }

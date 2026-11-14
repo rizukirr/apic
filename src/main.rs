@@ -11,6 +11,7 @@
 
 mod cli;
 mod flags;
+mod output;
 mod render;
 mod send;
 mod tree;

@@ -1,6 +1,7 @@
 //! Command-line interface: argument parsing and subcommand handlers.
 
 use crate::flags::{AuthorFlags, apply_flags};
+use crate::output::{self, CliError, ErrorKind};
 use crate::render::{render, sanitize, use_color};
 use crate::tree;
 use apic_core::config::{Config, InitOutcome, find_apic_dir, read_config_file};
@@ -10,7 +11,7 @@ use apic_core::fuzzy::{fuzzy_find, fuzzy_match_path};
 use apic_core::json::{json_get, load_for_edit, scan_json_file};
 use apic_core::template::list_templates;
 use clap::{Args, Parser, Subcommand};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::fs;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -29,6 +30,11 @@ use std::path::{Path, PathBuf};
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Print one JSON document on stdout: the command's result, or
+    /// `{"error": {"kind", "message"}}` on failure.
+    #[arg(long, global = true)]
+    json: bool,
 }
 
 /// The subcommands accepted by `apic`.
@@ -387,7 +393,7 @@ fn pairs(values: Vec<String>) -> Vec<(String, String)> {
 ///
 /// A `None` value is a no-op. Prints a success message on change; returns the
 /// error message on failure so the caller can set a non-zero exit code.
-fn update_working_dir(working_dir: Option<&str>) -> Result<(), String> {
+fn update_working_dir(working_dir: Option<&str>) -> Result<(), CliError> {
     match working_dir {
         Some(dir) => {
             read_config_file().and_then(|mut conf| conf.update_root_dir(dir))?;
@@ -403,7 +409,7 @@ fn update_working_dir(working_dir: Option<&str>) -> Result<(), String> {
 /// The directory creation and config write are delegated to [`Config::init`].
 /// On an already-initialized project a missing template is seeded rather than
 /// erroring.
-fn init_cmd(working_dir: Option<&str>) -> Result<(), String> {
+fn init_cmd(working_dir: Option<&str>) -> Result<(), CliError> {
     match Config::init(working_dir)? {
         InitOutcome::Initialized { warning } => {
             if let Some(warning) = warning {
@@ -418,20 +424,11 @@ fn init_cmd(working_dir: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// Lists JSON contract files under the configured root directory.
-///
-/// Returns `None` when no files are found. If the project is not initialized,
-/// an error is printed and the process exits.
-pub(crate) fn list(is_absolute: bool) -> Option<Vec<PathBuf>> {
-    let root = match read_config_file().and_then(|conf| conf.get_root_dir()) {
-        Ok(root) => root,
-        Err(err) => {
-            eprintln!("{}", home_relative(&err));
-            std::process::exit(1);
-        }
-    };
-
-    scan_json_file(&root, is_absolute)
+/// Lists JSON contract files under the configured root directory, `None` when
+/// there are none.
+pub(crate) fn list(is_absolute: bool) -> Result<Option<Vec<PathBuf>>, String> {
+    let root = read_config_file().and_then(|conf| conf.get_root_dir())?;
+    Ok(scan_json_file(&root, is_absolute))
 }
 
 /// Outcome of resolving a contract reference against the discovered files.
@@ -627,40 +624,37 @@ fn ambiguous_template_error(name: &str, candidates: &[PathBuf], root: &Path) -> 
     msg
 }
 
-/// A contract reference resolved down to a single decision.
-pub(crate) enum Resolved {
-    /// Exactly one contract — proceed.
-    Path(PathBuf),
-
-    /// Nothing matched.
-    NotFound,
-}
-
 /// Renders `path` relative to `root` for display, control characters stripped.
 fn rel_display(path: &Path, root: &Path) -> String {
     sanitize(&apic_core::file::relative_slash(path, root))
 }
 
 /// Reports a declined confirmation; declining is not an error.
-fn cancelled() -> Result<(), String> {
+fn cancelled() -> Result<(), CliError> {
     println!("cancelled");
     Ok(())
 }
 
 /// Resolves `filename` to exactly one contract.
 ///
-/// An ambiguous reference is an error listing every candidate, best match
-/// first, so a script fails loudly instead of guessing.
-pub(crate) fn resolve_one(filename: &str) -> Result<Resolved, String> {
-    let files = match list(true) {
-        Some(files) => files,
-        None => return Ok(Resolved::NotFound),
+/// No match is a `not_found` error. An ambiguous reference is an `ambiguous`
+/// error listing every candidate, best match first, so a script fails loudly
+/// instead of guessing.
+pub(crate) fn resolve_one(filename: &str) -> Result<PathBuf, CliError> {
+    let not_found = || {
+        CliError::new(
+            ErrorKind::NotFound,
+            format!("No contract found matching '{}'", sanitize(filename)),
+        )
+    };
+    let Some(files) = list(true)? else {
+        return Err(not_found());
     };
     let root = read_config_file().and_then(|c| c.get_root_dir())?;
 
     match classify(filename, &root, &files) {
-        Resolution::One(path) => Ok(Resolved::Path(path)),
-        Resolution::None => Ok(Resolved::NotFound),
+        Resolution::One(path) => Ok(path),
+        Resolution::None => Err(not_found()),
         Resolution::Many(candidates) => {
             let labels: Vec<String> = candidates.iter().map(|c| rel_display(c, &root)).collect();
             let mut msg = format!(
@@ -672,32 +666,32 @@ pub(crate) fn resolve_one(filename: &str) -> Result<Resolved, String> {
                 msg.push_str(&format!("  {label}\n"));
             }
             msg.push_str(&format!("Specify the path, e.g. -f {}", labels[0]));
-            Err(msg)
+            Err(CliError::new(ErrorKind::Ambiguous, msg))
         }
     }
 }
 
 /// Reads the project template if there is exactly one, otherwise fails listing
 /// what is there.
-fn read_template_cmd() -> Result<(), String> {
+fn read_template_cmd() -> Result<(), CliError> {
     let apic_dir = find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
     let templates = list_templates(&apic_dir);
     let root = apic_dir.parent().unwrap_or(&apic_dir);
 
     match classify_template("", &templates) {
-        Resolution::One(path) => match read_file(&path) {
-            Ok(content) => read(&content, None),
-            Err(err) => {
-                eprintln!(
-                    "Failed to read {}: {}",
-                    home_relative(&sanitize(&to_slash(&path))),
-                    err
-                );
-                println!("No contract found");
-                Ok(())
-            }
-        },
-        Resolution::None => Err(no_template_error("", &templates, root)),
+        Resolution::One(path) => {
+            let content = read_file(&path).map_err(|err| {
+                format!(
+                    "Failed to read {}: {err}",
+                    home_relative(&sanitize(&to_slash(&path)))
+                )
+            })?;
+            read(&content, None)
+        }
+        Resolution::None => Err(CliError::new(
+            ErrorKind::NotFound,
+            no_template_error("", &templates, root),
+        )),
         Resolution::Many(candidates) => {
             let labels: Vec<String> = candidates.iter().map(|c| rel_display(c, root)).collect();
             let mut msg = format!("'' is ambiguous, {} templates match:\n", labels.len());
@@ -705,80 +699,62 @@ fn read_template_cmd() -> Result<(), String> {
                 msg.push_str(&format!("  {label}\n"));
             }
             msg.push_str(&format!("Specify the path, e.g. -f {}", labels[0]));
-            Err(msg)
+            Err(CliError::new(ErrorKind::Ambiguous, msg))
         }
     }
 }
 
 /// Handles `apic read`: resolve to one contract, read it, render it.
-fn read_cmd(filename: Option<&str>, status: Option<u16>, template: bool) -> Result<(), String> {
+fn read_cmd(filename: Option<&str>, status: Option<u16>, template: bool) -> Result<(), CliError> {
     if template {
         return read_template_cmd();
     }
 
     // The parser requires `-f` unless `--template` is given, so this is safe.
     let filename = filename.expect("a find query is required without --template");
-    match resolve_one(filename)? {
-        Resolved::Path(path) => match read_file(&path) {
-            Ok(content) => read(&content, status),
-            Err(err) => {
-                eprintln!(
-                    "Failed to read {}: {}",
-                    home_relative(&sanitize(&to_slash(&path))),
-                    err
-                );
-                println!("No contract found");
-                Ok(())
-            }
-        },
-        Resolved::NotFound => {
-            println!("No contract found");
-            Ok(())
-        }
-    }
+    let path = resolve_one(filename)?;
+    let content = read_file(&path).map_err(|err| {
+        format!(
+            "Failed to read {}: {err}",
+            home_relative(&sanitize(&to_slash(&path)))
+        )
+    })?;
+    read(&content, status)
 }
 
 /// Parses `content` as a JSON contract, keeps only the responses whose code
 /// matches `status` (or all responses when `status` is `None`), and renders
 /// the resulting contract as formatted text.
 ///
-/// Parse errors are printed rather than returned. When a `status` filter
-/// matches no response, a note is printed so the empty output is not mistaken
-/// for a contract without responses.
-fn read(content: &str, status: Option<u16>) -> Result<(), String> {
-    match json_get(content, status) {
-        Ok(contract) => {
-            render(&contract);
-            if let Some(status) = status
-                && contract.responses.is_empty()
-            {
-                println!("\n No response with status {status}");
-            }
-            Ok(())
-        }
-        Err(err) => Err(err.to_string()),
+/// A parse failure is an `invalid` error. When a `status` filter matches no
+/// response, a note is printed so the empty output is not mistaken for a
+/// contract without responses.
+fn read(content: &str, status: Option<u16>) -> Result<(), CliError> {
+    let contract = json_get(content, status)
+        .map_err(|err| CliError::new(ErrorKind::Invalid, err.to_string()))?;
+    render(&contract);
+    if let Some(status) = status
+        && contract.responses.is_empty()
+    {
+        println!("\n No response with status {status}");
     }
+    Ok(())
 }
 
-/// Validates contracts under the working directory, printing one line per file.
+/// Validates contracts under the working directory.
 ///
 /// A `find` query ending in `/` validates every contract under that folder,
-/// recursively. Otherwise the reference is resolved like `read` — exact path,
-/// basename, then fuzzy, prompting when ambiguous; with no query every contract
-/// is checked. Each file is read (subject to the size cap) and parsed against
-/// the contract schema. Prints `ok`/`FAIL` per file and a summary, and exits
-/// the process non-zero if any contract is invalid so it can gate CI.
-fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
+/// recursively. Otherwise the reference is resolved like `read`, and with no
+/// query every contract is checked. Each file is read (subject to the size
+/// cap) and parsed against the contract schema and the template rules. Any
+/// failure exits with the `invalid` code so it can gate CI.
+fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), CliError> {
     if template {
         return validate_template_cmd();
     }
 
-    let files = match list(true) {
-        Some(files) => files,
-        None => {
-            println!("No contracts found");
-            return Ok(());
-        }
+    let Some(files) = list(true)? else {
+        return report_validation(&[], "No contracts found");
     };
 
     let root = read_config_file().and_then(|c| c.get_root_dir()).ok();
@@ -790,8 +766,10 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
                 .ok_or("Not in an apic project (run `apic init`)")?;
             let dir = confine_to_dir(&base, Path::new(name))?;
             if !dir.is_dir() {
-                eprintln!("No such folder: {}", sanitize(name));
-                std::process::exit(1);
+                return Err(CliError::new(
+                    ErrorKind::NotFound,
+                    format!("No such folder: {}", sanitize(name)),
+                ));
             }
             let in_dir: Vec<PathBuf> = files
                 .iter()
@@ -799,25 +777,21 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
                 .cloned()
                 .collect();
             if in_dir.is_empty() {
-                println!("No contracts found under {}", sanitize(name));
-                return Ok(());
+                return report_validation(
+                    &[],
+                    &format!("No contracts found under {}", sanitize(name)),
+                );
             }
             in_dir
         }
-        Some(name) => match resolve_one(name)? {
-            Resolved::Path(path) => vec![path],
-            Resolved::NotFound => {
-                eprintln!("No contract matches {}", sanitize(name));
-                std::process::exit(1);
-            }
-        },
+        Some(name) => vec![resolve_one(name)?],
         None => files,
     };
 
     // Exclude anything inside `.apic/` (notably the `template/` dir) from the
     // scan: a template may be a partial that is not a valid stand-alone contract,
     // and it has its own check via `apic validate --template`.
-    let targets: Vec<PathBuf> = match apic_core::config::find_apic_dir() {
+    let targets: Vec<PathBuf> = match find_apic_dir() {
         Some(apic_dir) => targets
             .into_iter()
             .filter(|p| !p.starts_with(&apic_dir))
@@ -829,91 +803,95 @@ fn validate_cmd(template: bool, find: Option<&str>) -> Result<(), String> {
     // reused for all targets; they enforce nothing when the template is absent.
     let rules = apic_core::template::load_rules()?;
 
-    let mut failed = 0usize;
-    for path in &targets {
-        let shown = root
-            .as_ref()
-            .and_then(|r| path.strip_prefix(r).ok())
-            .unwrap_or(path);
-        // Normalize to forward slashes so output matches the rest of apic and is
-        // stable across platforms (Windows would otherwise show backslashes).
-        let shown = sanitize(&to_slash(shown));
+    let results: Vec<(String, Option<String>)> = targets
+        .iter()
+        .map(|path| {
+            let shown = root
+                .as_ref()
+                .and_then(|r| path.strip_prefix(r).ok())
+                .unwrap_or(path);
+            let result = read_file(path)
+                .map_err(|err| err.to_string())
+                .and_then(|content| {
+                    // Schema validity uses the same primitive as apic_core::validate_dir.
+                    apic_core::json::validate(&content).map_err(|err| err.to_string())?;
+                    let issues = rules.check(&content)?;
+                    if issues.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(issues.join(", "))
+                    }
+                });
+            (to_slash(shown), result.err())
+        })
+        .collect();
 
-        let result = read_file(path)
-            .map_err(|err| err.to_string())
-            .and_then(|content| {
-                // Schema validity uses the same primitive as apic_core::validate_dir.
-                apic_core::json::validate(&content).map_err(|err| err.to_string())?;
-                let issues = rules.check(&content)?;
-                if issues.is_empty() {
-                    Ok(())
-                } else {
-                    Err(issues.join(", "))
-                }
-            });
-
-        match result {
-            Ok(()) => println!("ok   {shown}"),
-            Err(err) => {
-                println!("FAIL {shown}: {}", home_relative(&sanitize(&err)));
-                failed += 1;
-            }
-        }
-    }
-
-    println!("\n{} passed, {} failed", targets.len() - failed, failed);
-    if failed > 0 {
-        std::process::exit(1);
-    }
-
-    Ok(())
+    report_validation(&results, "")
 }
 
 /// Validates every project template in `.apic/template/` for `apic validate
-/// --template`.
-///
-/// Prints `ok`/`FAIL` per template using the same convention as contract
-/// validation and exits non-zero when any template is invalid, so it can gate
-/// CI. An empty template directory (or no project) is not a failure — `create`
-/// would use the built-in default.
-fn validate_template_cmd() -> Result<(), String> {
-    let apic_dir = match apic_core::config::find_apic_dir() {
-        Some(dir) => dir,
-        None => {
-            println!("No project template found, create will use the built-in template");
-            return Ok(());
-        }
+/// --template`. An empty template directory (or no project) is not a failure,
+/// since `create` would use the built-in default.
+fn validate_template_cmd() -> Result<(), CliError> {
+    const NONE: &str = "No project template found, create will use the built-in template";
+    let Some(apic_dir) = find_apic_dir() else {
+        return report_validation(&[], NONE);
     };
-    let templates = apic_core::template::list_templates(&apic_dir);
-    if templates.is_empty() {
-        println!("No project template found, create will use the built-in template");
-        return Ok(());
-    }
-
+    let templates = list_templates(&apic_dir);
     let root = apic_dir.parent().unwrap_or(&apic_dir);
-    let mut failed = 0usize;
-    for path in &templates {
-        let shown = rel_display(path, root);
-        match apic_core::template::check_path(path) {
-            apic_core::template::TemplateCheck::Valid => println!("ok   {shown}"),
-            apic_core::template::TemplateCheck::Invalid(reason) => {
-                println!("FAIL {shown}: {}", sanitize(&reason));
-                failed += 1;
-            }
-            // list_templates yields existing files, so a read failure is
-            // unexpected; count it as a failure rather than skip it silently.
-            apic_core::template::TemplateCheck::Absent => {
-                println!("FAIL {shown}: could not read template");
-                failed += 1;
+    let results: Vec<(String, Option<String>)> = templates
+        .iter()
+        .map(|path| {
+            let err = match apic_core::template::check_path(path) {
+                apic_core::template::TemplateCheck::Valid => None,
+                apic_core::template::TemplateCheck::Invalid(reason) => Some(reason),
+                // list_templates yields existing files, so a read failure is
+                // unexpected; count it as a failure rather than skip it silently.
+                apic_core::template::TemplateCheck::Absent => {
+                    Some("could not read template".to_string())
+                }
+            };
+            (apic_core::file::relative_slash(path, root), err)
+        })
+        .collect();
+    report_validation(&results, NONE)
+}
+
+/// Reports validation `results` (path, and the error when it failed): one
+/// JSON document in `--json` mode, otherwise `ok`/`FAIL` lines and a summary,
+/// or the `empty` line when there is nothing to report. Any failure is an
+/// `invalid` error whose report is already printed.
+fn report_validation(results: &[(String, Option<String>)], empty: &str) -> Result<(), CliError> {
+    let failed = results.iter().filter(|(_, err)| err.is_some()).count();
+    if output::json() {
+        let rows: Vec<Value> = results
+            .iter()
+            .map(|(path, err)| match err {
+                None => json!({"path": path, "ok": true}),
+                Some(err) => json!({"path": path, "ok": false, "error": err}),
+            })
+            .collect();
+        output::emit(&json!({
+            "results": rows,
+            "passed": results.len() - failed,
+            "failed": failed,
+        }));
+    } else if results.is_empty() {
+        println!("{empty}");
+    } else {
+        for (path, err) in results {
+            match err {
+                None => println!("ok   {}", sanitize(path)),
+                Some(err) => println!("FAIL {}: {}", sanitize(path), home_relative(&sanitize(err))),
             }
         }
+        println!("\n{} passed, {} failed", results.len() - failed, failed);
     }
-
-    println!("\n{} passed, {} failed", templates.len() - failed, failed);
     if failed > 0 {
-        std::process::exit(1);
+        Err(CliError::reported(ErrorKind::Invalid))
+    } else {
+        Ok(())
     }
-    Ok(())
 }
 
 /// Dispatches `apic create`: `--template <name>` authors a template, otherwise a
@@ -924,7 +902,7 @@ fn create_cmd(
     template: Option<&str>,
     use_template: Option<&str>,
     flags: &AuthorFlags,
-) -> Result<(), String> {
+) -> Result<(), CliError> {
     if let Some(name) = template {
         return create_template_cmd(name, use_template, flags);
     }
@@ -942,7 +920,7 @@ fn create_template_cmd(
     name: &str,
     use_template: Option<&str>,
     flags: &AuthorFlags,
-) -> Result<(), String> {
+) -> Result<(), CliError> {
     let apic_dir =
         apic_core::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
 
@@ -950,7 +928,8 @@ fn create_template_cmd(
         return Err(format!(
             "invalid template name '{}': use a flat name without path separators",
             sanitize(name)
-        ));
+        )
+        .into());
     }
     let file = if name.ends_with(".json") {
         name.to_string()
@@ -960,7 +939,7 @@ fn create_template_cmd(
     let dir = apic_core::template::dir(&apic_dir);
     let path = dir.join(&file);
     if path.exists() {
-        return Err(format!("template '{}' already exists", sanitize(&file)));
+        return Err(format!("template '{}' already exists", sanitize(&file)).into());
     }
 
     let overlay = match use_template {
@@ -970,7 +949,7 @@ fn create_template_cmd(
         },
         None => None,
     };
-    write_new(&path, overlay.as_deref(), flags)
+    Ok(write_new(&path, overlay.as_deref(), flags)?)
 }
 
 /// Creates a new contract at `filename`, seeded from the chosen template.
@@ -983,7 +962,7 @@ fn create_contract_cmd(
     filename: &str,
     use_template: Option<&str>,
     flags: &AuthorFlags,
-) -> Result<(), String> {
+) -> Result<(), CliError> {
     let filename = if filename.ends_with(".json") {
         filename.to_string()
     } else {
@@ -995,7 +974,7 @@ fn create_contract_cmd(
     };
 
     if path.exists() {
-        return Err(format!("{} already exists", path.display()));
+        return Err(format!("{} already exists", path.display()).into());
     }
 
     let overlay = match apic_core::config::find_apic_dir() {
@@ -1005,7 +984,7 @@ fn create_contract_cmd(
         },
         None => None,
     };
-    write_new(&path, overlay.as_deref(), flags)
+    Ok(write_new(&path, overlay.as_deref(), flags)?)
 }
 
 /// Reads the template file at `path` for seeding.
@@ -1133,20 +1112,16 @@ fn seed_model(overlay: Option<&str>) -> Result<EditModel, String> {
 /// Handles `apic edit`: resolves `filename` to one contract, applies `flags`,
 /// validates the result and writes it, printing `updated <path>`. Nothing is
 /// written when any step fails.
-fn edit_cmd(filename: &str, flags: &AuthorFlags) -> Result<(), String> {
-    let path = match resolve_one(filename)? {
-        Resolved::Path(path) => path,
-        Resolved::NotFound => {
-            return Err(format!(
-                "No contract found matching '{}'",
-                sanitize(filename)
-            ));
-        }
-    };
+fn edit_cmd(filename: &str, flags: &AuthorFlags) -> Result<(), CliError> {
+    let path = resolve_one(filename)?;
     let text =
         read_file(&path).map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
-    let contract = load_for_edit(&text)
-        .map_err(|err| format!("{} is not a valid contract: {err}", path.display()))?;
+    let contract = load_for_edit(&text).map_err(|err| {
+        CliError::new(
+            ErrorKind::Invalid,
+            format!("{} is not a valid contract: {err}", path.display()),
+        )
+    })?;
     let mut model = EditModel::from_contract(contract);
     let contract = finish(&mut model, flags)?;
     fs::write(&path, contract)
@@ -1157,7 +1132,7 @@ fn edit_cmd(filename: &str, flags: &AuthorFlags) -> Result<(), String> {
 
 /// Opens a contract in the editor, or the project template when `template` is
 /// set, seeding the template from the default first if it does not exist.
-fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Result<(), String> {
+fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Result<(), CliError> {
     let path = if template {
         let apic_dir =
             apic_core::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
@@ -1166,37 +1141,28 @@ fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Res
     } else {
         // The parser requires `-f` unless `--template` is given, so this is safe.
         let filename = filename.expect("a find query is required without --template");
-        match resolve_one(filename)? {
-            Resolved::Path(path) => path,
-            Resolved::NotFound => {
-                return Err(format!("No contract found matching '{filename}'"));
-            }
-        }
+        resolve_one(filename)?
     };
-    open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))
+    Ok(open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))?)
 }
 
 /// Handles `apic remove`: deletes a template (`--template`) or a contract
 /// (`--find`), after confirmation on an interactive terminal unless `yes`.
-fn remove_cmd(filename: Option<&str>, template: Option<&str>, yes: bool) -> Result<(), String> {
+fn remove_cmd(filename: Option<&str>, template: Option<&str>, yes: bool) -> Result<(), CliError> {
     if let Some(name) = template {
         return remove_template_cmd(name, yes);
     }
     // clap guarantees `--find` is present when `--template` is absent.
     let filename = filename.expect("clap requires --find unless --template is given");
-    match resolve_one(filename)? {
-        Resolved::Path(path) => {
-            let root = read_config_file().and_then(|c| c.get_root_dir())?;
-            let shown = rel_display(&path, &root);
-            if !yes && !confirm(&format!("Remove {shown}?"))? {
-                return cancelled();
-            }
-            fs::remove_file(&path).map_err(|err| format!("Failed to remove {shown}: {err}"))?;
-            println!("Removed {shown}");
-            Ok(())
-        }
-        Resolved::NotFound => Err(format!("No contract found matching '{filename}'")),
+    let path = resolve_one(filename)?;
+    let root = read_config_file().and_then(|c| c.get_root_dir())?;
+    let shown = rel_display(&path, &root);
+    if !yes && !confirm(&format!("Remove {shown}?"))? {
+        return cancelled();
     }
+    fs::remove_file(&path).map_err(|err| format!("Failed to remove {shown}: {err}"))?;
+    println!("Removed {shown}");
+    Ok(())
 }
 
 /// Removes a project template from `.apic/template/` by (fuzzy) `name`.
@@ -1206,7 +1172,7 @@ fn remove_cmd(filename: Option<&str>, template: Option<&str>, yes: bool) -> Resu
 /// Confirmation matches contract removal (skipped with `yes` or when
 /// stdin/stdout is not a terminal). No template is protected — removing the
 /// last one is fine, since `create` reseeds `convention.json` from the built-in.
-fn remove_template_cmd(name: &str, yes: bool) -> Result<(), String> {
+fn remove_template_cmd(name: &str, yes: bool) -> Result<(), CliError> {
     let apic_dir =
         apic_core::config::find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
     let templates = apic_core::template::list_templates(&apic_dir);
@@ -1214,9 +1180,9 @@ fn remove_template_cmd(name: &str, yes: bool) -> Result<(), String> {
 
     let path = match classify_template(name, &templates) {
         Resolution::One(path) => path,
-        Resolution::None => return Err(no_template_error(name, &templates, root)),
+        Resolution::None => return Err(no_template_error(name, &templates, root).into()),
         Resolution::Many(candidates) => {
-            return Err(ambiguous_template_error(name, &candidates, root));
+            return Err(ambiguous_template_error(name, &candidates, root).into());
         }
     };
 
@@ -1231,7 +1197,7 @@ fn remove_template_cmd(name: &str, yes: bool) -> Result<(), String> {
 
 /// Handles `apic convert`: resolve the destination under the working directory,
 /// then parse the Postman collection and write contracts.
-fn convert_cmd(postman: &Path, destination: Option<&str>, force: bool) -> Result<(), String> {
+fn convert_cmd(postman: &Path, destination: Option<&str>, force: bool) -> Result<(), CliError> {
     let root = read_config_file().and_then(|conf| conf.get_root_dir())?;
     let dest_base = match destination {
         Some(dir) => confine_to_dir(&root, Path::new(dir))?,
@@ -1258,8 +1224,16 @@ fn convert_cmd(postman: &Path, destination: Option<&str>, force: bool) -> Result
 ///
 /// Only prompts on an interactive terminal: when stdin or stdout is not a TTY
 /// there is no one to answer, so the action proceeds. A leading `y`/`yes`
-/// (case-insensitive) confirms; anything else declines.
-fn confirm(prompt: &str) -> Result<bool, String> {
+/// (case-insensitive) confirms; anything else declines. In `--json` mode it
+/// never prompts and fails with a `usage` error, so a JSON caller deletes only
+/// with `--yes`.
+fn confirm(prompt: &str) -> Result<bool, CliError> {
+    if output::json() {
+        return Err(CliError::new(
+            ErrorKind::Usage,
+            "Pass --yes to confirm in --json mode",
+        ));
+    }
     if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
         return Ok(true);
     }
@@ -1311,8 +1285,8 @@ fn open_in_editor(path: &Path, editor: Option<&str>) -> std::io::Result<()> {
 /// If `filter` is given, only files whose path fuzzy-matches it are printed.
 /// When `absolute` is true, paths are absolute: the tree shows the working
 /// directory as a root label and piped output prints absolute paths.
-fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), String> {
-    if let Some(files) = list(absolute) {
+fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), CliError> {
+    if let Some(files) = list(absolute)? {
         // Fuzzy-match the filter against the sanitized, working-dir-
         // relative form so an absolute prefix can't skew scores and
         // the match indices stay aligned with what is printed. File
@@ -1387,10 +1361,21 @@ fn list_cmd(filter: Option<&str>, absolute: bool) -> Result<(), String> {
 
 /// Parses command-line arguments and runs the selected subcommand.
 ///
-/// This is the CLI entry point invoked from `main`.
+/// This is the CLI entry point invoked from `main`, and the only place that
+/// prints an error and exits.
 pub(crate) fn run() {
-    let cli = Cli::parse();
-    let result: Result<(), String> = match cli.command {
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(err) => usage_error(err),
+    };
+    output::set_json(cli.json);
+    if needs_project(&cli.command) && find_apic_dir().is_none() {
+        fail(CliError::new(
+            ErrorKind::NotInitialized,
+            "Not initialized yet, run `apic init` first",
+        ));
+    }
+    let result: Result<(), CliError> = match cli.command {
         Commands::Config { set_dir } => update_working_dir(set_dir.as_deref()),
         Commands::Create {
             filename,
@@ -1446,9 +1431,51 @@ pub(crate) fn run() {
     };
 
     if let Err(err) = result {
-        eprintln!("Error: {}", home_relative(&err));
-        std::process::exit(1);
+        fail(err);
     }
+}
+
+/// Exits on a clap parse error. Help and version print as clap does and exit
+/// 0. Every other parse error is a `usage` error with exit 1, printed as JSON
+/// when `--json` is among the arguments.
+fn usage_error(err: clap::Error) -> ! {
+    use clap::error::ErrorKind as Clap;
+    if matches!(err.kind(), Clap::DisplayHelp | Clap::DisplayVersion) {
+        err.exit();
+    }
+    if std::env::args().any(|arg| arg == "--json") {
+        output::set_json(true);
+        fail(CliError::new(ErrorKind::Usage, err.render().to_string()));
+    }
+    let _ = err.print();
+    std::process::exit(ErrorKind::Usage.exit_code());
+}
+
+/// Whether `command` runs only inside an apic project. `init`, `create` of a
+/// contract and `validate --template` also work outside one.
+fn needs_project(command: &Commands) -> bool {
+    !matches!(
+        command,
+        Commands::Init { .. }
+            | Commands::Create { template: None, .. }
+            | Commands::Validate { template: true, .. }
+    )
+}
+
+/// Prints `err`, as a JSON error document in `--json` mode or as `Error: ...`
+/// on stderr otherwise, and exits with its kind's code. An error whose report
+/// was already printed only exits.
+fn fail(err: CliError) -> ! {
+    if !err.message.is_empty() {
+        if output::json() {
+            output::emit(&json!({
+                "error": {"kind": err.kind.as_str(), "message": err.message}
+            }));
+        } else {
+            eprintln!("Error: {}", home_relative(&err.message));
+        }
+    }
+    std::process::exit(err.kind.exit_code())
 }
 
 #[cfg(test)]

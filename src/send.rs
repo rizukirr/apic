@@ -1,6 +1,7 @@
 //! `apic send`: fire a contract's request and print the reply.
 
-use crate::cli::{Resolved, resolve_one};
+use crate::cli::resolve_one;
+use crate::output::{CliError, ErrorKind};
 use crate::render::{highlight_json_line, sanitize, use_color};
 use apic_core::config::find_apic_dir;
 use apic_core::file::read_file;
@@ -79,21 +80,20 @@ fn print_body(body: &[u8]) -> Result<(), String> {
 }
 
 /// Handles `apic send`.
-pub(crate) fn send_cmd(args: &SendArgs) -> Result<(), String> {
-    let path = match resolve_one(&args.find)? {
-        Resolved::Path(path) => path,
-        Resolved::NotFound => {
-            return Err(format!("No contract matches '{}'", sanitize(&args.find)));
-        }
-    };
+pub(crate) fn send_cmd(args: &SendArgs) -> Result<(), CliError> {
+    let path = resolve_one(&args.find)?;
     let apic_dir = find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
     let project_root = apic_dir.parent().unwrap_or(&apic_dir).to_path_buf();
     apic_core::env::ensure_gitignore(&apic_dir)?;
 
     let content =
         read_file(&path).map_err(|err| format!("Failed to read {}: {}", path.display(), err))?;
-    let contract: JsonContent = serde_json::from_str(&content)
-        .map_err(|err| format!("{} is not a valid contract: {}", path.display(), err))?;
+    let contract: JsonContent = serde_json::from_str(&content).map_err(|err| {
+        CliError::new(
+            ErrorKind::Invalid,
+            format!("{} is not a valid contract: {}", path.display(), err),
+        )
+    })?;
 
     let mut vars = match &args.env {
         Some(name) => apic_core::env::load(&apic_dir, name)?,
@@ -105,12 +105,9 @@ pub(crate) fn send_cmd(args: &SendArgs) -> Result<(), String> {
         eprintln!("Warning: ${name} is not defined, sent as written");
     }
 
-    let reply = http::send(
-        &contract,
-        &vars,
-        &project_root,
-        Duration::from_secs(args.timeout),
-    )?;
+    let prepared = http::prepare(&contract, &vars, &project_root)?;
+    let reply = http::execute(&prepared, Duration::from_secs(args.timeout))
+        .map_err(|err| CliError::new(ErrorKind::Network, err))?;
 
     let status_line = format!("HTTP {} {}", reply.status, reply.reason);
     let summary = format!("{status_line} · {} ms", reply.elapsed.as_millis());
@@ -136,11 +133,11 @@ pub(crate) fn send_cmd(args: &SendArgs) -> Result<(), String> {
         }
         writeln!(out).map_err(io)?;
     }
-    print_body(&reply.body)
+    Ok(print_body(&reply.body)?)
 }
 
 /// Handles `apic env`.
-pub(crate) fn env_cmd() -> Result<(), String> {
+pub(crate) fn env_cmd() -> Result<(), CliError> {
     let apic_dir = find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
     let envs = apic_core::env::list(&apic_dir);
     if envs.is_empty() {
@@ -160,13 +157,13 @@ pub(crate) fn env_cmd() -> Result<(), String> {
 /// Handles `apic vars`: with `convert`, rewrites `{{name}}` to `$name` in
 /// every contract and template, printing each file and count, and writes only
 /// with `write`.
-pub(crate) fn vars_cmd(convert: bool, write: bool) -> Result<(), String> {
+pub(crate) fn vars_cmd(convert: bool, write: bool) -> Result<(), CliError> {
     if !convert {
-        return Err("Nothing to do: pass --convert".to_string());
+        return Err("Nothing to do: pass --convert".into());
     }
     let apic_dir = find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
     let root = apic_dir.parent().unwrap_or(&apic_dir).to_path_buf();
-    let mut files = crate::cli::list(true).unwrap_or_default();
+    let mut files = crate::cli::list(true)?.unwrap_or_default();
     files.extend(apic_core::template::list_templates(&apic_dir));
 
     let mut total = 0;
