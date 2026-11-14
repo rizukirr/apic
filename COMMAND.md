@@ -257,7 +257,6 @@ skipped   contracts/demo/login.json   POST, pass --unsafe to send it
 1 passed, 1 mismatched, 1 skipped, 0 failed
 ```
 
-
 ## `apic convert --postman <file> [--destination <dir>]`
 Imports a Postman collection as apic contracts, one JSON file per request,
 mirroring the collection's folder nesting. Accepts Postman Collection exports of
@@ -333,6 +332,6 @@ What each command prints with `--json`:
 
 `send` puts a JSON body in `body` as a JSON value and sets `body_encoding` to `json`. Other text bodies are a string with `text`, and binary bodies are base64 with `base64`.
 
-`validate` with failures prints its full results document and exits 3. `remove --json` deletes only with `--yes`, and without it fails with a `usage` error. `check` always prints its full results document, and `result` is `pass`, `mismatch`, `skipped` or `error`.
+`validate` with failures prints its full results document and exits 3. `remove --json` deletes only with `--yes`, and without it fails with a `usage` error. `check` prints its full results document, with `result` set to `pass`, `mismatch`, `skipped` or `error`. When a single contract cannot be checked, it prints the error document instead, as `send` does.
 
 Contract paths are relative to the working directory, the form `-f` accepts. Template paths are relative to the project root.
