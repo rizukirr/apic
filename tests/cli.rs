@@ -1753,3 +1753,103 @@ fn check_connection_failure_exits_4() {
     assert_eq!(out.status.code(), Some(4));
     assert_eq!(json_out(&out)["error"]["kind"], "network");
 }
+
+/// A project with a POST login contract using `$base`, `$token` and `$email`,
+/// and a `dev` environment that defines them, the token being a secret.
+fn dry_run_project(tag: &str) -> PathBuf {
+    let dir = init_project(tag);
+    fs::write(
+        dir.join("contracts/login.json"),
+        r#"{"name":"login","method":"POST","url":"$base/login",
+            "headers":[{"name":"Authorization","value":"Bearer $token"}],
+            "request":{"email":"$email"},"responses":[]}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(dir.join(".apic/env")).unwrap();
+    fs::write(
+        dir.join(".apic/env/dev.toml"),
+        "base = \"http://127.0.0.1:1\"\nemail = \"a@b.c\"\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join(".apic/env/dev.local.toml"),
+        "token = \"s3cret-token\"\n",
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn send_dry_run_json_sends_nothing_and_redacts() {
+    let dir = dry_run_project("dry_json");
+    let out = apic(&dir)
+        .args(["send", "-f", "login", "--env", "dev", "--dry-run", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stdout.contains("s3cret-token"), "{stdout}");
+    assert!(!stderr.contains("s3cret-token"), "{stderr}");
+    let doc = json_out(&out);
+    assert_eq!(doc["dry_run"], true);
+    assert_eq!(doc["method"], "POST");
+    assert_eq!(doc["target"], "http://127.0.0.1:1");
+    assert_eq!(doc["url"], "$base/login");
+    assert_eq!(doc["headers"][0]["value"], "Bearer $token");
+    assert_eq!(doc["body"]["email"], "$email");
+    assert_eq!(doc["undefined"], serde_json::json!([]));
+}
+
+#[test]
+fn send_dry_run_text_shows_target_method_and_headers() {
+    let dir = dry_run_project("dry_text");
+    apic(&dir)
+        .args(["send", "-f", "login", "--env", "dev", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Target: http://127.0.0.1:1"))
+        .stdout(predicate::str::contains("POST $base/login"))
+        .stdout(predicate::str::contains("Authorization: Bearer $token"))
+        .stdout(predicate::str::contains("s3cret-token").not());
+}
+
+#[test]
+fn send_dry_run_warns_about_undefined_variables() {
+    let dir = init_project("dry_undefined");
+    fs::write(
+        dir.join("contracts/ping.json"),
+        r#"{"name":"ping","method":"GET","url":"http://127.0.0.1:1/p?x=$nope","headers":[],"responses":[]}"#,
+    )
+    .unwrap();
+    apic(&dir)
+        .args(["send", "-f", "ping", "--dry-run"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Warning: $nope is not defined"));
+}
+
+#[test]
+fn send_dry_run_with_include_is_a_usage_error() {
+    let dir = dry_run_project("dry_include");
+    apic(&dir)
+        .args(["send", "-f", "login", "--env", "dev", "--dry-run", "-i"])
+        .assert()
+        .code(1);
+}
+
+#[test]
+fn send_dry_run_refuses_an_unfilled_path_param() {
+    let dir = init_project("dry_refuse");
+    fs::write(
+        dir.join("contracts/user.json"),
+        r#"{"name":"user","method":"GET","url":"http://127.0.0.1:1/u/{id}","headers":[],"responses":[]}"#,
+    )
+    .unwrap();
+    let out = apic(&dir)
+        .args(["send", "-f", "user", "--dry-run", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json_out(&out)["error"]["kind"], "error");
+}

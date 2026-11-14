@@ -126,6 +126,11 @@ enum Commands {
         /// Give up after this many seconds.
         #[arg(long, value_name = "SECS", default_value_t = 30)]
         timeout: u64,
+
+        /// Print the request that would be sent, with variable values shown
+        /// as `$name`, and send nothing.
+        #[arg(long, conflicts_with = "include")]
+        dry_run: bool,
     },
 
     /// Send contracts' requests and compare the live responses with the
@@ -1520,12 +1525,14 @@ pub(crate) fn run() {
             vars,
             include,
             timeout,
+            dry_run,
         } => crate::send::send_cmd(&crate::send::SendArgs {
             find,
             env,
             vars,
             include,
             timeout,
+            dry_run,
         }),
         Commands::Check {
             find,
