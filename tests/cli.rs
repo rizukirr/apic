@@ -192,8 +192,8 @@ fn read_unknown_contract_reports_not_found() {
     apic(&dir)
         .args(["read", "-f", "zzz_no_match_zzz"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("No contract found"));
+        .code(2)
+        .stderr(predicate::str::contains("No contract found"));
 }
 
 #[test]
@@ -1099,4 +1099,481 @@ fn vars_convert_is_dry_until_write() {
     let converted = fs::read_to_string(&file).unwrap();
     assert!(converted.contains("\"$baseUrl/x\""), "{converted}");
     assert!(converted.contains("Bearer $tok"), "{converted}");
+}
+
+/// Parses stdout as exactly one JSON document.
+fn json_out(out: &std::process::Output) -> serde_json::Value {
+    serde_json::from_slice(&out.stdout).expect("stdout is one JSON document")
+}
+
+#[test]
+fn unknown_flag_is_a_usage_error_with_exit_1() {
+    let dir = fresh_dir("json_usage");
+    apic(&dir).args(["list", "--nope"]).assert().code(1);
+    let out = apic(&dir)
+        .args(["list", "--nope", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json_out(&out)["error"]["kind"], "usage");
+}
+
+#[test]
+fn outside_a_project_is_not_initialized_with_exit_1() {
+    let dir = fresh_dir("json_noproject");
+    apic(&dir).arg("list").assert().code(1);
+    let out = apic(&dir).args(["list", "--json"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json_out(&out)["error"]["kind"], "not_initialized");
+}
+
+#[test]
+fn read_with_no_match_is_not_found_with_exit_2() {
+    let dir = init_project("json_read_missing");
+    let out = apic(&dir)
+        .args(["read", "-f", "zzz_no_match_zzz", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(json_out(&out)["error"]["kind"], "not_found");
+}
+
+#[test]
+fn ambiguous_query_exits_2() {
+    let dir = init_project("json_ambiguous");
+    for f in ["user/user.json", "auth/user.json"] {
+        apic(&dir).args(["create", "-f", f]).assert().success();
+    }
+    apic(&dir).args(["read", "-f", "user"]).assert().code(2);
+    let out = apic(&dir)
+        .args(["read", "-f", "user", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(json_out(&out)["error"]["kind"], "ambiguous");
+}
+
+#[test]
+fn validate_failure_exits_3_with_results() {
+    let dir = init_project("json_validate_fail");
+    apic(&dir)
+        .args(["create", "-f", "good.json"])
+        .assert()
+        .success();
+    fs::write(dir.join("contracts/broken.json"), "{ not json").unwrap();
+    apic(&dir).arg("validate").assert().code(3);
+    let out = apic(&dir).args(["validate", "--json"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(3));
+    let doc = json_out(&out);
+    assert_eq!(doc["failed"], 1);
+    assert_eq!(doc["passed"], 1);
+    let broken = doc["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == "broken.json")
+        .expect("broken.json is reported");
+    assert_eq!(broken["ok"], false);
+    assert!(broken["error"].is_string());
+}
+
+#[test]
+fn send_to_a_closed_port_is_network_with_exit_4() {
+    let dir = init_project("json_send_closed");
+    fs::write(
+        dir.join("contracts/down.json"),
+        r#"{"name":"down","method":"GET","url":"http://127.0.0.1:1/","headers":[],"responses":[]}"#,
+    )
+    .unwrap();
+    apic(&dir)
+        .args(["send", "-f", "down", "--timeout", "5"])
+        .assert()
+        .code(4);
+    let out = apic(&dir)
+        .args(["send", "-f", "down", "--timeout", "5", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(4));
+    assert_eq!(json_out(&out)["error"]["kind"], "network");
+}
+
+#[test]
+fn remove_in_json_mode_needs_yes() {
+    let dir = init_project("json_remove_no_yes");
+    apic(&dir)
+        .args(["create", "-f", "a.json"])
+        .assert()
+        .success();
+    let out = apic(&dir)
+        .args(["remove", "-f", "a", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json_out(&out)["error"]["kind"], "usage");
+    assert!(dir.join("contracts/a.json").exists());
+}
+
+#[test]
+fn help_exits_0_with_text() {
+    let dir = fresh_dir("json_help");
+    apic(&dir)
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Usage"));
+    apic(&dir)
+        .args(["--help", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Usage"));
+}
+
+#[test]
+fn list_json_prints_contract_paths() {
+    let dir = init_project("json_list");
+    apic(&dir)
+        .args(["create", "-f", "auth/login.json"])
+        .assert()
+        .success();
+    apic(&dir)
+        .args(["create", "-f", "user.json"])
+        .assert()
+        .success();
+    let out = apic(&dir).args(["list", "--json"]).output().unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    let paths: Vec<&str> = doc["contracts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap())
+        .collect();
+    assert!(
+        paths.iter().any(|p| p.ends_with("auth/login.json")),
+        "{paths:?}"
+    );
+    assert!(paths.iter().any(|p| p.ends_with("user.json")), "{paths:?}");
+
+    // The flag is global: before the subcommand gives the same document.
+    let before = apic(&dir).args(["--json", "list"]).output().unwrap();
+    assert_eq!(json_out(&before), doc);
+
+    let out = apic(&dir)
+        .args(["list", "--filter", "zzz_no_match_zzz", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["contracts"], serde_json::json!([]));
+}
+
+#[test]
+fn read_json_prints_the_stored_contract_filtered_by_status() {
+    let dir = init_project("json_read");
+    apic(&dir)
+        .args([
+            "create",
+            "-f",
+            "a.json",
+            "--response",
+            "200:OK",
+            "--response",
+            "404:Missing",
+        ])
+        .assert()
+        .success();
+    let out = apic(&dir)
+        .args(["read", "-f", "a", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["name"], "a");
+    assert!(doc["responses"].as_array().unwrap().len() >= 2);
+
+    let out = apic(&dir)
+        .args(["read", "-f", "a", "--status", "404", "--json"])
+        .output()
+        .unwrap();
+    let responses = json_out(&out)["responses"].clone();
+    let codes: Vec<u64> = responses
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["code"].as_u64().unwrap())
+        .collect();
+    assert!(!codes.is_empty());
+    assert!(codes.iter().all(|c| *c == 404), "{codes:?}");
+}
+
+#[test]
+fn validate_json_reports_every_contract() {
+    let dir = init_project("json_validate_ok");
+    apic(&dir)
+        .args(["create", "-f", "good.json"])
+        .assert()
+        .success();
+    let out = apic(&dir).args(["validate", "--json"]).output().unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["failed"], 0);
+    assert_eq!(doc["results"][0]["path"], "good.json");
+    assert_eq!(doc["results"][0]["ok"], true);
+
+    let out = apic(&dir)
+        .args(["validate", "--template", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["failed"], 0);
+}
+
+#[test]
+fn config_and_init_json() {
+    let dir = fresh_dir("json_init");
+    let out = apic(&dir).args(["init", "--json"]).output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["status"], "initialized");
+
+    let out = apic(&dir).args(["config", "--json"]).output().unwrap();
+    assert!(out.status.success());
+    assert!(json_out(&out)["working_dir"].is_string());
+}
+
+#[test]
+fn env_json_lists_environments_without_values() {
+    let dir = init_project("json_env");
+    fs::create_dir_all(dir.join(".apic/env")).unwrap();
+    fs::write(dir.join(".apic/env/staging.toml"), "token = \"secret\"\n").unwrap();
+    let out = apic(&dir).args(["env", "--json"]).output().unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["environments"][0]["name"], "staging");
+    assert_eq!(doc["environments"][0]["has_local"], false);
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("secret"));
+}
+
+#[test]
+fn vars_convert_json_reports_files() {
+    let dir = init_project("json_vars");
+    fs::write(
+        dir.join("contracts/a.json"),
+        r#"{"name":"a","method":"GET","url":"{{baseUrl}}/x","headers":[],"responses":[]}"#,
+    )
+    .unwrap();
+    let out = apic(&dir)
+        .args(["vars", "--convert", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["written"], false);
+    assert!(doc["total"].as_u64().unwrap() >= 1);
+    assert!(
+        doc["files"][0]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("a.json")
+    );
+}
+
+#[test]
+fn create_edit_remove_json_report_actions() {
+    let dir = init_project("json_actions");
+    let out = apic(&dir)
+        .args(["create", "-f", "a.json", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["action"], "created");
+    assert_eq!(doc["path"], "a.json");
+
+    let out = apic(&dir)
+        .args(["edit", "-f", "a", "-H", "X-Trace: 1", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["action"], "updated");
+
+    let out = apic(&dir)
+        .args(["remove", "-f", "a", "--yes", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["action"], "removed");
+    assert!(!dir.join("contracts/a.json").exists());
+}
+
+#[test]
+fn create_template_json_reports_a_project_relative_path() {
+    let dir = init_project("json_create_template");
+    let out = apic(&dir)
+        .args(["create", "--template", "extra", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["path"], ".apic/template/extra.json");
+}
+
+#[test]
+fn open_json_reports_the_path() {
+    let dir = init_project("json_open");
+    apic(&dir)
+        .args(["create", "-f", "a.json"])
+        .assert()
+        .success();
+    let out = apic(&dir)
+        .args(["open", "-f", "a", "--editor", "true", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["path"], "a.json");
+}
+
+#[test]
+fn convert_json_reports_written_count() {
+    let dir = init_project("json_convert");
+    let fixture = format!(
+        "{}/tests/fixtures/convert/petstore-v2.1.0.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let out = apic(&dir)
+        .args(["convert", "--postman", &fixture, "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert!(doc["written"].as_u64().unwrap() >= 1);
+    assert!(doc["destination"].is_string());
+}
+
+/// A project with one GET contract pointed at `url`.
+fn json_send_project(tag: &str, url: &str) -> PathBuf {
+    let dir = init_project(tag);
+    fs::write(
+        dir.join("contracts/ping.json"),
+        format!(
+            r#"{{"name":"ping","method":"GET","url":"{url}/ping","headers":[],"responses":[]}}"#
+        ),
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn send_json_embeds_a_json_body() {
+    let (url, _rx) = serve_once(SEND_OK);
+    let dir = json_send_project("json_send_json", &url);
+    let out = apic(&dir)
+        .args(["send", "-f", "ping", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["status"], 201);
+    assert_eq!(doc["body_encoding"], "json");
+    assert_eq!(doc["body"]["ok"], true);
+    assert!(doc["headers"].as_array().unwrap().iter().any(|h| {
+        h["name"].as_str().unwrap().eq_ignore_ascii_case("x-test") && h["value"] == "yes"
+    }));
+    assert!(doc["elapsed_ms"].is_u64());
+}
+
+#[test]
+fn send_json_keeps_a_text_body_as_a_string() {
+    let (url, _rx) =
+        serve_once("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello");
+    let dir = json_send_project("json_send_text", &url);
+    let out = apic(&dir)
+        .args(["send", "-f", "ping", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["body_encoding"], "text");
+    assert_eq!(doc["body"], "hello");
+}
+
+/// Serves one request on 127.0.0.1 with the raw `reply` bytes, for bodies
+/// that are not valid UTF-8.
+fn serve_once_bytes(reply: &'static [u8]) -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = stream.read(&mut chunk).unwrap();
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        stream.write_all(reply).unwrap();
+    });
+    format!("http://{addr}")
+}
+
+#[test]
+fn send_json_encodes_a_binary_body_as_base64() {
+    let url = serve_once_bytes(
+        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n\xff\xfe",
+    );
+    let dir = json_send_project("json_send_binary", &url);
+    let out = apic(&dir)
+        .args(["send", "-f", "ping", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["body_encoding"], "base64");
+    assert_eq!(doc["body"], "//4=");
+}
+
+#[test]
+fn send_json_exits_0_on_a_404() {
+    let (url, _rx) =
+        serve_once("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    let dir = json_send_project("json_send_404", &url);
+    let out = apic(&dir)
+        .args(["send", "-f", "ping", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(json_out(&out)["status"], 404);
+}
+
+#[test]
+fn template_queries_use_not_found_and_ambiguous() {
+    let dir = init_project("json_template_kinds");
+    let out = apic(&dir)
+        .args(["remove", "--template", "zzz_no_match_zzz", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(json_out(&out)["error"]["kind"], "not_found");
+
+    apic(&dir)
+        .args([
+            "create",
+            "-f",
+            "a.json",
+            "--use-template",
+            "zzz_no_match_zzz",
+        ])
+        .assert()
+        .code(2);
+
+    let template = dir.join(".apic/template/convention.json");
+    fs::copy(&template, dir.join(".apic/template/svc-one.json")).unwrap();
+    fs::copy(&template, dir.join(".apic/template/svc-two.json")).unwrap();
+    let out = apic(&dir)
+        .args(["remove", "--template", "svc", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(json_out(&out)["error"]["kind"], "ambiguous");
+    assert!(dir.join(".apic/template/svc-one.json").exists());
 }

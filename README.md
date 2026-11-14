@@ -41,7 +41,7 @@ apic open -f login                          # open it in your editor
 apic send -f login --env dev                # send it with values from .apic/env/dev.toml
 ```
 
-New contracts start from the project template in `.apic/template/`, so the team's base URL, standing headers and response envelope come for free. Everything else is in [COMMAND.md](COMMAND.md), and environments and variables for `apic send` are in [SENDING.md](SENDING.md).
+New contracts start from the project template in `.apic/template/`, so the team's base URL, standing headers and response envelope come for free. Everything else is in [COMMAND.md](COMMAND.md), and environments and variables for `apic send` are in [SENDING.md](SENDING.md). Every command also takes `--json` for one JSON document on stdout and stable exit codes, see [Machine-readable output](COMMAND.md#machine-readable-output).
 
 ## Desktop GUI
 

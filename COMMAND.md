@@ -130,7 +130,7 @@ JSON example payloads:
 ```
 
 ## `apic send -f <query> [--env <name>] [--var <name=value>]... [-i] [--timeout <secs>]`
-Resolves `<query>` like `read`, fills the variables and sends the contract's request. The response body goes to stdout, pretty-printed and coloured on a terminal and raw when piped. The status summary and warnings about undefined variables go to stderr. Up to 5 redirects are followed. The exit code is 0 for any HTTP reply, including 4xx and 5xx, and 1 for a refusal or a network error. Variables, environments and what gets sent are covered in [SENDING.md](SENDING.md).
+Resolves `<query>` like `read`, fills the variables and sends the contract's request. The response body goes to stdout, pretty-printed and coloured on a terminal and raw when piped. The status summary and warnings about undefined variables go to stderr. Up to 5 redirects are followed. The exit code is 0 for any HTTP reply, including 4xx and 5xx, 1 for a refusal, and 4 for a connection failure or timeout. Variables, environments and what gets sent are covered in [SENDING.md](SENDING.md).
 
 - `--env <name>` takes values from `.apic/env/<name>.toml`, overlaid by `<name>.local.toml`.
 - `--var <name=value>` sets a variable and overrides the environment. Repeatable.
@@ -209,7 +209,7 @@ contract under the working directory is checked. A query ending in `/` (e.g.
 `auth/`) validates every contract under that folder, recursively; otherwise the
 query resolves to a single contract like `read` (path, extensionless, or fuzzy).
 Prints `ok`/`FAIL` per file with the parse error (line and column) for failures,
-and **exits non-zero if any contract is invalid**, so it drops straight into a
+and **exits 3 if any contract is invalid**, so it drops straight into a
 CI step or pre-commit hook.
 
 ```bash
@@ -258,3 +258,47 @@ apic convert --postman MyAPI.postman.json --force   # overwrite existing contrac
 warning: request "Preflight" uses method TRACE, unsupported by apic — imported as GET
 Converted 12 contract(s) into imported (1 warning)
 ```
+
+## Machine-readable output
+
+Every command takes `--json`, before or after the subcommand. It then prints exactly one JSON document on stdout: the command's result, or an error object. Nothing is coloured, and the output is the same on a terminal and in a pipe. Warnings stay as text on stderr.
+
+```bash
+apic list --json
+{"contracts":["auth/login.json","user/get_user.json"]}
+
+apic read -f nothing --json
+{"error":{"kind":"not_found","message":"No contract found matching 'nothing'"}}
+```
+
+The exit code is the same with or without `--json`:
+
+| Code | Error kinds | When |
+|------|-------------|------|
+| 0 | | success, including `send` getting any HTTP status |
+| 1 | `usage`, `not_initialized`, `error` | bad flags, outside a project, a file that cannot be read or written |
+| 2 | `not_found`, `ambiguous` | no contract or template matches the query, or several do |
+| 3 | `invalid` | a contract does not parse or fails the schema, or `validate` found failures |
+| 4 | `network` | the connection failed or timed out |
+
+What each command prints with `--json`:
+
+| Command | Result |
+|---------|--------|
+| `list` | `{"contracts": [...]}`, best match first with `--filter` |
+| `read` | the contract as stored, with `--status` keeping only that response |
+| `send` | `{"status", "reason", "elapsed_ms", "headers": [{"name", "value"}], "body", "body_encoding"}` |
+| `validate` | `{"results": [{"path", "ok", "error"}], "passed", "failed"}` |
+| `env` | `{"environments": [{"name", "has_local"}]}`, never the values |
+| `vars --convert` | `{"files": [{"path", "count"}], "total", "written"}` |
+| `create`, `edit`, `remove` | `{"action": "created" / "updated" / "removed", "path"}` |
+| `convert` | `{"written", "destination"}` |
+| `open` | `{"path"}` once the editor closes |
+| `init` | `{"status": "initialized" / "template_seeded"}` |
+| `config` | `{"working_dir"}` |
+
+`send` puts a JSON body in `body` as a JSON value and sets `body_encoding` to `json`. Other text bodies are a string with `text`, and binary bodies are base64 with `base64`.
+
+`validate` with failures prints its full results document and exits 3. `remove --json` deletes only with `--yes`, and without it fails with a `usage` error.
+
+Contract paths are relative to the working directory, the form `-f` accepts. Template paths are relative to the project root.

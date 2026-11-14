@@ -112,7 +112,10 @@ The response body goes to stdout. On a terminal, a JSON body is pretty-printed a
 | Exit code | Meaning |
 |-----------|---------|
 | 0 | the server replied, with any status, 4xx and 5xx included |
-| 1 | the send was refused, the connection failed, or it timed out |
+| 1 | the send was refused, for example an unfilled path param |
+| 2 | no contract matches the query, or several do |
+| 3 | the contract is not valid |
+| 4 | the connection failed or timed out |
 
 Up to 5 redirects are followed. A redirect drops the `Authorization` header. The timeout is 30 seconds, changed with `--timeout <secs>`.
 
