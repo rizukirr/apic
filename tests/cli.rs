@@ -1375,3 +1375,74 @@ fn vars_convert_json_reports_files() {
             .ends_with("a.json")
     );
 }
+
+#[test]
+fn create_edit_remove_json_report_actions() {
+    let dir = init_project("json_actions");
+    let out = apic(&dir)
+        .args(["create", "-f", "a.json", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert_eq!(doc["action"], "created");
+    assert_eq!(doc["path"], "a.json");
+
+    let out = apic(&dir)
+        .args(["edit", "-f", "a", "-H", "X-Trace: 1", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["action"], "updated");
+
+    let out = apic(&dir)
+        .args(["remove", "-f", "a", "--yes", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["action"], "removed");
+    assert!(!dir.join("contracts/a.json").exists());
+}
+
+#[test]
+fn create_template_json_reports_a_project_relative_path() {
+    let dir = init_project("json_create_template");
+    let out = apic(&dir)
+        .args(["create", "--template", "extra", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["path"], ".apic/template/extra.json");
+}
+
+#[test]
+fn open_json_reports_the_path() {
+    let dir = init_project("json_open");
+    apic(&dir)
+        .args(["create", "-f", "a.json"])
+        .assert()
+        .success();
+    let out = apic(&dir)
+        .args(["open", "-f", "a", "--editor", "true", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(json_out(&out)["path"], "a.json");
+}
+
+#[test]
+fn convert_json_reports_written_count() {
+    let dir = init_project("json_convert");
+    let fixture = format!(
+        "{}/tests/fixtures/convert/petstore-v2.1.0.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let out = apic(&dir)
+        .args(["convert", "--postman", &fixture, "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc = json_out(&out);
+    assert!(doc["written"].as_u64().unwrap() >= 1);
+    assert!(doc["destination"].is_string());
+}

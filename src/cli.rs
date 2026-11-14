@@ -639,6 +639,30 @@ fn rel_display(path: &Path, root: &Path) -> String {
     sanitize(&apic_core::file::relative_slash(path, root))
 }
 
+/// `path` for JSON output with forward slashes: relative to the working
+/// directory, else to the project root (templates), else the whole path.
+fn display_path(path: &Path) -> String {
+    let roots = [
+        read_config_file().and_then(|c| c.get_root_dir()).ok(),
+        find_apic_dir().and_then(|d| d.parent().map(Path::to_path_buf)),
+    ];
+    roots
+        .iter()
+        .flatten()
+        .find_map(|root| path.strip_prefix(root).ok())
+        .map_or_else(|| to_slash(path), to_slash)
+}
+
+/// Reports a file `action` on `path`: `{"action", "path"}` in `--json` mode,
+/// otherwise the `text` line as before.
+fn report_action(action: &str, path: &Path, text: &str) {
+    if output::json() {
+        output::emit(&json!({"action": action, "path": display_path(path)}));
+    } else {
+        println!("{text}");
+    }
+}
+
 /// Reports a declined confirmation; declining is not an error.
 fn cancelled() -> Result<(), CliError> {
     println!("cancelled");
@@ -1042,7 +1066,11 @@ fn write_new(path: &Path, overlay: Option<&str>, flags: &AuthorFlags) -> Result<
         .map_err(|err| format!("Failed to create {}: {}", path.display(), err))?;
     file.write_all(contract.as_bytes())
         .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
-    println!("created {}", home_relative(&sanitize(&to_slash(path))));
+    report_action(
+        "created",
+        path,
+        &format!("created {}", home_relative(&sanitize(&to_slash(path)))),
+    );
     Ok(())
 }
 
@@ -1141,7 +1169,11 @@ fn edit_cmd(filename: &str, flags: &AuthorFlags) -> Result<(), CliError> {
     let contract = finish(&mut model, flags)?;
     fs::write(&path, contract)
         .map_err(|err| format!("Failed to write {}: {}", path.display(), err))?;
-    println!("updated {}", home_relative(&sanitize(&to_slash(&path))));
+    report_action(
+        "updated",
+        &path,
+        &format!("updated {}", home_relative(&sanitize(&to_slash(&path)))),
+    );
     Ok(())
 }
 
@@ -1158,7 +1190,11 @@ fn open_cmd(template: bool, filename: Option<&str>, editor: Option<&str>) -> Res
         let filename = filename.expect("a find query is required without --template");
         resolve_one(filename)?
     };
-    Ok(open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))?)
+    open_in_editor(&path, editor).map_err(|err| format!("Failed to open editor: {err}"))?;
+    if output::json() {
+        output::emit(&json!({"path": display_path(&path)}));
+    }
+    Ok(())
 }
 
 /// Handles `apic remove`: deletes a template (`--template`) or a contract
@@ -1176,7 +1212,7 @@ fn remove_cmd(filename: Option<&str>, template: Option<&str>, yes: bool) -> Resu
         return cancelled();
     }
     fs::remove_file(&path).map_err(|err| format!("Failed to remove {shown}: {err}"))?;
-    println!("Removed {shown}");
+    report_action("removed", &path, &format!("Removed {shown}"));
     Ok(())
 }
 
@@ -1206,7 +1242,7 @@ fn remove_template_cmd(name: &str, yes: bool) -> Result<(), CliError> {
         return cancelled();
     }
     fs::remove_file(&path).map_err(|err| format!("Failed to remove {shown}: {err}"))?;
-    println!("Removed {shown}");
+    report_action("removed", &path, &format!("Removed {shown}"));
     Ok(())
 }
 
@@ -1227,11 +1263,18 @@ fn convert_cmd(postman: &Path, destination: Option<&str>, force: bool) -> Result
         1 => " (1 warning)".to_string(),
         n => format!(" ({n} warnings)"),
     };
-    println!(
-        "Converted {} contract(s) into {}{suffix}",
-        outcome.written,
-        outcome.destination.display()
-    );
+    if output::json() {
+        output::emit(&json!({
+            "written": outcome.written,
+            "destination": display_path(&outcome.destination),
+        }));
+    } else {
+        println!(
+            "Converted {} contract(s) into {}{suffix}",
+            outcome.written,
+            outcome.destination.display()
+        );
+    }
     Ok(())
 }
 
