@@ -226,6 +226,38 @@ FAIL user/user.json: EOF while parsing an object at line 12 column 1
 2 passed, 1 failed
 ```
 
+## `apic check [-f <query>] [--env <name>] [--var <name=value>]... [--status <code>] [--unsafe] [--timeout <secs>]`
+Sends each contract's request and compares the live response with the documented responses. Targets resolve like `validate`: no `-f` checks every contract, a query ending in `/` checks every contract under that folder, and any other query checks one contract. `--env`, `--var` and `--timeout` work as in `send`.
+
+The live status must be one the contract documents, and equal `--status` when given. The reply passes when it matches any documented response with that status:
+
+- every key in the example body exists in the live body with the same JSON type. Extra keys are fine, and integers and floats count as one type.
+- a `null` on either side matches anything.
+- live array elements are compared against the example's first element, and an empty array matches.
+- every header marked `required` is present, in any case.
+
+Only types are compared, never values. A response with no example body, or a multipart one, accepts any body.
+
+A folder or whole-project run sends only `GET`, `HEAD` and `OPTIONS` contracts and reports the others as skipped, unless `--unsafe` is given. A single contract is always sent.
+
+The run **exits 5 if any contract mismatched**, otherwise 4 if a connection failed, 3 if a contract did not parse, 1 for any other error, and 0 when every contract passed or was skipped.
+
+```bash
+apic check --env staging                  # every GET, HEAD and OPTIONS contract
+apic check -f auth/ --unsafe              # every contract under auth/, POST included
+apic check -f get_product --status 200    # one contract, and it must answer 200
+```
+
+```text
+pass      contracts/demo/get_product.json   200 · 118 ms
+mismatch  contracts/demo/me.json   200 · 95 ms
+          $.value.id: expected number, got string
+skipped   contracts/demo/login.json   POST, pass --unsafe to send it
+
+1 passed, 1 mismatched, 1 skipped, 0 failed
+```
+
+
 ## `apic convert --postman <file> [--destination <dir>]`
 Imports a Postman collection as apic contracts, one JSON file per request,
 mirroring the collection's folder nesting. Accepts Postman Collection exports of
@@ -280,6 +312,7 @@ The exit code is the same with or without `--json`:
 | 2 | `not_found`, `ambiguous` | no contract or template matches the query, or several do |
 | 3 | `invalid` | a contract does not parse or fails the schema, or `validate` found failures |
 | 4 | `network` | the connection failed or timed out |
+| 5 | `mismatch` | `check` found a live response that differs from its contract |
 
 What each command prints with `--json`:
 
@@ -289,6 +322,7 @@ What each command prints with `--json`:
 | `read` | the contract as stored, with `--status` keeping only that response |
 | `send` | `{"status", "reason", "elapsed_ms", "headers": [{"name", "value"}], "body", "body_encoding"}` |
 | `validate` | `{"results": [{"path", "ok", "error"}], "passed", "failed"}` |
+| `check` | `{"results": [{"path", "method", "result", "code", "elapsed_ms", "differences": [{"path", "message"}], "reason", "error"}], "passed", "mismatched", "skipped", "failed"}` |
 | `env` | `{"environments": [{"name", "has_local"}]}`, never the values |
 | `vars --convert` | `{"files": [{"path", "count"}], "total", "written"}` |
 | `create`, `edit`, `remove` | `{"action": "created" / "updated" / "removed", "path"}` |
@@ -299,6 +333,6 @@ What each command prints with `--json`:
 
 `send` puts a JSON body in `body` as a JSON value and sets `body_encoding` to `json`. Other text bodies are a string with `text`, and binary bodies are base64 with `base64`.
 
-`validate` with failures prints its full results document and exits 3. `remove --json` deletes only with `--yes`, and without it fails with a `usage` error.
+`validate` with failures prints its full results document and exits 3. `remove --json` deletes only with `--yes`, and without it fails with a `usage` error. `check` always prints its full results document, and `result` is `pass`, `mismatch`, `skipped` or `error`.
 
 Contract paths are relative to the working directory, the form `-f` accepts. Template paths are relative to the project root.
