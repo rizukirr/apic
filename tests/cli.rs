@@ -1544,3 +1544,36 @@ fn send_json_exits_0_on_a_404() {
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(json_out(&out)["status"], 404);
 }
+
+#[test]
+fn template_queries_use_not_found_and_ambiguous() {
+    let dir = init_project("json_template_kinds");
+    let out = apic(&dir)
+        .args(["remove", "--template", "zzz_no_match_zzz", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(json_out(&out)["error"]["kind"], "not_found");
+
+    apic(&dir)
+        .args([
+            "create",
+            "-f",
+            "a.json",
+            "--use-template",
+            "zzz_no_match_zzz",
+        ])
+        .assert()
+        .code(2);
+
+    let template = dir.join(".apic/template/convention.json");
+    fs::copy(&template, dir.join(".apic/template/svc-one.json")).unwrap();
+    fs::copy(&template, dir.join(".apic/template/svc-two.json")).unwrap();
+    let out = apic(&dir)
+        .args(["remove", "--template", "svc", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(json_out(&out)["error"]["kind"], "ambiguous");
+    assert!(dir.join(".apic/template/svc-one.json").exists());
+}

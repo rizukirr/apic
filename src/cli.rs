@@ -592,7 +592,7 @@ enum TemplateChoice {
 fn select_create_template(
     apic_dir: &Path,
     use_template: Option<&str>,
-) -> Result<TemplateChoice, String> {
+) -> Result<TemplateChoice, CliError> {
     let templates = apic_core::template::list_templates(apic_dir);
     let root = apic_dir.parent().unwrap_or(apic_dir);
 
@@ -609,8 +609,8 @@ fn select_create_template(
     }
 }
 
-/// Builds the "no template matches" error, listing what is available.
-fn no_template_error(name: &str, templates: &[PathBuf], root: &Path) -> String {
+/// Builds the "no template matches" error (kind `not_found`), listing what is available.
+fn no_template_error(name: &str, templates: &[PathBuf], root: &Path) -> CliError {
     let mut msg = format!("no template matching '{}'", sanitize(name));
     if templates.is_empty() {
         msg.push_str(", no templates in .apic/template/");
@@ -620,18 +620,18 @@ fn no_template_error(name: &str, templates: &[PathBuf], root: &Path) -> String {
             msg.push_str(&format!("  {}\n", rel_display(t, root)));
         }
     }
-    msg
+    CliError::new(ErrorKind::NotFound, msg)
 }
 
-/// Builds the error for a template `name` that matches several `candidates`.
-fn ambiguous_template_error(name: &str, candidates: &[PathBuf], root: &Path) -> String {
+/// Builds the error (kind `ambiguous`) for a template `name` that matches several `candidates`.
+fn ambiguous_template_error(name: &str, candidates: &[PathBuf], root: &Path) -> CliError {
     let labels: Vec<String> = candidates.iter().map(|c| rel_display(c, root)).collect();
     let mut msg = format!("'{}' matches {} templates:\n", sanitize(name), labels.len());
     for label in &labels {
         msg.push_str(&format!("  {label}\n"));
     }
     msg.push_str(&format!("Specify one, e.g. --use-template {}", labels[0]));
-    msg
+    CliError::new(ErrorKind::Ambiguous, msg)
 }
 
 /// Renders `path` relative to `root` for display, control characters stripped.
@@ -722,10 +722,7 @@ fn read_template_cmd() -> Result<(), CliError> {
             })?;
             read(&content, None)
         }
-        Resolution::None => Err(CliError::new(
-            ErrorKind::NotFound,
-            no_template_error("", &templates, root),
-        )),
+        Resolution::None => Err(no_template_error("", &templates, root)),
         Resolution::Many(candidates) => {
             let labels: Vec<String> = candidates.iter().map(|c| rel_display(c, root)).collect();
             let mut msg = format!("'' is ambiguous, {} templates match:\n", labels.len());
@@ -1231,9 +1228,9 @@ fn remove_template_cmd(name: &str, yes: bool) -> Result<(), CliError> {
 
     let path = match classify_template(name, &templates) {
         Resolution::One(path) => path,
-        Resolution::None => return Err(no_template_error(name, &templates, root).into()),
+        Resolution::None => return Err(no_template_error(name, &templates, root)),
         Resolution::Many(candidates) => {
-            return Err(ambiguous_template_error(name, &candidates, root).into());
+            return Err(ambiguous_template_error(name, &candidates, root));
         }
     };
 
