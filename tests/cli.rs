@@ -1577,3 +1577,179 @@ fn template_queries_use_not_found_and_ambiguous() {
     assert_eq!(json_out(&out)["error"]["kind"], "ambiguous");
     assert!(dir.join(".apic/template/svc-one.json").exists());
 }
+
+/// A raw HTTP/1.1 reply with `status` (e.g. `200 OK`) and a JSON `body`.
+fn http_reply(status: &str, body: &str) -> &'static str {
+    Box::leak(
+        format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .into_boxed_str(),
+    )
+}
+
+/// A project with one contract at `contracts/<rel>`.
+fn check_project(tag: &str, rel: &str, method: &str, url: &str, responses: &str) -> PathBuf {
+    let dir = init_project(tag);
+    let path = dir.join("contracts").join(rel);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!(
+            r#"{{"name":"c","method":"{method}","url":"{url}","headers":[],"responses":{responses}}}"#
+        ),
+    )
+    .unwrap();
+    dir
+}
+
+const CHECK_200: &str = r#"[{"code":200,"description":"ok","schema":{"id":1,"name":"x"}}]"#;
+
+#[test]
+fn check_passes_when_the_live_body_matches() {
+    let (url, _rx) = serve_once(http_reply("200 OK", r#"{"id":7,"name":"a","extra":true}"#));
+    let dir = check_project(
+        "check_pass",
+        "ping.json",
+        "GET",
+        &format!("{url}/ping"),
+        CHECK_200,
+    );
+    let out = apic(&dir)
+        .args(["check", "-f", "ping", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let doc = json_out(&out);
+    assert_eq!(doc["results"][0]["result"], "pass");
+    assert_eq!(doc["passed"], 1);
+}
+
+#[test]
+fn check_prints_a_text_summary() {
+    let (url, _rx) = serve_once(http_reply("200 OK", r#"{"id":7,"name":"a"}"#));
+    let dir = check_project(
+        "check_text",
+        "ping.json",
+        "GET",
+        &format!("{url}/ping"),
+        CHECK_200,
+    );
+    apic(&dir)
+        .args(["check", "-f", "ping"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "1 passed, 0 mismatched, 0 skipped, 0 failed",
+        ));
+}
+
+#[test]
+fn check_wrong_type_is_a_mismatch_with_exit_5() {
+    let (url, _rx) = serve_once(http_reply("200 OK", r#"{"id":"7","name":"a"}"#));
+    let dir = check_project(
+        "check_type",
+        "ping.json",
+        "GET",
+        &format!("{url}/ping"),
+        CHECK_200,
+    );
+    let out = apic(&dir)
+        .args(["check", "-f", "ping", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(5));
+    let doc = json_out(&out);
+    assert_eq!(doc["results"][0]["result"], "mismatch");
+    let paths: Vec<&str> = doc["results"][0]["differences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["path"].as_str().unwrap())
+        .collect();
+    assert!(paths.contains(&"$.id"), "{paths:?}");
+}
+
+#[test]
+fn check_undocumented_status_is_a_mismatch() {
+    let (url, _rx) = serve_once(http_reply("500 Internal Server Error", "{}"));
+    let dir = check_project(
+        "check_500",
+        "ping.json",
+        "GET",
+        &format!("{url}/ping"),
+        CHECK_200,
+    );
+    apic(&dir).args(["check", "-f", "ping"]).assert().code(5);
+}
+
+#[test]
+fn check_status_flag_requires_that_status() {
+    let (url, _rx) = serve_once(http_reply("200 OK", r#"{"id":7,"name":"a"}"#));
+    let dir = check_project(
+        "check_status",
+        "ping.json",
+        "GET",
+        &format!("{url}/ping"),
+        CHECK_200,
+    );
+    apic(&dir)
+        .args(["check", "-f", "ping", "--status", "404"])
+        .assert()
+        .code(5);
+}
+
+#[test]
+fn check_folder_run_skips_unsafe_methods_unless_asked() {
+    let created = r#"[{"code":201,"description":"created","schema":{"ok":true}}]"#;
+    let dir = check_project(
+        "check_unsafe",
+        "api/create.json",
+        "POST",
+        "http://127.0.0.1:1/items",
+        created,
+    );
+    let out = apic(&dir)
+        .args(["check", "-f", "api/", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let doc = json_out(&out);
+    assert_eq!(doc["skipped"], 1);
+    assert_eq!(doc["results"][0]["result"], "skipped");
+
+    let (url, rx) = serve_once(SEND_OK);
+    fs::write(
+        dir.join("contracts/api/create.json"),
+        format!(
+            r#"{{"name":"c","method":"POST","url":"{url}/items","headers":[],"responses":{created}}}"#
+        ),
+    )
+    .unwrap();
+    let out = apic(&dir)
+        .args(["check", "-f", "api/", "--unsafe", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(json_out(&out)["passed"], 1);
+    let request = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert!(request.starts_with(b"POST "));
+}
+
+#[test]
+fn check_connection_failure_exits_4() {
+    let dir = check_project(
+        "check_down",
+        "down.json",
+        "GET",
+        "http://127.0.0.1:1/",
+        CHECK_200,
+    );
+    let out = apic(&dir)
+        .args(["check", "-f", "down", "--timeout", "5", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(4));
+    assert_eq!(json_out(&out)["error"]["kind"], "network");
+}

@@ -1,9 +1,18 @@
 //! `apic check`: send contracts' requests and compare the live responses with
 //! the documented ones.
 
+use crate::cli::{query_targets, resolve_one};
+use crate::output::{CliError, ErrorKind};
+use crate::render::sanitize;
+use crate::send::{apply_var_flags, load_contract};
+use apic_core::config::find_apic_dir;
+use apic_core::file::{home_relative, relative_slash};
 use apic_core::http;
-use apic_core::json::{Header, Response};
-use serde_json::Value;
+use apic_core::json::{Header, JsonContent, Method, Response, method_str};
+use apic_core::vars::Vars;
+use serde_json::{Value, json};
+use std::path::Path;
+use std::time::Duration;
 
 /// One way a live response differs from a documented one.
 #[derive(Debug, PartialEq)]
@@ -137,6 +146,236 @@ pub(crate) fn match_reply(
             format!("{} is not documented", reply.status),
         )]
     })
+}
+
+/// Parsed `apic check` arguments.
+pub(crate) struct CheckArgs {
+    /// The contract or folder query, `None` for every contract.
+    pub(crate) find: Option<String>,
+    /// The environment name.
+    pub(crate) env: Option<String>,
+    /// Raw `NAME=VALUE` pairs.
+    pub(crate) vars: Vec<String>,
+    /// The live status `--status` requires.
+    pub(crate) status: Option<u16>,
+    /// Send unsafe methods in folder and whole-project runs.
+    pub(crate) unsafe_methods: bool,
+    /// Timeout in seconds, per request.
+    pub(crate) timeout: u64,
+}
+
+/// What happened to one contract.
+enum Outcome {
+    /// A reply arrived. Passed when `differences` is empty.
+    Checked {
+        code: u16,
+        elapsed_ms: u64,
+        differences: Vec<Difference>,
+    },
+    /// Not sent: an unsafe method in a folder or whole-project run.
+    Skipped,
+    /// Could not be checked.
+    Error(CliError),
+}
+
+/// One line of the report.
+struct Row {
+    path: String,
+    method: Option<String>,
+    outcome: Outcome,
+}
+
+/// Sends `contract` and compares the reply with its documented responses.
+fn check_one(
+    contract: &JsonContent,
+    vars: &Vars,
+    project_root: &Path,
+    args: &CheckArgs,
+) -> Result<Outcome, CliError> {
+    let prepared = http::prepare(contract, vars, project_root)?;
+    let reply = http::execute(&prepared, Duration::from_secs(args.timeout))
+        .map_err(|err| CliError::new(ErrorKind::Network, err))?;
+    Ok(Outcome::Checked {
+        code: reply.status,
+        elapsed_ms: reply.elapsed.as_millis() as u64,
+        differences: match_reply(&contract.responses, &reply, args.status),
+    })
+}
+
+/// Handles `apic check`.
+pub(crate) fn check_cmd(args: &CheckArgs) -> Result<(), CliError> {
+    let apic_dir = find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
+    let project_root = apic_dir.parent().unwrap_or(&apic_dir).to_path_buf();
+    apic_core::env::ensure_gitignore(&apic_dir)?;
+    let mut vars = match &args.env {
+        Some(name) => apic_core::env::load(&apic_dir, name)?,
+        None => Vars::new(),
+    };
+    apply_var_flags(&args.vars, &mut vars)?;
+
+    // A single contract is always sent, and its failure is the command's error.
+    let single = args.find.as_deref().filter(|q| !q.ends_with('/'));
+    let targets = match single {
+        Some(query) => vec![resolve_one(query)?],
+        None => query_targets(args.find.as_deref())?.unwrap_or_default(),
+    };
+
+    let mut rows = Vec::new();
+    for path in &targets {
+        let shown = relative_slash(path, &project_root);
+        let contract = match load_contract(path) {
+            Ok(contract) => contract,
+            Err(err) if single.is_some() => return Err(err),
+            Err(err) => {
+                rows.push(Row {
+                    path: shown,
+                    method: None,
+                    outcome: Outcome::Error(err),
+                });
+                continue;
+            }
+        };
+        let safe = matches!(
+            contract.method,
+            Method::GET | Method::HEAD | Method::OPTIONS
+        );
+        let outcome = if single.is_none() && !safe && !args.unsafe_methods {
+            Outcome::Skipped
+        } else {
+            match check_one(&contract, &vars, &project_root, args) {
+                Ok(outcome) => outcome,
+                Err(err) if single.is_some() => return Err(err),
+                Err(err) => Outcome::Error(err),
+            }
+        };
+        rows.push(Row {
+            path: shown,
+            method: Some(method_str(&contract.method)),
+            outcome,
+        });
+    }
+    report(&rows)
+}
+
+/// The run's exit status: the worst result, mismatch first, then network,
+/// invalid and any other error. `None` when nothing failed.
+fn worst(rows: &[Row]) -> Option<ErrorKind> {
+    let rank = |kind: ErrorKind| match kind {
+        ErrorKind::Mismatch => 4,
+        ErrorKind::Network => 3,
+        ErrorKind::Invalid => 2,
+        _ => 1,
+    };
+    rows.iter()
+        .filter_map(|row| match &row.outcome {
+            Outcome::Checked { differences, .. } if !differences.is_empty() => {
+                Some(ErrorKind::Mismatch)
+            }
+            Outcome::Error(err) => Some(err.kind),
+            _ => None,
+        })
+        .max_by_key(|kind| rank(*kind))
+}
+
+/// The `--json` object for one row.
+fn row_json(row: &Row) -> Value {
+    let mut doc = json!({"path": row.path});
+    if let Some(method) = &row.method {
+        doc["method"] = json!(method);
+    }
+    match &row.outcome {
+        Outcome::Checked {
+            code,
+            elapsed_ms,
+            differences,
+        } => {
+            doc["result"] = json!(if differences.is_empty() {
+                "pass"
+            } else {
+                "mismatch"
+            });
+            doc["code"] = json!(code);
+            doc["elapsed_ms"] = json!(elapsed_ms);
+            if !differences.is_empty() {
+                let found: Vec<Value> = differences
+                    .iter()
+                    .map(|d| json!({"path": d.path, "message": d.message}))
+                    .collect();
+                doc["differences"] = json!(found);
+            }
+        }
+        Outcome::Skipped => {
+            doc["result"] = json!("skipped");
+            doc["reason"] = json!("unsafe method");
+        }
+        Outcome::Error(err) => {
+            doc["result"] = json!("error");
+            doc["error"] = json!({"kind": err.kind.as_str(), "message": err.message});
+        }
+    }
+    doc
+}
+
+/// Prints one row of the text report.
+fn print_row(row: &Row) {
+    let path = sanitize(&row.path);
+    match &row.outcome {
+        Outcome::Checked {
+            code,
+            elapsed_ms,
+            differences,
+        } => {
+            let label = if differences.is_empty() {
+                "pass"
+            } else {
+                "mismatch"
+            };
+            println!("{label:<9} {path}   {code} · {elapsed_ms} ms");
+            for d in differences {
+                println!("          {}: {}", sanitize(&d.path), sanitize(&d.message));
+            }
+        }
+        Outcome::Skipped => println!(
+            "{:<9} {path}   {}, pass --unsafe to send it",
+            "skipped",
+            row.method.as_deref().unwrap_or_default()
+        ),
+        Outcome::Error(err) => println!(
+            "{:<9} {path}   {}",
+            "error",
+            home_relative(&sanitize(&err.message))
+        ),
+    }
+}
+
+/// Prints the report and returns the run's exit status.
+fn report(rows: &[Row]) -> Result<(), CliError> {
+    let count = |want: fn(&Outcome) -> bool| rows.iter().filter(|r| want(&r.outcome)).count();
+    let passed =
+        count(|o| matches!(o, Outcome::Checked { differences, .. } if differences.is_empty()));
+    let mismatched =
+        count(|o| matches!(o, Outcome::Checked { differences, .. } if !differences.is_empty()));
+    let skipped = count(|o| matches!(o, Outcome::Skipped));
+    let failed = count(|o| matches!(o, Outcome::Error(_)));
+    if crate::output::json() {
+        let results: Vec<Value> = rows.iter().map(row_json).collect();
+        crate::output::emit(&json!({
+            "results": results,
+            "passed": passed,
+            "mismatched": mismatched,
+            "skipped": skipped,
+            "failed": failed,
+        }));
+    } else {
+        for row in rows {
+            print_row(row);
+        }
+        println!("\n{passed} passed, {mismatched} mismatched, {skipped} skipped, {failed} failed");
+    }
+    match worst(rows) {
+        Some(kind) => Err(CliError::reported(kind)),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]
