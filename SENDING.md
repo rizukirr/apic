@@ -103,6 +103,35 @@ A file part with no path, a missing file, or a path that leads outside the proje
 
 The URL must start with `http://` or `https://` once variables are filled. A URL still starting with `$baseUrl` means the variable has no value.
 
+## Dry run
+
+`--dry-run` prints the request `send` would build and sends nothing. Every variable that has a value is shown as `$name` instead of the value, in the URL, path params, query, headers, body and multipart parts, so the output never contains a secret from your environment files. The `Target:` line shows the real scheme, host and port the request would go to, without any `user:pass@`.
+
+```bash
+apic send -f auth/login --env dev --dry-run
+```
+
+```text
+Target: https://api.example.com
+POST $baseUrl/auth/login
+Authorization: Bearer $token
+Content-Type: application/json
+
+{
+  "email": "$email",
+  "password": "$password"
+}
+```
+
+A multipart body is listed one part per line. File parts show their path, filename, content type and size, never their contents:
+
+```text
+part avatar: file fixtures/avatar.png as avatar.png, image/png, 20480 bytes
+part note: hello $name
+```
+
+A dry run refuses wherever `send` would, for example on an unfilled path param, and warns about each undefined variable. With `--json` it prints `{"dry_run": true, "method", "target", "url", "headers", "body", "undefined"}`, plus a `parts` array for a multipart body. `--dry-run` cannot be combined with `-i`.
+
 ## Output and exit codes
 
 The response body goes to stdout. On a terminal, a JSON body is pretty-printed and coloured, and `NO_COLOR` turns the colour off. When piped, the body is written exactly as received, so `apic send -f login --env dev | jq .data` works. The status summary and the warnings go to stderr.
