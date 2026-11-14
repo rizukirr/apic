@@ -676,10 +676,8 @@ pub(super) fn response_headers(
             }
         })
         .body(|mut body| {
-            let len = model.responses[idx].headers.len();
-            for i in 0..len {
+            for (i, h) in model.responses[idx].headers.iter_mut().enumerate() {
                 body.row(TABLE_ROW_H, |mut row| {
-                    let h = &mut model.responses[idx].headers[i];
                     text_cell(&mut row, table, (i, RowColumn::Key), &mut h.name, mode);
                     row.col(|ui| {
                         grid_cell(ui, |ui| {
