@@ -151,6 +151,49 @@ fn multipart_body(
     Ok(body)
 }
 
+/// The contract's URL with `$name` variables and `{name}` path params filled
+/// from `vars`.
+fn fill_url(contract: &JsonContent, vars: &Vars) -> String {
+    fill_path_params(&substitute(&contract.url, vars).0, vars)
+}
+
+/// Appends every query entry to `url` as `name=value`, filled from `vars` and
+/// percent-encoded.
+fn append_query(url: &mut String, contract: &JsonContent, vars: &Vars) {
+    for q in &contract.query {
+        url.push(if url.contains('?') { '&' } else { '?' });
+        url.push_str(&encode_component(&substitute(&q.name, vars).0));
+        url.push('=');
+        url.push_str(&encode_component(&substitute(&q.value, vars).0));
+    }
+}
+
+/// The contract's headers with values filled from `vars`, plus the
+/// `Content-Type` the body needs: `application/json` for a JSON body unless
+/// the contract sets one, or `multipart_type` for a multipart body, replacing
+/// any the contract sets.
+fn build_headers(
+    contract: &JsonContent,
+    vars: &Vars,
+    multipart_type: &str,
+) -> Vec<(String, String)> {
+    let mut headers: Vec<(String, String)> = contract
+        .headers
+        .iter()
+        .map(|h| (h.name.clone(), substitute(&h.value, vars).0))
+        .collect();
+    let is_content_type = |h: &(String, String)| h.0.eq_ignore_ascii_case("content-type");
+    if contract.request.is_some() {
+        if !headers.iter().any(is_content_type) {
+            headers.push(("Content-Type".into(), "application/json".into()));
+        }
+    } else if contract.multipart.is_some() {
+        headers.retain(|h| !is_content_type(h));
+        headers.push(("Content-Type".into(), multipart_type.to_string()));
+    }
+    headers
+}
+
 /// Builds the request for `contract` with `vars`, reading file parts under
 /// `project_root`. Refuses a URL with an unfilled `{name}` path param, a URL
 /// that is not `http://` or `https://`, and an unreadable file part.
@@ -159,7 +202,7 @@ pub fn prepare(
     vars: &Vars,
     project_root: &Path,
 ) -> Result<Prepared, String> {
-    let url = fill_path_params(&substitute(&contract.url, vars).0, vars);
+    let mut url = fill_url(contract, vars);
     if let Some(name) = path_params(&url).first() {
         return Err(format!(
             "The URL needs a value for {{{name}}}: set `{name}` in the environment or pass --var {name}=VALUE"
@@ -172,42 +215,21 @@ pub fn prepare(
             contract.url
         ));
     }
+    append_query(&mut url, contract, vars);
 
-    let mut url = url;
-    for q in &contract.query {
-        url.push(if url.contains('?') { '&' } else { '?' });
-        url.push_str(&encode_component(&substitute(&q.name, vars).0));
-        url.push('=');
-        url.push_str(&encode_component(&substitute(&q.value, vars).0));
-    }
-
-    let mut headers: Vec<(String, String)> = contract
-        .headers
-        .iter()
-        .map(|h| (h.name.clone(), substitute(&h.value, vars).0))
-        .collect();
-    let has_content_type = |headers: &[(String, String)]| {
-        headers
-            .iter()
-            .any(|(n, _)| n.eq_ignore_ascii_case("content-type"))
-    };
-
+    let boundary = boundary();
+    let headers = build_headers(
+        contract,
+        vars,
+        &format!("multipart/form-data; boundary={boundary}"),
+    );
     let body = if let Some(json) = &contract.request {
-        let bytes = serde_json::to_vec(&substitute_json(json, vars))
-            .map_err(|err| format!("Failed to encode the request body: {err}"))?;
-        if !has_content_type(&headers) {
-            headers.push(("Content-Type".into(), "application/json".into()));
-        }
-        Some(bytes)
+        Some(
+            serde_json::to_vec(&substitute_json(json, vars))
+                .map_err(|err| format!("Failed to encode the request body: {err}"))?,
+        )
     } else if let Some(parts) = &contract.multipart {
-        let boundary = boundary();
-        let bytes = multipart_body(parts, vars, project_root, &boundary)?;
-        headers.retain(|(n, _)| !n.eq_ignore_ascii_case("content-type"));
-        headers.push((
-            "Content-Type".into(),
-            format!("multipart/form-data; boundary={boundary}"),
-        ));
-        Some(bytes)
+        Some(multipart_body(parts, vars, project_root, &boundary)?)
     } else {
         None
     };
@@ -217,6 +239,176 @@ pub fn prepare(
         url,
         headers,
         body,
+    })
+}
+
+/// What [`prepare`] would build, with every defined variable's value shown as
+/// `$name`. Made by [`preview`].
+#[derive(Debug)]
+pub struct Preview {
+    /// The HTTP method, e.g. `POST`.
+    pub method: String,
+    /// The real scheme, host and port, without any `user:pass@`.
+    pub target: String,
+    /// The URL with the query appended, values redacted.
+    pub url: String,
+    /// Headers in the order [`prepare`] builds them, values redacted except a
+    /// `Content-Type` that [`prepare`] adds itself.
+    pub headers: Vec<(String, String)>,
+    /// The body, redacted.
+    pub body: PreviewBody,
+    /// Variable names used but not defined, each once, in first-seen order.
+    pub undefined: Vec<String>,
+}
+
+/// The body of a [`Preview`].
+#[derive(Debug)]
+pub enum PreviewBody {
+    /// No body.
+    None,
+    /// A JSON body, redacted.
+    Json(Value),
+    /// A multipart body, one entry per part.
+    Parts(Vec<PartPreview>),
+}
+
+/// One multipart part of a [`Preview`]. A text part sets `value`. A file part
+/// sets `file`, `filename` and `size`, never the file's bytes.
+#[derive(Debug)]
+pub struct PartPreview {
+    pub name: String,
+    /// A text part's value, redacted.
+    pub value: Option<String>,
+    /// A file part's path, redacted.
+    pub file: Option<String>,
+    pub filename: Option<String>,
+    pub content_type: Option<String>,
+    /// A file part's size in bytes.
+    pub size: Option<u64>,
+}
+
+/// `scheme://host[:port]` of `url`, without any `user:pass@`.
+fn origin(url: &str) -> String {
+    let Some(scheme_end) = url.find("://") else {
+        return String::new();
+    };
+    let rest = &url[scheme_end + 3..];
+    let authority = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    format!("{}{host}", &url[..scheme_end + 3])
+}
+
+/// Pushes each name in `names` onto `out` unless it is already there.
+fn note(out: &mut Vec<String>, names: Vec<String>) {
+    for name in names {
+        if !out.contains(&name) {
+            out.push(name);
+        }
+    }
+}
+
+/// Notes the undefined names in every string inside `value`, in order.
+fn json_undefined(value: &Value, vars: &Vars, out: &mut Vec<String>) {
+    match value {
+        Value::String(s) => note(out, substitute(s, vars).1),
+        Value::Array(items) => items.iter().for_each(|v| json_undefined(v, vars, out)),
+        Value::Object(map) => map.values().for_each(|v| json_undefined(v, vars, out)),
+        _ => {}
+    }
+}
+
+/// Describes the request [`prepare`] builds for `contract`, refusing exactly
+/// where it does, with every variable defined in `vars` shown as `$name`
+/// instead of its value. `target` is the real scheme, host and port. File
+/// parts report their size, never their bytes.
+pub fn preview(
+    contract: &JsonContent,
+    vars: &Vars,
+    project_root: &Path,
+) -> Result<Preview, String> {
+    let prepared = prepare(contract, vars, project_root)?;
+    let masked: Vars = vars.keys().map(|k| (k.clone(), format!("${k}"))).collect();
+
+    let base = fill_url(contract, &masked);
+    let mut url = base.clone();
+    append_query(&mut url, contract, &masked);
+    // Redacted names read `$name` in the query, not `%24name`.
+    let url = format!("{base}{}", url[base.len()..].replace("%24", "$"));
+
+    let multipart_type = prepared
+        .headers
+        .iter()
+        .rev()
+        .find(|(n, _)| n.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
+    let headers = build_headers(contract, &masked, &multipart_type);
+
+    let mut undefined = Vec::new();
+    note(&mut undefined, substitute(&contract.url, vars).1);
+    for q in &contract.query {
+        note(&mut undefined, substitute(&q.name, vars).1);
+        note(&mut undefined, substitute(&q.value, vars).1);
+    }
+    for h in &contract.headers {
+        note(&mut undefined, substitute(&h.value, vars).1);
+    }
+
+    let body = if let Some(json) = &contract.request {
+        json_undefined(json, vars, &mut undefined);
+        PreviewBody::Json(substitute_json(json, &masked))
+    } else if let Some(parts) = &contract.multipart {
+        let mut out = Vec::new();
+        for part in parts {
+            let (real, unknown) = substitute(&part.value, vars);
+            note(&mut undefined, unknown);
+            let shown = substitute(&part.value, &masked).0;
+            out.push(match &part.filename {
+                Some(filename) => {
+                    let path = confine_to_dir(project_root, &project_root.join(real.trim()))?;
+                    let size = std::fs::metadata(&path)
+                        .map_err(|err| {
+                            format!(
+                                "File part `{}`: cannot read {}: {}",
+                                part.name,
+                                path.display(),
+                                err
+                            )
+                        })?
+                        .len();
+                    PartPreview {
+                        name: part.name.clone(),
+                        value: None,
+                        file: Some(shown),
+                        filename: Some(filename.clone()),
+                        content_type: part.content_type.clone(),
+                        size: Some(size),
+                    }
+                }
+                None => PartPreview {
+                    name: part.name.clone(),
+                    value: Some(shown),
+                    file: None,
+                    filename: None,
+                    content_type: part.content_type.clone(),
+                    size: None,
+                },
+            });
+        }
+        PreviewBody::Parts(out)
+    } else {
+        PreviewBody::None
+    };
+
+    Ok(Preview {
+        method: prepared.method,
+        target: origin(&prepared.url),
+        url,
+        headers,
+        body,
+        undefined,
     })
 }
 
@@ -454,5 +646,138 @@ mod tests {
             .map(|(_, v)| v.as_str())
             .collect();
         assert_eq!(types, vec!["application/vnd+json"]);
+    }
+
+    #[test]
+    fn preview_redacts_every_defined_variable() {
+        let c = contract(
+            r#"{"name":"n","method":"POST","url":"$base/u/{id}",
+                "query":[{"name":"k","value":"$key"}],
+                "headers":[{"name":"Authorization","value":"Bearer $token"}],
+                "request":{"secret":"$token","n":1},"responses":[]}"#,
+        );
+        let v = vars(&[
+            ("base", "https://u:pw@api.example.com:8443/v1"),
+            ("id", "42"),
+            ("key", "s3cret"),
+            ("token", "s3cret"),
+        ]);
+        let p = preview(&c, &v, Path::new(".")).unwrap();
+        let shown = format!("{p:?}");
+        assert!(!shown.contains("s3cret"), "{shown}");
+        assert!(!shown.contains("u:pw@"), "{shown}");
+        assert_eq!(p.method, "POST");
+        assert_eq!(p.target, "https://api.example.com:8443");
+        assert_eq!(p.url, "$base/u/$id?k=$key");
+        assert_eq!(
+            p.headers,
+            vec![
+                ("Authorization".to_string(), "Bearer $token".to_string()),
+                ("Content-Type".to_string(), "application/json".to_string()),
+            ]
+        );
+        match &p.body {
+            PreviewBody::Json(body) => {
+                assert_eq!(body, &serde_json::json!({"secret": "$token", "n": 1}))
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(p.undefined.is_empty());
+    }
+
+    #[test]
+    fn preview_headers_match_prepare_names_and_order() {
+        let names = |h: &[(String, String)]| h.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
+        let v = vars(&[("a", "1")]);
+
+        let c = contract(
+            r#"{"name":"n","method":"POST","url":"http://h/",
+                "headers":[{"name":"X-A","value":"$a"}],"request":{},"responses":[]}"#,
+        );
+        let real = prepare(&c, &v, Path::new(".")).unwrap();
+        let p = preview(&c, &v, Path::new(".")).unwrap();
+        assert_eq!(names(&p.headers), names(&real.headers));
+        assert_eq!(p.headers[1].1, "application/json");
+
+        let c = contract(
+            r#"{"name":"n","method":"POST","url":"http://h/",
+                "headers":[{"name":"Content-Type","value":"text/plain"},{"name":"X-A","value":"$a"}],
+                "multipart":[{"name":"t","value":"x"}],"responses":[]}"#,
+        );
+        let real = prepare(&c, &v, Path::new(".")).unwrap();
+        let p = preview(&c, &v, Path::new(".")).unwrap();
+        assert_eq!(names(&p.headers), names(&real.headers));
+        assert!(
+            p.headers
+                .last()
+                .unwrap()
+                .1
+                .starts_with("multipart/form-data; boundary="),
+            "{:?}",
+            p.headers
+        );
+    }
+
+    #[test]
+    fn preview_lists_parts_without_bytes() {
+        let root = std::env::temp_dir().join(format!("apic_http_pv_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "FILEDATA").unwrap();
+        let c = contract(
+            r#"{"name":"n","method":"POST","url":"http://h/up","headers":[],
+                "multipart":[{"name":"title","value":"$t"},
+                             {"name":"doc","value":"a.txt","filename":"a.txt","contentType":"text/plain"}],
+                "responses":[]}"#,
+        );
+        let p = preview(&c, &vars(&[("t", "hello-secret")]), &root).unwrap();
+        let shown = format!("{p:?}");
+        assert!(!shown.contains("FILEDATA"), "{shown}");
+        assert!(!shown.contains("hello-secret"), "{shown}");
+        let PreviewBody::Parts(parts) = &p.body else {
+            panic!("{shown}")
+        };
+        assert_eq!(parts[0].value.as_deref(), Some("$t"));
+        assert_eq!(parts[1].file.as_deref(), Some("a.txt"));
+        assert_eq!(parts[1].filename.as_deref(), Some("a.txt"));
+        assert_eq!(parts[1].content_type.as_deref(), Some("text/plain"));
+        assert_eq!(parts[1].size, Some(8));
+    }
+
+    #[test]
+    fn preview_refuses_like_prepare() {
+        let root = std::env::temp_dir().join(format!("apic_http_pvr_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        for json in [
+            r#"{"name":"n","method":"GET","url":"http://h/u/{id}","headers":[],"responses":[]}"#,
+            r#"{"name":"n","method":"GET","url":"$base/u","headers":[],"responses":[]}"#,
+            r#"{"name":"n","method":"POST","url":"http://h/","headers":[],
+                "multipart":[{"name":"f","value":"missing.bin","filename":"m"}],"responses":[]}"#,
+        ] {
+            let c = contract(json);
+            assert_eq!(
+                preview(&c, &Vars::new(), &root).unwrap_err(),
+                prepare(&c, &Vars::new(), &root).unwrap_err()
+            );
+        }
+    }
+
+    #[test]
+    fn preview_lists_undefined_names_once_in_order() {
+        let c = contract(
+            r#"{"name":"n","method":"POST","url":"http://h/$a",
+                "query":[{"name":"$b","value":"$c"}],
+                "headers":[{"name":"X","value":"$d $a"}],
+                "request":{"k":["$e"]},"responses":[]}"#,
+        );
+        let p = preview(&c, &Vars::new(), Path::new(".")).unwrap();
+        assert_eq!(p.undefined, vec!["a", "b", "c", "d", "e"]);
+
+        let c = contract(
+            r#"{"name":"n","method":"POST","url":"http://h/","headers":[],
+                "multipart":[{"name":"p","value":"$f"}],"responses":[]}"#,
+        );
+        let p = preview(&c, &Vars::new(), Path::new(".")).unwrap();
+        assert_eq!(p.undefined, vec!["f"]);
     }
 }
