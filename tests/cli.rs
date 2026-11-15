@@ -1853,3 +1853,44 @@ fn send_dry_run_refuses_an_unfilled_path_param() {
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(json_out(&out)["error"]["kind"], "error");
 }
+
+const SKILL_MD: &str = include_str!("../skills/apic/SKILL.md");
+
+#[test]
+fn docs_print_the_embedded_files() {
+    let dir = fresh_dir("docs_print");
+    for (name, text) in [
+        ("command", include_str!("../COMMAND.md")),
+        ("sending", include_str!("../SENDING.md")),
+        ("contract", include_str!("../CONTRACT.md")),
+    ] {
+        let out = apic(&dir).args(["docs", name]).output().unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), text);
+
+        let out = apic(&dir).args(["docs", name, "--json"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        let doc = json_out(&out);
+        assert_eq!(doc["name"], name);
+        assert_eq!(doc["content"], text);
+    }
+}
+
+#[test]
+fn docs_needs_a_known_name() {
+    let dir = fresh_dir("docs_unknown");
+    apic(&dir).args(["docs", "nope"]).assert().code(1);
+    apic(&dir).arg("docs").assert().code(1);
+}
+
+#[test]
+fn skill_prints_the_embedded_skill() {
+    let dir = fresh_dir("skill_print");
+    let out = apic(&dir).arg("skill").output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), SKILL_MD);
+
+    let out = apic(&dir).args(["skill", "--json"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(json_out(&out)["content"], SKILL_MD);
+}
