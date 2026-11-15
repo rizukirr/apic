@@ -1894,3 +1894,58 @@ fn skill_prints_the_embedded_skill() {
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(json_out(&out)["content"], SKILL_MD);
 }
+
+#[test]
+fn skill_install_writes_the_project_folders() {
+    let dir = init_project("skill_install");
+    let out = apic(&dir.join("contracts"))
+        .args(["skill", "--install", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let doc = json_out(&out);
+    let installed = doc["installed"].as_array().unwrap();
+    assert!(!installed.is_empty());
+    for entry in installed {
+        assert_eq!(entry["status"], "created");
+    }
+    for rel in [
+        ".agents/skills/apic/SKILL.md",
+        ".claude/skills/apic/SKILL.md",
+    ] {
+        assert_eq!(fs::read_to_string(dir.join(rel)).unwrap(), SKILL_MD);
+    }
+
+    apic(&dir)
+        .args(["skill", "--install"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("unchanged"));
+}
+
+#[test]
+fn skill_install_global_writes_the_home_folders() {
+    let dir = fresh_dir("skill_install_global");
+    let home = dir.join("home");
+    fs::create_dir_all(&home).unwrap();
+    apic(&dir)
+        .args(["skill", "--install", "--global"])
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .assert()
+        .success();
+    for rel in [
+        ".agents/skills/apic/SKILL.md",
+        ".claude/skills/apic/SKILL.md",
+        ".gemini/config/skills/apic/SKILL.md",
+        ".hermes/skills/apic/SKILL.md",
+    ] {
+        assert_eq!(fs::read_to_string(home.join(rel)).unwrap(), SKILL_MD);
+    }
+}
+
+#[test]
+fn skill_global_needs_install() {
+    let dir = fresh_dir("skill_global_alone");
+    apic(&dir).args(["skill", "--global"]).assert().code(1);
+}

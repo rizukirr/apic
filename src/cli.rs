@@ -365,8 +365,21 @@ enum Commands {
         name: crate::skill::Doc,
     },
 
-    /// Print the apic agent skill (SKILL.md).
-    Skill,
+    /// Print the apic agent skill (SKILL.md), or install it for AI coding
+    /// agents.
+    ///
+    /// `--install` writes it to `.agents/skills/apic/` and
+    /// `.claude/skills/apic/` in the project. With `--global` it goes under
+    /// your home directory instead. A file that differs is overwritten.
+    Skill {
+        /// Write SKILL.md into the agent skill folders.
+        #[arg(long)]
+        install: bool,
+
+        /// With `--install`, write to the folders in your home directory.
+        #[arg(long, requires = "install")]
+        global: bool,
+    },
 }
 
 /// The curl-style authoring flags shared by `create` and `edit`.
@@ -1579,7 +1592,7 @@ pub(crate) fn run() {
             force,
         } => convert_cmd(&postman, destination.as_deref(), force),
         Commands::Docs { name } => crate::skill::docs_cmd(name),
-        Commands::Skill => crate::skill::skill_cmd(),
+        Commands::Skill { install, global } => crate::skill::skill_cmd(install, global),
     };
 
     if let Err(err) = result {
@@ -1612,7 +1625,7 @@ fn needs_project(command: &Commands) -> bool {
             | Commands::Create { template: None, .. }
             | Commands::Validate { template: true, .. }
             | Commands::Docs { .. }
-            | Commands::Skill
+            | Commands::Skill { .. }
     )
 }
 
