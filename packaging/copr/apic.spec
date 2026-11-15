@@ -1,5 +1,5 @@
 Name:           apic-cli
-Version:        1.0.0
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        Git-friendly API contracts, CLI (prebuilt)
 License:        GPL-3.0-only
@@ -67,6 +67,12 @@ cp -p %{SOURCE4} %{_builddir}/LICENSE
 %{_datadir}/icons/hicolor/256x256/apps/apic-gui.png
 
 %changelog
+* Sun Nov 15 2026 Rizki Rakasiwi <rizkirr.xyz@gmail.com> - 1.1.0-1
+- CLI release for scripts, CI and AI coding agents: --json on every command,
+  exit codes that tell failures apart, apic check against a live server,
+  apic send --dry-run with secrets redacted, and an agent skill with apic skill
+  and apic docs. The GUI and the contract format are unchanged.
+
 * Sun Nov 08 2026 Rizki Rakasiwi <rizkirr.xyz@gmail.com> - 1.0.0-1
 - First stable release. The GUI adds sending with environments, pull, merge
   and delete from the branch menu, a merge conflict popup and a git log panel

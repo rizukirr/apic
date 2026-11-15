@@ -1,9 +1,9 @@
 cask "apic-gui" do
   arch arm: "aarch64", intel: "x86_64"
 
-  version "1.0.0"
-  sha256 arm:   "d8b5a8b28de48bcced5fc25819bff1b8a7c488206538cc69e1211bbf9f29b2fb",
-         intel: "b15db49e7a94758b1367ccfe69fc43d2176601d426d0e034ffdfc56eba12a6c0"
+  version "1.1.0"
+  sha256 arm:   "27cac52f525fed59f4ff309dc4c0a8eaa5fbd1262382c4bd2a7faf4c11e3d089",
+         intel: "d4315f47b3def4734cd86e4fffbc7947a36c3d7f3649acdf209aef76f50642db"
 
   url "https://github.com/rizukirr/apic/releases/download/v#{version}/apic-gui-v#{version}-#{arch}-apple-darwin.app.zip"
   name "apic"
