@@ -68,8 +68,21 @@ A contract is one JSON file per endpoint: name, method, URL, query params, heade
 | `apic send` | Send a contract's request and print the response. |
 | `apic env` | List the environments in `.apic/env`. |
 | `apic vars` | Convert `{{name}}` variables to `$name`. |
+| `apic docs` | Print a reference doc built into apic. |
+| `apic skill` | Print or install the agent skill for AI coding agents. |
 
 Every command, flag and example is documented in [COMMAND.md](COMMAND.md).
+
+## Use with AI agents
+
+apic ships an [Agent Skills](https://agentskills.io) `SKILL.md` that teaches AI coding agents to find, preview, send and check contracts safely, without reading your secrets. Install it into the current project, or for every project with `--global`:
+
+```bash
+apic skill --install
+apic skill --install --global
+```
+
+The project install writes `.agents/skills/apic/` (Codex, Antigravity, Cursor, pi) and `.claude/skills/apic/` (Claude Code, Cursor). The global install also covers Antigravity's `~/.gemini/config/skills/apic/` and Hermes's `~/.hermes/skills/apic/`. You can also install it with `npx skills add rizukirr/apic`. Re-running `apic skill --install` after an upgrade updates the skill, and overwrites hand edits to an installed `SKILL.md`.
 
 ## Security
 
