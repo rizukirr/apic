@@ -16,7 +16,7 @@ set -euo pipefail
 # The OpenPGP key registered and confirmed on launchpad.net/~rizukirr/+editpgpkeys.
 # The full fingerprint is unambiguous; `gpg --local-user` fails loudly on a
 # missing key rather than falling back to some other default secret key.
-GPG_KEY_ID="${GPG_KEY_ID:-0918EF57B66E6636BD2AA90449026E8CED45A563}"
+GPG_KEY_ID="${GPG_KEY_ID:-9AC82A1D36AB9C877E5518CA66F1574179657D1D}"
 PPA="ppa:rizukirr/apic"
 IMAGE="ubuntu:26.04"
 
