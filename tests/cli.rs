@@ -1853,3 +1853,99 @@ fn send_dry_run_refuses_an_unfilled_path_param() {
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(json_out(&out)["error"]["kind"], "error");
 }
+
+const SKILL_MD: &str = include_str!("../skills/apic/SKILL.md");
+
+#[test]
+fn docs_print_the_embedded_files() {
+    let dir = fresh_dir("docs_print");
+    for (name, text) in [
+        ("command", include_str!("../COMMAND.md")),
+        ("sending", include_str!("../SENDING.md")),
+        ("contract", include_str!("../CONTRACT.md")),
+    ] {
+        let out = apic(&dir).args(["docs", name]).output().unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), text);
+
+        let out = apic(&dir).args(["docs", name, "--json"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        let doc = json_out(&out);
+        assert_eq!(doc["name"], name);
+        assert_eq!(doc["content"], text);
+    }
+}
+
+#[test]
+fn docs_needs_a_known_name() {
+    let dir = fresh_dir("docs_unknown");
+    apic(&dir).args(["docs", "nope"]).assert().code(1);
+    apic(&dir).arg("docs").assert().code(1);
+}
+
+#[test]
+fn skill_prints_the_embedded_skill() {
+    let dir = fresh_dir("skill_print");
+    let out = apic(&dir).arg("skill").output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), SKILL_MD);
+
+    let out = apic(&dir).args(["skill", "--json"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(json_out(&out)["content"], SKILL_MD);
+}
+
+#[test]
+fn skill_install_writes_the_project_folders() {
+    let dir = init_project("skill_install");
+    let out = apic(&dir.join("contracts"))
+        .args(["skill", "--install", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let doc = json_out(&out);
+    let installed = doc["installed"].as_array().unwrap();
+    assert!(!installed.is_empty());
+    for entry in installed {
+        assert_eq!(entry["status"], "created");
+    }
+    for rel in [
+        ".agents/skills/apic/SKILL.md",
+        ".claude/skills/apic/SKILL.md",
+    ] {
+        assert_eq!(fs::read_to_string(dir.join(rel)).unwrap(), SKILL_MD);
+    }
+
+    apic(&dir)
+        .args(["skill", "--install"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("unchanged"));
+}
+
+#[test]
+fn skill_install_global_writes_the_home_folders() {
+    let dir = fresh_dir("skill_install_global");
+    let home = dir.join("home");
+    fs::create_dir_all(&home).unwrap();
+    apic(&dir)
+        .args(["skill", "--install", "--global"])
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .assert()
+        .success();
+    for rel in [
+        ".agents/skills/apic/SKILL.md",
+        ".claude/skills/apic/SKILL.md",
+        ".gemini/config/skills/apic/SKILL.md",
+        ".hermes/skills/apic/SKILL.md",
+    ] {
+        assert_eq!(fs::read_to_string(home.join(rel)).unwrap(), SKILL_MD);
+    }
+}
+
+#[test]
+fn skill_global_needs_install() {
+    let dir = fresh_dir("skill_global_alone");
+    apic(&dir).args(["skill", "--global"]).assert().code(1);
+}

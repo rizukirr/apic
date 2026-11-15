@@ -15,6 +15,7 @@ mod flags;
 mod output;
 mod render;
 mod send;
+mod skill;
 mod tree;
 
 /// Restores the default `SIGPIPE` disposition on Unix.

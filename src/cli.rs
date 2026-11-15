@@ -356,6 +356,30 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+
+    /// Print a reference doc built into apic, as Markdown.
+    Docs {
+        /// Which doc: `command` (every command and flag), `sending`
+        /// (environments, variables, dry runs) or `contract` (the file format).
+        #[arg(value_enum)]
+        name: crate::skill::Doc,
+    },
+
+    /// Print the apic agent skill (SKILL.md), or install it for AI coding
+    /// agents.
+    ///
+    /// `--install` writes it to `.agents/skills/apic/` and
+    /// `.claude/skills/apic/` in the project. With `--global` it goes under
+    /// your home directory instead. A file that differs is overwritten.
+    Skill {
+        /// Write SKILL.md into the agent skill folders.
+        #[arg(long)]
+        install: bool,
+
+        /// With `--install`, write to the folders in your home directory.
+        #[arg(long, requires = "install")]
+        global: bool,
+    },
 }
 
 /// The curl-style authoring flags shared by `create` and `edit`.
@@ -1567,6 +1591,8 @@ pub(crate) fn run() {
             destination,
             force,
         } => convert_cmd(&postman, destination.as_deref(), force),
+        Commands::Docs { name } => crate::skill::docs_cmd(name),
+        Commands::Skill { install, global } => crate::skill::skill_cmd(install, global),
     };
 
     if let Err(err) = result {
@@ -1591,13 +1617,15 @@ fn usage_error(err: clap::Error) -> ! {
 }
 
 /// Whether `command` runs only inside an apic project. `init`, `create` of a
-/// contract and `validate --template` also work outside one.
+/// contract, `validate --template`, `docs` and `skill` also work outside one.
 fn needs_project(command: &Commands) -> bool {
     !matches!(
         command,
         Commands::Init { .. }
             | Commands::Create { template: None, .. }
             | Commands::Validate { template: true, .. }
+            | Commands::Docs { .. }
+            | Commands::Skill { .. }
     )
 }
 
@@ -1621,6 +1649,35 @@ fn fail(err: CliError) -> ! {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn skill_mentions_only_real_subcommands() {
+        use clap::CommandFactory;
+        let cli = Cli::command();
+        let first_word = |rest: &str| {
+            rest.split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+                .next()
+                .unwrap_or("")
+                .to_string()
+        };
+        let mut names = Vec::new();
+        for line in crate::skill::SKILL.lines() {
+            if let Some(rest) = line.trim_start().strip_prefix("apic ") {
+                names.push(first_word(rest));
+            }
+            for (at, _) in line.match_indices("`apic ") {
+                names.push(first_word(&line[at + "`apic ".len()..]));
+            }
+        }
+        names.retain(|name| !name.is_empty());
+        assert!(!names.is_empty());
+        for name in names {
+            assert!(
+                cli.find_subcommand(&name).is_some(),
+                "SKILL.md mentions `apic {name}`, which is not a subcommand"
+            );
+        }
+    }
 
     /// Creates a unique, empty temp directory for a single test.
     fn temp_dir(tag: &str) -> PathBuf {

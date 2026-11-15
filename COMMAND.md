@@ -291,6 +291,27 @@ warning: request "Preflight" uses method TRACE, unsupported by apic — imported
 Converted 12 contract(s) into imported (1 warning)
 ```
 
+## `apic docs <name>`
+Prints a reference doc built into apic, as Markdown. `<name>` is `command` (this file), `sending` (environments, variables and dry runs) or `contract` (the contract file format). The text always matches the installed version, and the command works outside a project.
+
+```bash
+apic docs command
+apic docs sending | less
+```
+
+## `apic skill [--install [--global]]`
+Prints the apic agent skill, a `SKILL.md` in the [Agent Skills](https://agentskills.io) format that teaches AI coding agents to use apic safely. With `--install` it writes the skill into the project's `.agents/skills/apic/` and `.claude/skills/apic/`, at the project root, or in the current directory outside a project. With `--global` it writes it under your home directory instead, in `.agents/skills/apic/`, `.claude/skills/apic/`, `.gemini/config/skills/apic/` and `.hermes/skills/apic/`. Each file is reported as `created`, `updated` or `unchanged`. A file that differs from the built-in skill is overwritten, so hand edits to an installed `SKILL.md` are lost on the next install.
+
+```bash
+apic skill --install            # this project
+apic skill --install --global   # every project, for your user
+```
+
+```text
+created    .agents/skills/apic/SKILL.md
+created    .claude/skills/apic/SKILL.md
+```
+
 ## Machine-readable output
 
 Every command takes `--json`, before or after the subcommand. It then prints exactly one JSON document on stdout: the command's result, or an error object. Nothing is coloured, and the output is the same on a terminal and in a pipe. Warnings stay as text on stderr.
@@ -331,6 +352,8 @@ What each command prints with `--json`:
 | `open` | `{"path"}` once the editor closes |
 | `init` | `{"status": "initialized" / "template_seeded"}` |
 | `config` | `{"working_dir"}` |
+| `docs` | `{"name", "content"}` |
+| `skill` | `{"content"}`, or with `--install` `{"installed": [{"path", "status"}]}`, where `status` is `created`, `updated` or `unchanged` |
 
 `send` puts a JSON body in `body` as a JSON value and sets `body_encoding` to `json`. Other text bodies are a string with `text`, and binary bodies are base64 with `base64`.
 
