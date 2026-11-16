@@ -122,14 +122,33 @@ $cargoToml = Join-Path $PSScriptRoot '..\..\Cargo.toml'
 $licenseLine = Get-Content $cargoToml | Where-Object { $_ -match '^\s*license\s*=' } | Select-Object -First 1
 if ($licenseLine -match '"([^"]+)"') { $License = $Matches[1] } else { throw "Could not read license from $cargoToml" }
 
-function Get-ReleaseNotes {
-    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-        Write-Warning "gh not found; submitting without ReleaseNotes."
-        return $null
+# The "## [x.y.z]" section of CHANGELOG.md, up to the next "## [" heading or the link references.
+function Get-ChangelogSection {
+    $path = Join-Path $PSScriptRoot '..\..\CHANGELOG.md'
+    if (-not (Test-Path $path)) { return '' }
+    $section = New-Object System.Collections.Generic.List[string]
+    $inSection = $false
+    foreach ($l in [System.IO.File]::ReadAllLines($path)) {
+        if ($l -match '^## \[') {
+            if ($inSection) { break }
+            $inSection = $l.StartsWith("## [$Version]")
+            continue
+        }
+        if ($inSection -and $l -match '^\[[^\]]+\]: ') { break }
+        if ($inSection) { $section.Add($l) }
     }
-    $body = (& gh release view "v$Version" -R rizukirr/apic --json body -q .body 2>$null) -join "`n"
-    if ($LASTEXITCODE -ne 0 -or -not $body.Trim()) {
-        Write-Warning "Could not read release notes for v$Version; submitting without ReleaseNotes."
+    return ($section -join "`n").Trim()
+}
+
+function Get-ReleaseNotes {
+    $body = ''
+    if (Get-Command gh -ErrorAction SilentlyContinue) {
+        $body = (& gh release view "v$Version" -R rizukirr/apic --json body -q .body 2>$null) -join "`n"
+        if ($LASTEXITCODE -ne 0) { $body = '' }
+    }
+    if (-not $body.Trim()) { $body = Get-ChangelogSection }
+    if (-not $body.Trim()) {
+        Write-Warning "No release notes for v$Version on GitHub or in CHANGELOG.md; submitting without ReleaseNotes."
         return $null
     }
     $body = $body.Trim()
