@@ -40,11 +40,21 @@ Answering anything but `y` leaves the signed `.changes` in
 `packaging/debian/build/` to upload by hand later:
 
 ```bash
-dput ppa:rizukirr/apic packaging/debian/build/apic_0.5.1-1~resolute1_source.changes
+dput rizukirr-apic packaging/debian/build/apic_<ver>-1~resolute1_source.changes
 ```
 
-The `ppa:` shortcut needs dput-ng. Classic `dput` 1.x cannot expand it and
-needs a matching stanza in `~/.dput.cf` instead.
+`rizukirr-apic` is a stanza in `~/.dput.cf` for classic `dput` 1.x:
+
+```ini
+[rizukirr-apic]
+fqdn = ppa.launchpad.net
+method = ftp
+incoming = ~rizukirr/apic/ubuntu/
+login = anonymous
+allow_unsigned_uploads = 0
+```
+
+Keep `/` out of the stanza name. After uploading, `dput` writes a log named `<changes>.<stanza>.upload`, and a name like `ppa:rizukirr/apic` turns that into a path into a folder that does not exist, so the run ends with `Could not write ....upload` even though the upload went through.
 
 Signing uses the fingerprint registered on
 `launchpad.net/~rizukirr/+editpgpkeys`, hardcoded in the script and overridable

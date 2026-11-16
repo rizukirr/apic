@@ -17,7 +17,7 @@ set -euo pipefail
 # The full fingerprint is unambiguous; `gpg --local-user` fails loudly on a
 # missing key rather than falling back to some other default secret key.
 GPG_KEY_ID="${GPG_KEY_ID:-9AC82A1D36AB9C877E5518CA66F1574179657D1D}"
-PPA="ppa:rizukirr/apic"
+PPA="rizukirr-apic"   # ~/.dput.cf stanza, no "/" so dput can write its .upload log
 IMAGE="ubuntu:26.04"
 
 root="$(git rev-parse --show-toplevel)"
