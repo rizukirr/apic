@@ -1,6 +1,6 @@
 id: io.github.rizukirr.apic
 runtime: org.freedesktop.Platform
-runtime-version: '25.08'
+runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
@@ -30,4 +30,5 @@ modules:
       - type: git
         url: https://github.com/rizukirr/apic.git
         tag: v1.1.0
+        commit: 5d9b88a3c7e1502f694667247eb034c525410a01
       - cargo-sources.json
