@@ -2,12 +2,12 @@
 //! delete and discard dialogs.
 
 use eframe::egui;
-use egui::RichText;
-use egui::containers::menu::SubMenuButton;
 
 use crate::features::git::domain::status::{Branches, DiscardTarget, discard_target};
 use crate::features::git::ui::state::{BranchOpKind, GitAction, GitState};
-use crate::ui::base::{ButtonKind, bordered_input, menu_item};
+use crate::ui::base::{
+    ButtonKind, Text, Tone, bordered_input, icon_submenu, menu_choice, menu_item, menu_item_enabled,
+};
 use crate::ui::components::{DialogButton, detail_box, dialog, submenu};
 use crate::ui::theme::*;
 
@@ -29,7 +29,6 @@ fn op_label(kind: BranchOpKind) -> &'static str {
 /// ⋮ for pull, merge and delete), then "+ New branch". Also requests the branch
 /// list once, since this is drawn whether or not any git panel is open.
 pub(crate) fn branch_menu(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
-    let p = palette(ui.ctx());
     let mut action = None;
     if !state.branches_loaded && state.pending.is_none() {
         state.branches_loaded = true;
@@ -44,12 +43,12 @@ pub(crate) fn branch_menu(ui: &mut egui::Ui, state: &mut GitState) -> Option<Git
         current.as_deref().unwrap_or("(detached)"),
         egui_phosphor::regular::CARET_DOWN
     );
-    let color = if current.is_some() {
-        p.on_surface
+    let tone = if current.is_some() {
+        Tone::Default
     } else {
-        p.warning
+        Tone::Warning
     };
-    ui.menu_button(RichText::new(title).color(color), |ui| {
+    ui.menu_button(Text::new(title).tone(tone).rich(ui.ctx()), |ui| {
         // Every name gets the widest name's width, so the ⋮ buttons that
         // follow line up in one column.
         let font = egui::TextStyle::Button.resolve(ui.style());
@@ -67,32 +66,20 @@ pub(crate) fn branch_menu(ui: &mut egui::Ui, state: &mut GitState) -> Option<Git
             + ui.spacing().button_padding.x * 2.0;
         for name in &branches.all {
             ui.horizontal(|ui| {
-                // The trailing grow atom takes the spare width, so a short
-                // name sits on the left instead of centred. No gap, so the
-                // atom adds no width to the widest name.
-                let row = ui.add(
-                    egui::Button::selectable(
-                        Some(name.as_str()) == current.as_deref(),
-                        (name.as_str(), egui::Atom::grow()),
-                    )
-                    .gap(0.0)
-                    .min_size(egui::vec2(name_width, 0.0)),
-                );
+                let selected = Some(name.as_str()) == current.as_deref();
+                let row = menu_choice(ui, selected, name, name_width);
                 if row.clicked() {
                     if let Some(a) = branch_select_action(name, current.as_deref()) {
                         action = Some(a);
                     }
                     ui.close();
                 }
-                SubMenuButton::from_button(egui::Button::new(
-                    egui_phosphor::regular::DOTS_THREE_VERTICAL,
-                ))
-                .ui(ui, |ui| {
+                icon_submenu(ui, egui_phosphor::regular::DOTS_THREE_VERTICAL, |ui| {
                     for kind in [BranchOpKind::Pull, BranchOpKind::Merge] {
                         submenu(ui, true, op_label(kind), |ui| {
                             let sources = branch_op_sources(kind, name, &branches);
                             if sources.is_empty() {
-                                ui.add_enabled(false, egui::Button::new("no branches"));
+                                menu_item_enabled(ui, false, "no branches", None);
                             }
                             for source in sources {
                                 if menu_item(ui, &source) {
@@ -105,26 +92,16 @@ pub(crate) fn branch_menu(ui: &mut egui::Ui, state: &mut GitState) -> Option<Git
                             }
                         });
                     }
-                    if ui
-                        .add_enabled(
-                            can_delete(name, current.as_deref()),
-                            egui::Button::new("Delete"),
-                        )
-                        .clicked()
-                    {
+                    let deletable = can_delete(name, current.as_deref());
+                    if menu_item_enabled(ui, deletable, "Delete", None) {
                         action = Some(GitAction::RequestBranchDelete { name: name.clone() });
-                        ui.close();
                     }
                 });
             });
         }
         ui.separator();
-        if ui
-            .button(format!("{} New branch", egui_phosphor::regular::PLUS))
-            .clicked()
-        {
+        if menu_item(ui, format!("{} New branch", egui_phosphor::regular::PLUS)) {
             open_new = true;
-            ui.close();
         }
     });
     if open_new {
@@ -149,7 +126,6 @@ pub(super) fn branch_select_action(name: &str, current: Option<&str>) -> Option<
 
 /// The create-branch dialog, drawn in the shared popup layout.
 pub(super) fn create_branch_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
-    let p = palette(ctx);
     let buf = state.new_branch.as_mut()?;
     let mut enter = false;
     let outcome = dialog(
@@ -157,7 +133,7 @@ pub(super) fn create_branch_dialog(ctx: &egui::Context, state: &mut GitState) ->
         "create_branch_modal",
         "New branch",
         |ui| {
-            ui.label(RichText::new("branch name").color(p.on_surface_variant));
+            Text::new("branch name").muted().show(ui);
             ui.add_space(SPACE_SMALL);
             let resp = bordered_input(ui, buf, f32::INFINITY, "");
             enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -186,17 +162,16 @@ pub(super) fn create_branch_dialog(ctx: &egui::Context, state: &mut GitState) ->
 /// Delete confirmation for the right-clicked branch. The target is fixed:
 /// the dialog names it and offers no picker.
 pub(super) fn delete_branch_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
-    let p = palette(ctx);
     let name = state.pending_branch_delete.clone()?;
     let outcome = dialog(
         ctx,
         "delete_branch_modal",
         "Delete branch",
         |ui| {
-            ui.label(RichText::new("Delete branch").color(p.on_surface_variant));
+            Text::new("Delete branch").muted().show(ui);
             ui.add_space(SPACE_SMALL);
             detail_box(ui, |ui| {
-                ui.label(RichText::new(&name).color(p.on_surface).strong());
+                Text::new(&name).strong().show(ui);
             });
         },
         &[
@@ -236,7 +211,6 @@ pub(super) fn branch_op_sources(
 /// The pull or merge confirmation: names the source and the target branch,
 /// both picked in the branch menu.
 pub(super) fn branch_op_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
-    let p = palette(ctx);
     let op = state.pending_branch_op.clone()?;
     let title = op_label(op.kind);
     let outcome = dialog(
@@ -244,16 +218,16 @@ pub(super) fn branch_op_dialog(ctx: &egui::Context, state: &mut GitState) -> Opt
         "branch_op_modal",
         title,
         |ui| {
-            ui.label(RichText::new("from").color(p.on_surface_variant));
+            Text::new("from").muted().show(ui);
             ui.add_space(SPACE_SMALL);
             detail_box(ui, |ui| {
-                ui.label(RichText::new(&op.source).color(p.on_surface).strong());
+                Text::new(&op.source).strong().show(ui);
             });
             ui.add_space(SPACE_SMALL);
-            ui.label(RichText::new("into branch").color(p.on_surface_variant));
+            Text::new("into branch").muted().show(ui);
             ui.add_space(SPACE_SMALL);
             detail_box(ui, |ui| {
-                ui.label(RichText::new(&op.target).color(p.on_surface).strong());
+                Text::new(&op.target).strong().show(ui);
             });
         },
         &[
@@ -274,7 +248,6 @@ pub(super) fn branch_op_dialog(ctx: &egui::Context, state: &mut GitState) -> Opt
 /// Discard confirmation modal, shown when a discard is pending, drawn in the
 /// shared popup layout.
 pub(super) fn discard_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
-    let p = palette(ctx);
     let path = state.pending_discard.clone()?;
     let target = discard_target(&state.status, &path);
     let outcome = dialog(
@@ -283,24 +256,23 @@ pub(super) fn discard_dialog(ctx: &egui::Context, state: &mut GitState) -> Optio
         "Discard changes",
         |ui| match target {
             DiscardTarget::File => {
-                ui.label(RichText::new("Discard changes to").color(p.on_surface_variant));
+                Text::new("Discard changes to").muted().show(ui);
                 ui.add_space(SPACE_SMALL);
                 detail_box(ui, |ui| {
-                    ui.label(RichText::new(&path).color(p.on_surface).strong());
+                    Text::new(&path).strong().show(ui);
                 });
             }
             DiscardTarget::Folder(count) => {
-                ui.label(RichText::new("Discard changes in").color(p.on_surface_variant));
+                Text::new("Discard changes in").muted().show(ui);
                 ui.add_space(SPACE_SMALL);
                 detail_box(ui, |ui| {
-                    ui.label(RichText::new(&path).color(p.on_surface).strong());
-                    ui.label(
-                        RichText::new(format!(
-                            "{count} tracked file{} will be reverted",
-                            if count == 1 { "" } else { "s" }
-                        ))
-                        .color(p.on_surface_variant),
-                    );
+                    Text::new(&path).strong().show(ui);
+                    Text::new(format!(
+                        "{count} tracked file{} will be reverted",
+                        if count == 1 { "" } else { "s" }
+                    ))
+                    .muted()
+                    .show(ui);
                 });
             }
         },
