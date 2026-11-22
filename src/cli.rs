@@ -365,31 +365,53 @@ enum Commands {
         force: bool,
     },
 
-    /// Export contracts as a Postman collection.
+    /// Export contracts as a Postman collection or an OpenAPI document.
     ///
-    /// Writes a Postman Collection v2.1 file with one folder per contract
-    /// folder, one request per contract, and each documented response as a
-    /// saved example. `$name` variables become `{{name}}` and `{id}` path
-    /// params become `:id`. Every variable used is listed as a collection
-    /// variable, with its value from the shared env file named by `--env`.
+    /// `--postman` writes a Postman Collection v2.1 file with one folder per
+    /// contract folder, one request per contract, and each documented
+    /// response as a saved example. `$name` variables become `{{name}}` and
+    /// `{id}` path params become `:id`. Every variable used is listed as a
+    /// collection variable, with its value from the shared env file named by
+    /// `--env`.
+    ///
+    /// `--openapi` writes an OpenAPI document, as YAML when the file ends in
+    /// `.yaml` or `.yml` and JSON otherwise. Each contract becomes an
+    /// operation tagged with its folder, and each body is exported as its
+    /// example plus a schema inferred from it. A leading `$base` variable in
+    /// the URL becomes a server variable, with its default from `--env`.
+    ///
     /// Local env files are never read. An existing output file is left
     /// untouched unless `--force` is passed.
-    #[command(group(clap::ArgGroup::new("format").required(true).args(["postman"])))]
+    #[command(group(clap::ArgGroup::new("format").required(true).args(["postman", "openapi"])))]
     Export {
         /// Write a Postman collection to this file.
         #[arg(long, value_name = "FILE")]
         postman: Option<PathBuf>,
+
+        /// Write an OpenAPI document to this file.
+        #[arg(long, value_name = "FILE")]
+        openapi: Option<PathBuf>,
+
+        /// The OpenAPI version to write with `--openapi`: `3.0` (the
+        /// default) or `3.1`.
+        #[arg(
+            long = "openapi-version",
+            value_name = "VERSION",
+            value_parser = ["3.0", "3.1"]
+        )]
+        openapi_version: Option<String>,
 
         /// Contract to export (path, extensionless, or fuzzy), or a folder
         /// ending in `/`. Omit to export every contract.
         #[arg(long, short = 'f', value_name = "QUERY")]
         find: Option<String>,
 
-        /// Fill collection variables from this environment's shared file.
+        /// Fill variable values from this environment's shared file.
         #[arg(long, value_name = "NAME")]
         env: Option<String>,
 
-        /// Collection name. Defaults to the project folder's name.
+        /// Collection name or OpenAPI title. Defaults to the project
+        /// folder's name.
         #[arg(long, value_name = "NAME")]
         name: Option<String>,
 
@@ -1393,11 +1415,17 @@ fn convert_cmd(
     Ok(())
 }
 
+/// What `apic export` writes, and where.
+enum ExportFormat {
+    Postman(PathBuf),
+    OpenApi(PathBuf, apic_core::export::openapi::Version),
+}
+
 /// Handles `apic export`: collect the selected contracts, build the Postman
-/// collection and write it. A contract that does not parse is skipped with a
+/// collection or OpenAPI document and write it. A contract that does not parse is skipped with a
 /// warning, unless it was the single one asked for.
 fn export_cmd(
-    postman: &Path,
+    format: &ExportFormat,
     find: Option<&str>,
     env: Option<&str>,
     name: Option<&str>,
@@ -1406,10 +1434,13 @@ fn export_cmd(
     let apic_dir = find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
     let project_root = apic_dir.parent().unwrap_or(&apic_dir).to_path_buf();
     let root = read_config_file().and_then(|conf| conf.get_root_dir())?;
-    if !force && postman.exists() {
+    let out = match format {
+        ExportFormat::Postman(out) | ExportFormat::OpenApi(out, _) => out.as_path(),
+    };
+    if !force && out.exists() {
         return Err(format!(
             "{} already exists, pass --force to overwrite",
-            postman.display()
+            out.display()
         )
         .into());
     }
@@ -1443,25 +1474,40 @@ fn export_cmd(
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "apic".to_string())
     });
-    let collection = apic_core::export::postman_collection(&name, &items, &values);
-    let text = serde_json::to_string_pretty(&collection)
-        .map_err(|err| format!("failed to serialize collection: {err}"))?;
-    fs::write(postman, text)
-        .map_err(|err| format!("failed to write {}: {err}", postman.display()))?;
+    let text = match format {
+        ExportFormat::Postman(_) => {
+            let collection = apic_core::export::postman_collection(&name, &items, &values);
+            serde_json::to_string_pretty(&collection)
+                .map_err(|err| format!("failed to serialize collection: {err}"))?
+        }
+        ExportFormat::OpenApi(_, version) => {
+            use apic_core::export::openapi;
+            let info = openapi::Info {
+                title: &name,
+                version: "1.0.0",
+            };
+            let (doc, skipped) = openapi::document(info, &items, &values, *version);
+            warnings.extend(skipped);
+            let yaml = out.extension().is_some_and(|e| e == "yaml" || e == "yml");
+            openapi::to_text(&doc, yaml)?
+        }
+    };
+    fs::write(out, text).map_err(|err| format!("failed to write {}: {err}", out.display()))?;
 
-    // A collection inside the contracts folder is scanned as a contract, so
-    // `apic validate` and the GUI would report it as broken.
+    // A JSON export inside the contracts folder is scanned as a contract, so
+    // `apic validate` and the GUI would report it as broken. Only `.json`
+    // files are scanned.
     let inside = |dir: &Path| {
-        postman
-            .canonicalize()
+        out.canonicalize()
             .ok()
             .zip(dir.canonicalize().ok())
             .is_some_and(|(out, dir)| out.starts_with(dir))
     };
-    if inside(&root) && !inside(&apic_dir) {
+    let scanned = out.extension().is_some_and(|e| e == "json");
+    if scanned && inside(&root) && !inside(&apic_dir) {
         warnings.push(format!(
             "{} is inside the contracts folder, so apic will read it as a contract. Write it outside that folder",
-            postman.display()
+            out.display()
         ));
     }
 
@@ -1471,7 +1517,7 @@ fn export_cmd(
     if output::json() {
         output::emit(&json!({
             "exported": items.len(),
-            "output": display_path(postman),
+            "output": display_path(out),
         }));
     } else {
         let suffix = match warnings.len() {
@@ -1482,7 +1528,7 @@ fn export_cmd(
         println!(
             "Exported {} contract(s) to {}{suffix}",
             items.len(),
-            postman.display()
+            out.display()
         );
     }
     Ok(())
@@ -1745,20 +1791,38 @@ pub(crate) fn run() {
         ),
         Commands::Export {
             postman,
+            openapi,
+            openapi_version,
             find,
             env,
             name,
             force,
-        } => match postman {
-            Some(out) => export_cmd(
-                &out,
-                find.as_deref(),
-                env.as_deref(),
-                name.as_deref(),
-                force,
-            ),
-            None => Err("pass --postman".to_string().into()),
-        },
+        } => {
+            use apic_core::export::openapi::Version;
+            let version = match openapi_version.as_deref() {
+                Some("3.1") => Version::V3_1,
+                _ => Version::V3_0,
+            };
+            let version_without_openapi = openapi_version.is_some() && openapi.is_none();
+            let format = match (postman, openapi) {
+                _ if version_without_openapi => Err(CliError::new(
+                    ErrorKind::Usage,
+                    "--openapi-version needs --openapi",
+                )),
+                (Some(out), _) => Ok(ExportFormat::Postman(out)),
+                (None, Some(out)) => Ok(ExportFormat::OpenApi(out, version)),
+                (None, None) => Err("pass --postman or --openapi".to_string().into()),
+            };
+            format.and_then(|format| {
+                export_cmd(
+                    &format,
+                    find.as_deref(),
+                    env.as_deref(),
+                    name.as_deref(),
+                    force,
+                )
+            })
+        }
         Commands::Docs { name } => crate::skill::docs_cmd(name),
         Commands::Skill { install, global } => crate::skill::skill_cmd(install, global),
     };

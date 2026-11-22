@@ -65,7 +65,7 @@ A contract is one JSON file per endpoint: name, method, URL, query params, heade
 | `apic remove` | Delete a contract or template. |
 | `apic validate` | Check contracts against the schema, for CI or a pre-commit hook. |
 | `apic convert` | Import a Postman collection or an OpenAPI spec as contracts. |
-| `apic export` | Export contracts as a Postman collection. |
+| `apic export` | Export contracts as a Postman collection or an OpenAPI document. |
 | `apic send` | Send a contract's request and print the response. |
 | `apic env` | List the environments in `.apic/env`. |
 | `apic vars` | Convert `{{name}}` variables to `$name`. |

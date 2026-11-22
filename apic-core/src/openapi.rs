@@ -440,6 +440,14 @@ impl<'a> Mapper<'a> {
             }
         }
 
+        if let Some(auth) = security_header(self.spec, op)
+            && !headers
+                .iter()
+                .any(|h| h.name.eq_ignore_ascii_case(&auth.name))
+        {
+            headers.push(auth);
+        }
+
         if self.version == Version::OpenApi3
             && let Some(body) = op.get("requestBody").and_then(|b| self.resolve(b))
         {
@@ -476,11 +484,17 @@ impl<'a> Mapper<'a> {
         }
 
         let responses = self.responses(op);
+        // An operation or path item can target its own server.
+        let base = match self.version {
+            Version::OpenApi3 => server_url(first_server(op).or_else(|| first_server(item)))
+                .unwrap_or_else(|| self.base_url.clone()),
+            Version::Swagger2 => self.base_url.clone(),
+        };
         let contract = JsonContent {
             name,
             description,
             method: method_from_str(method),
-            url: format!("{}{path}", self.base_url),
+            url: format!("{base}{path}"),
             query,
             headers,
             request,
@@ -623,6 +637,23 @@ impl<'a> Mapper<'a> {
                 .unwrap_or_default()
                 .to_string();
             let headers = self.response_headers(resp);
+            // Several named JSON examples document several responses with
+            // this status, as `apic export --openapi` writes them: each
+            // becomes its own response, described by its summary.
+            if self.version == Version::OpenApi3
+                && let Some(examples) = self.named_examples(resp)
+            {
+                for (summary, value) in examples {
+                    out.push(Response {
+                        code,
+                        description: summary.unwrap_or_else(|| description.clone()),
+                        headers: headers.clone(),
+                        schema: Some(value),
+                        multipart: None,
+                    });
+                }
+                continue;
+            }
             let (schema, multipart) = match self.version {
                 Version::OpenApi3 => self.response_body_v3(resp),
                 Version::Swagger2 => (self.response_body_v2(resp), None),
@@ -657,6 +688,33 @@ impl<'a> Mapper<'a> {
             });
         }
         out
+    }
+
+    /// The response's JSON examples as (summary, value) pairs, when it has
+    /// more than one. `None` for zero or one, which map as a single body.
+    fn named_examples(&mut self, resp: &'a Value) -> Option<Vec<(Option<String>, Value)>> {
+        let content = resp.get("content").and_then(Value::as_object)?;
+        let (media_type, media) = pick_media(content)?;
+        if !is_json(media_type) || media.get("example").is_some() {
+            return None;
+        }
+        let examples = media.get("examples").and_then(Value::as_object)?;
+        if examples.len() < 2 {
+            return None;
+        }
+        let mut out = Vec::new();
+        for raw in examples.values() {
+            let Some(ex) = self.resolve(raw) else {
+                continue;
+            };
+            let summary = ex
+                .get("summary")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let value = self.inline_refs(ex.get("value").unwrap_or(&Value::Null), 0);
+            out.push((summary, value));
+        }
+        Some(out)
     }
 
     fn response_body_v3(&mut self, resp: &'a Value) -> (Option<Value>, Option<Vec<Part>>) {
@@ -698,13 +756,23 @@ impl<'a> Mapper<'a> {
 /// filled from their defaults. A missing or relative server is prefixed with
 /// the `{{baseUrl}}` variable so it can be set per environment.
 fn base_url_v3(spec: &Value) -> String {
-    let Some(server) = spec
+    server_url(first_server(spec)).unwrap_or_else(|| "{{baseUrl}}".to_string())
+}
+
+/// The first entry of a `servers` list on a document, path item or
+/// operation.
+fn first_server(owner: &Value) -> Option<&Value> {
+    owner
         .get("servers")
         .and_then(Value::as_array)
         .and_then(|s| s.first())
-    else {
-        return "{{baseUrl}}".to_string();
-    };
+}
+
+/// A server object's URL with its variables filled from their defaults. A
+/// variable with an empty default stays a variable, as `{{name}}`. A
+/// relative URL is prefixed with `{{baseUrl}}`.
+fn server_url(server: Option<&Value>) -> Option<String> {
+    let server = server?;
     let mut url = server
         .get("url")
         .and_then(Value::as_str)
@@ -712,17 +780,61 @@ fn base_url_v3(spec: &Value) -> String {
         .to_string();
     if let Some(vars) = server.get("variables").and_then(Value::as_object) {
         for (name, var) in vars {
-            if let Some(default) = var.get("default").and_then(Value::as_str) {
-                url = url.replace(&format!("{{{name}}}"), default);
-            }
+            let value = match var.get("default").and_then(Value::as_str) {
+                Some(default) if !default.is_empty() => default.to_string(),
+                _ => format!("{{{{{name}}}}}"),
+            };
+            url = url.replace(&format!("{{{name}}}"), &value);
         }
     }
     let url = url.trim_end_matches('/');
-    if url.contains("://") {
+    Some(if url.contains("://") || url.starts_with("{{") {
         url.to_string()
     } else {
         format!("{{{{baseUrl}}}}{url}")
-    }
+    })
+}
+
+/// The `Authorization`-style header an operation's security implies: the
+/// operation's own `security`, or the document's when it has none. Only the
+/// first scheme of the first requirement is used. A bearer, OAuth 2 or
+/// OpenID Connect scheme gives `Authorization: Bearer $token`, HTTP basic
+/// gives `Authorization: Basic $basic_auth`, and an API key in a header
+/// gives that header with `$api_key`.
+fn security_header(spec: &Value, op: &Value) -> Option<Header> {
+    let requirements = op.get("security").or_else(|| spec.get("security"))?;
+    let name = requirements
+        .as_array()?
+        .first()?
+        .as_object()?
+        .keys()
+        .next()?;
+    let scheme = spec
+        .pointer(&format!("/components/securitySchemes/{name}"))
+        .or_else(|| spec.pointer(&format!("/securityDefinitions/{name}")))?;
+    let kind = scheme.get("type").and_then(Value::as_str)?;
+    let http_scheme = scheme
+        .get("scheme")
+        .and_then(Value::as_str)
+        .map(str::to_ascii_lowercase);
+    let (header, value) = match (kind, http_scheme.as_deref()) {
+        ("http", Some("bearer")) | ("oauth2", _) | ("openIdConnect", _) => {
+            ("Authorization".to_string(), "Bearer $token")
+        }
+        ("http", Some("basic")) | ("basic", _) => {
+            ("Authorization".to_string(), "Basic $basic_auth")
+        }
+        ("apiKey", _) if scheme.get("in").and_then(Value::as_str) == Some("header") => (
+            scheme.get("name").and_then(Value::as_str)?.to_string(),
+            "$api_key",
+        ),
+        _ => return None,
+    };
+    Some(Header {
+        name: header,
+        value: value.to_string(),
+        required: true,
+    })
 }
 
 /// The base URL for a Swagger 2.0 spec from `schemes`, `host` and
@@ -1094,6 +1206,39 @@ mod tests {
             .map(|m| m.rel_path.to_string_lossy().replace('\\', "/"))
             .collect();
         assert_eq!(paths, vec!["users_2.json", "users/list.json"]);
+    }
+
+    #[test]
+    fn servers_security_and_empty_variable_defaults() {
+        let (mapped, _) = map_ok(json!({
+            "openapi": "3.0.0",
+            "servers": [{"url": "{base}/{prefix}", "variables": {"base": {"default": ""}, "prefix": {"default": "v1"}}}],
+            "security": [{"bearerAuth": []}],
+            "components": {"securitySchemes": {
+                "bearerAuth": {"type": "http", "scheme": "bearer"},
+                "key": {"type": "apiKey", "in": "header", "name": "X-Key"}
+            }},
+            "paths": {
+                "/a": {"get": {"operationId": "a", "responses": {}}},
+                "/b": {"get": {"operationId": "b", "security": [{"key": []}],
+                    "servers": [{"url": "https://other.example.com"}], "responses": {}}},
+                "/c": {"get": {"operationId": "c", "security": [], "responses": {}}}
+            }
+        }));
+        let a = &mapped[0].contract;
+        assert_eq!(a.url, "{{base}}/v1/a");
+        assert_eq!(
+            (a.headers[0].name.as_str(), a.headers[0].value.as_str()),
+            ("Authorization", "Bearer $token")
+        );
+        let b = &mapped[1].contract;
+        assert_eq!(b.url, "https://other.example.com/b");
+        assert_eq!(
+            (b.headers[0].name.as_str(), b.headers[0].value.as_str()),
+            ("X-Key", "$api_key")
+        );
+        // An empty security list opts the operation out of auth.
+        assert!(mapped[2].contract.headers.is_empty());
     }
 
     #[test]
