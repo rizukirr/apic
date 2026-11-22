@@ -270,7 +270,7 @@ impl<'a> Mapper<'a> {
     /// schema (Swagger 2.0 parameters carry the schema fields inline).
     fn value_example(&mut self, obj: &'a Value) -> Value {
         if let Some(v) = obj.get("example") {
-            return v.clone();
+            return self.inline_refs(v, 0);
         }
         if let Some(first) = obj
             .get("examples")
@@ -279,11 +279,49 @@ impl<'a> Mapper<'a> {
         {
             // An OpenAPI 3 Example Object wraps the payload in `value`.
             if let Some(ex) = self.resolve(first) {
-                return ex.get("value").cloned().unwrap_or(Value::Null);
+                return self.inline_refs(ex.get("value").unwrap_or(&Value::Null), 0);
             }
         }
         let schema = obj.get("schema").unwrap_or(obj);
         self.example(schema, &mut Vec::new(), 0)
+    }
+
+    /// Copies an example value, replacing each `{"$ref": "#/..."}` object in
+    /// it with what it points at. Example values are literal in OpenAPI, but
+    /// some specs (GitHub's among them) reference other examples this way,
+    /// and left as is the `$ref` key would read as an apic variable. A ref
+    /// to an Example Object takes its `value`.
+    fn inline_refs(&mut self, value: &'a Value, depth: usize) -> Value {
+        match value {
+            Value::Object(map) if depth <= MAX_DEPTH => {
+                let local_ref = map.len() == 1
+                    && map
+                        .get("$ref")
+                        .and_then(Value::as_str)
+                        .is_some_and(|r| r.starts_with('#'));
+                if local_ref {
+                    return match self.resolve(value) {
+                        Some(target) => {
+                            let target = target.get("value").unwrap_or(target);
+                            self.inline_refs(target, depth + 1)
+                        }
+                        None => Value::Null,
+                    };
+                }
+                Value::Object(
+                    map.iter()
+                        .map(|(k, v)| (k.clone(), self.inline_refs(v, depth + 1)))
+                        .collect(),
+                )
+            }
+            Value::Array(items) if depth <= MAX_DEPTH => Value::Array(
+                items
+                    .iter()
+                    .map(|v| self.inline_refs(v, depth + 1))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
     }
 
     /// Maps every operation in the spec. Operations land in a folder named
@@ -959,6 +997,25 @@ mod tests {
         assert_eq!(parts[1].value, "string");
         assert!(c.request.is_none());
         assert_eq!(c.responses[0].schema, Some(json!({"done": true})));
+    }
+
+    #[test]
+    fn v3_refs_inside_example_values_are_followed() {
+        let (mapped, _) = map_ok(json!({
+            "openapi": "3.0.0",
+            "paths": {"/v": {"get": {"responses": {"200": {"description": "ok",
+                "content": {"application/json": {"examples": {
+                    "table": {"value": {"$ref": "#/components/examples/View"}}
+                }}}}}}}},
+            "components": {"examples": {
+                "View": {"value": {"id": 7, "owner": {"$ref": "#/components/examples/User"}}},
+                "User": {"value": {"login": "octo"}}
+            }}
+        }));
+        assert_eq!(
+            mapped[0].contract.responses[0].schema,
+            Some(json!({"id": 7, "owner": {"login": "octo"}}))
+        );
     }
 
     #[test]

@@ -99,6 +99,18 @@ fn read_into(path: &Path, vars: &mut Vars) -> Result<(), String> {
 /// Loads environment `name`: the shared file, then the local file over it.
 /// An unknown name is an error listing the available ones.
 pub fn load(apic_dir: &Path, name: &str) -> Result<Vars, String> {
+    let mut vars = load_shared(apic_dir, name)?;
+    read_into(
+        &env_dir(apic_dir).join(format!("{name}.local.toml")),
+        &mut vars,
+    )?;
+    Ok(vars)
+}
+
+/// Loads only the shared file of environment `name`, never the local one,
+/// for output that leaves the machine, such as an export. An unknown name is
+/// an error listing the available ones.
+pub fn load_shared(apic_dir: &Path, name: &str) -> Result<Vars, String> {
     let known = list(apic_dir);
     if !valid_name(name) || !known.iter().any(|e| e.name == name) {
         let names: Vec<&str> = known.iter().map(|e| e.name.as_str()).collect();
@@ -111,10 +123,8 @@ pub fn load(apic_dir: &Path, name: &str) -> Result<Vars, String> {
             format!("No environment '{name}'. Available: {}", names.join(", "))
         });
     }
-    let dir = env_dir(apic_dir);
     let mut vars = Vars::new();
-    read_into(&dir.join(format!("{name}.toml")), &mut vars)?;
-    read_into(&dir.join(format!("{name}.local.toml")), &mut vars)?;
+    read_into(&env_dir(apic_dir).join(format!("{name}.toml")), &mut vars)?;
     Ok(vars)
 }
 
@@ -162,6 +172,20 @@ mod tests {
         let vars = load(&apic, "dev").unwrap();
         assert_eq!(vars.get("host").map(String::as_str), Some("a"));
         assert_eq!(vars.get("token").map(String::as_str), Some("secret"));
+    }
+
+    #[test]
+    fn load_shared_never_reads_the_local_file() {
+        let apic = temp_apic("shared");
+        fs::write(apic.join("env/dev.toml"), "token = \"shared\"\n").unwrap();
+        fs::write(
+            apic.join("env/dev.local.toml"),
+            "token = \"secret\"\nkey = \"k\"\n",
+        )
+        .unwrap();
+        let vars = load_shared(&apic, "dev").unwrap();
+        assert_eq!(vars.get("token").map(String::as_str), Some("shared"));
+        assert!(!vars.contains_key("key"));
     }
 
     #[test]
