@@ -169,10 +169,17 @@ pub(crate) fn export(
 ) -> Result<(usize, usize), String> {
     use apic_core::export::{Format, load_items, openapi::Version, write};
     let apic_dir = project_root.join(".apic");
+    // Compared relative to `root`, which every scanned path starts with. An
+    // absolute comparison with `apic_dir` misses when one side is resolved
+    // and the other is not (macOS `/var` is `/private/var`), and the template
+    // in `.apic/template` would be exported as a contract.
     let mut paths: Vec<PathBuf> = apic_core::json::scan_json_file(root, true)
         .unwrap_or_default()
         .into_iter()
-        .filter(|p| !p.starts_with(&apic_dir))
+        .filter(|p| {
+            !p.strip_prefix(root)
+                .is_ok_and(|rel| rel.starts_with(".apic"))
+        })
         .collect();
     paths.sort();
     let (items, mut warnings) = load_items(&paths, root);
@@ -269,6 +276,30 @@ mod tests {
     fn make_project(folder: &Path) {
         std::fs::create_dir_all(folder.join(".apic")).expect("apic dir creates");
         std::fs::write(folder.join(".apic").join("config.toml"), "").expect("config writes");
+    }
+
+    /// The project path and the contracts folder can be spelled differently,
+    /// as on macOS where `/var` is `/private/var`. The `.apic` template must
+    /// still be left out of an export.
+    #[cfg(unix)]
+    #[test]
+    fn export_skips_apic_when_the_project_path_is_a_symlink() {
+        let real = tempdir();
+        init(&real).expect("project initializes");
+        std::fs::write(
+            real.join("get.json"),
+            r#"{"name": "Get", "method": "GET", "url": "https://h/x", "headers": [], "responses": []}"#,
+        )
+        .expect("contract writes");
+        let link = tempdir().join("link");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink creates");
+        let root = real.canonicalize().expect("real canonicalizes");
+        let out = tempdir().join("out.postman.json");
+
+        let (exported, _) =
+            export(ImportSource::Postman, &link, &root, &out, None).expect("export succeeds");
+
+        assert_eq!(exported, 1, "only the contract, never the template");
     }
 
     #[test]
