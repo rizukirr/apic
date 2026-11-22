@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The git diff opens a changed contract on its field changes. "Show field changes" is now checked by default, and unchecking it shows the line diff.
 - The GUI Templates section moved from the bottom of the sidebar to the top, under the Contracts and Changes switcher, and its list scrolls once it holds more than about six templates.
 - The agent skill now covers importing with `apic convert --openapi` and `--postman` and exporting with `apic export --postman` and `--openapi`, including when to pass `--force`, which variables an import leaves for the user to fill, and that exported OpenAPI schemas are inferred. Run `apic skill --install` again to update an installed copy.
 - `apic export --postman <file>` writes contracts as a Postman Collection v2.1: folders become Postman folders, contracts become requests, and documented responses become saved examples. `$name` variables become `{{name}}` and `{id}` path params become `:id`. `-f` exports one contract or a folder, and `--env` fills the collection variables from that environment's shared file only, so local secrets are never exported.

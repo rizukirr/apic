@@ -7,12 +7,11 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use eframe::egui;
-use egui::RichText;
 
 use crate::features::git::domain::status::{Change, FileStatus};
 use crate::features::git::ui::state::GitAction;
+use crate::ui::base::{Size, Text, Tone, menu_item, selectable_row};
 use crate::ui::components::row_menu_button;
-use crate::ui::theme::*;
 
 /// Which of the sidebar's groups a row belongs to, deciding the controls it
 /// offers.
@@ -32,17 +31,17 @@ pub(super) enum RowMode {
     Commit,
 }
 
-/// The colour of a change letter: success for added or untracked, warning
+/// The tone of a change letter: success for added or untracked, warning
 /// for modified or renamed, error for deleted or conflicted.
-fn change_color(change: Change, conflicted: bool, p: &Palette) -> egui::Color32 {
+fn change_tone(change: Change, conflicted: bool) -> Tone {
     if conflicted {
-        return p.error;
+        return Tone::Error;
     }
     match change {
-        Change::Added | Change::Untracked => p.success,
-        Change::Modified | Change::Renamed => p.warning,
-        Change::Deleted => p.error,
-        Change::Unmodified => p.on_surface_variant,
+        Change::Added | Change::Untracked => Tone::Success,
+        Change::Modified | Change::Renamed => Tone::Warning,
+        Change::Deleted => Tone::Error,
+        Change::Unmodified => Tone::Muted,
     }
 }
 
@@ -111,9 +110,8 @@ fn menu_items_ui(
     out: &mut Option<GitAction>,
 ) {
     for (label, action) in items {
-        if ui.button(label).clicked() {
+        if menu_item(ui, label) {
             *out = Some(action);
-            ui.close();
         }
     }
 }
@@ -134,7 +132,6 @@ pub(super) fn file_row(
     ticked: bool,
     selected: Option<&(String, bool)>,
 ) -> Option<GitAction> {
-    let p = palette(ui.ctx());
     let mut action = None;
     let mut menu_action = None;
     let mut context_action = None;
@@ -172,15 +169,11 @@ pub(super) fn file_row(
                 } else {
                     change.letter()
                 };
-                ui.label(
-                    RichText::new(letter)
-                        .color(change_color(change, file.conflicted, p))
-                        .size(11.0),
-                );
-                let button =
-                    egui::Button::selectable(is_selected, RichText::new(name).color(p.on_surface))
-                        .truncate();
-                let response = ui.add(button);
+                Text::new(letter)
+                    .tone(change_tone(change, file.conflicted))
+                    .size(Size::Caption)
+                    .show(ui);
+                let response = selectable_row(ui, is_selected, Text::new(name));
                 if response.clicked() {
                     action = Some(if mode == RowMode::Commit {
                         GitAction::SelectCommitFile {
@@ -327,7 +320,6 @@ pub(super) fn folder_row(
     mode: RowMode,
     node: &FileTree,
 ) -> Option<GitAction> {
-    let p = palette(ui.ctx());
     let mut tick_action = None;
     let mut menu_action = None;
     let mut context_action = None;
@@ -356,7 +348,7 @@ pub(super) fn folder_row(
                     });
                 }
             }
-            let label = egui::Label::new(RichText::new(name).color(p.on_surface_variant))
+            let label = egui::Label::new(Text::new(name).muted().rich(ui.ctx()))
                 .truncate()
                 .sense(egui::Sense::click());
             let response = ui.add(label);

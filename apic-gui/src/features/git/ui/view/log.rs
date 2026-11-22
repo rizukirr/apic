@@ -2,13 +2,14 @@
 //! graph, the selected commit's changed files, and the revert confirmation.
 
 use eframe::egui;
-use egui::RichText;
 
 use super::files::{FileTree, RowMode};
 use crate::features::git::domain::log::{Commit, LogFilter, PathFilter, Row, Since, short};
 use crate::features::git::domain::status::FileStatus;
 use crate::features::git::ui::state::{GitAction, GitState};
-use crate::ui::base::{ButtonKind, icon_button};
+use crate::ui::base::{
+    ButtonKind, Text, Tone, icon_button, menu_item, menu_item_enabled, text_button, wide_button,
+};
 use crate::ui::components::{DialogButton, detail_box, dialog, empty_state};
 use crate::ui::theme::*;
 
@@ -80,7 +81,6 @@ pub(crate) fn log_panel(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAc
 /// The filter row: search box with `.*` and `Cc`, Branch, User, Date and
 /// Paths menus, and Refresh. Then git's error, when the last read failed.
 fn toolbar(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
-    let p = palette(ui.ctx());
     let mut action = None;
     let filter = state.log.filter.clone();
     ui.add_space(SPACE_EXTRA_SMALL);
@@ -208,7 +208,7 @@ fn toolbar(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
                 );
                 let enter = typed.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let path = state.log.typed_path.trim().to_string();
-                if (ui.button("Use").clicked() || enter) && !path.is_empty() {
+                if (text_button(ui, "Use", Tone::Default) || enter) && !path.is_empty() {
                     action = Some(set(&filter, |f| f.path = PathFilter::Typed(path)));
                     ui.close();
                 }
@@ -222,7 +222,7 @@ fn toolbar(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
         });
     });
     if !state.log.error.is_empty() {
-        ui.label(RichText::new(&state.log.error).color(p.error));
+        Text::new(&state.log.error).tone(Tone::Error).show(ui);
     }
     ui.add_space(SPACE_EXTRA_SMALL);
     action
@@ -240,7 +240,8 @@ fn commit_table(ui: &mut egui::Ui, state: &GitState) -> Option<GitAction> {
         };
         empty_state(ui, title, "");
         // A page can keep no rows under a hash prefix, yet older pages remain.
-        return (log.more && ui.button("Load more").clicked()).then_some(GitAction::LoadMoreLog);
+        return (log.more && text_button(ui, "Load more", Tone::Default))
+            .then_some(GitAction::LoadMoreLog);
     }
     let dots_only = log.filter.dots_only();
     let lanes = if dots_only {
@@ -262,13 +263,7 @@ fn commit_table(ui: &mut egui::Ui, state: &GitState) -> Option<GitAction> {
                         (Some(commit), Some(row)) => {
                             commit_row(ui, state, commit, row, graph_w, dots_only)
                         }
-                        _ => ui
-                            .add_sized(
-                                [ui.available_width(), ROW_H],
-                                egui::Button::new("Load more"),
-                            )
-                            .clicked()
-                            .then_some(GitAction::LoadMoreLog),
+                        _ => wide_button(ui, "Load more", ROW_H).then_some(GitAction::LoadMoreLog),
                     };
                     if let Some(a) = row {
                         action = Some(a);
@@ -359,20 +354,13 @@ fn commit_row(
     });
     response.context_menu(|ui| {
         let block = state.revert_block(commit);
-        let revert = ui.add_enabled(block.is_none(), egui::Button::new("Revert"));
-        let revert = match block {
-            Some(reason) => revert.on_disabled_hover_text(reason),
-            None => revert,
-        };
-        if revert.clicked() {
+        if menu_item_enabled(ui, block.is_none(), "Revert", block) {
             action = Some(GitAction::RequestRevert {
                 hash: commit.hash.clone(),
             });
-            ui.close();
         }
-        if ui.button("Copy hash").clicked() {
+        if menu_item(ui, "Copy hash") {
             ui.ctx().copy_text(commit.hash.clone());
-            ui.close();
         }
     });
     action
@@ -413,20 +401,17 @@ fn paint_graph(painter: &egui::Painter, rect: egui::Rect, row: &Row, dots_only: 
 /// The selected commit's changed files, nested by folder with the Changes
 /// file tree. A click shows that commit's diff of the file.
 fn commit_files(ui: &mut egui::Ui, state: &GitState) -> Option<GitAction> {
-    let p = palette(ui.ctx());
     let Some(hash) = &state.log.selected else {
-        ui.label(RichText::new("Select a commit to see its files.").color(p.on_surface_variant));
+        Text::new("Select a commit to see its files.")
+            .muted()
+            .show(ui);
         return None;
     };
     let Some(files) = &state.log.files else {
-        ui.label(RichText::new("Loading files...").color(p.on_surface_variant));
+        Text::new("Loading files...").muted().show(ui);
         return None;
     };
-    ui.label(
-        RichText::new(short(hash))
-            .color(p.on_surface_variant)
-            .monospace(),
-    );
+    Text::new(short(hash)).muted().mono().show(ui);
     let refs: Vec<&FileStatus> = files.iter().collect();
     let tree = FileTree::from_files(&refs, |_| false);
     let selected = state.log.selected_file.clone().map(|path| (path, true));
@@ -444,7 +429,6 @@ fn commit_files(ui: &mut egui::Ui, state: &GitState) -> Option<GitAction> {
 /// hash and subject, Cancel and Revert. Revert is disabled while a git job
 /// runs, with "Waiting for git" under the commit.
 pub(super) fn revert_dialog(ctx: &egui::Context, state: &mut GitState) -> Option<GitAction> {
-    let p = palette(ctx);
     let commit = state.log.pending_revert.clone()?;
     let busy = state.pending.is_some();
     let outcome = dialog(
@@ -452,19 +436,15 @@ pub(super) fn revert_dialog(ctx: &egui::Context, state: &mut GitState) -> Option
         "revert_modal",
         "Revert commit",
         |ui| {
-            ui.label(RichText::new("Add a new commit that undoes").color(p.on_surface_variant));
+            Text::new("Add a new commit that undoes").muted().show(ui);
             ui.add_space(SPACE_SMALL);
             detail_box(ui, |ui| {
-                ui.label(
-                    RichText::new(commit.short())
-                        .color(p.on_surface_variant)
-                        .monospace(),
-                );
-                ui.label(RichText::new(&commit.subject).color(p.on_surface).strong());
+                Text::new(commit.short()).muted().mono().show(ui);
+                Text::new(&commit.subject).strong().show(ui);
             });
             if busy {
                 ui.add_space(SPACE_SMALL);
-                ui.label(RichText::new("Waiting for git").color(p.on_surface_variant));
+                Text::new("Waiting for git").muted().show(ui);
             }
         },
         &[

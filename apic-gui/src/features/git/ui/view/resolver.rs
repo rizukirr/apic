@@ -3,13 +3,12 @@
 //! decided, and the Resolve action.
 
 use eframe::egui;
-use egui::RichText;
 
 use super::diff::inline_diff_view;
 use crate::features::git::domain::conflict::{self, Choice, Segment};
 use crate::features::git::domain::diff::parse_unified;
 use crate::features::git::ui::state::{GitAction, GitState, ResolveState};
-use crate::ui::base::{Tone, text_button};
+use crate::ui::base::{Size, Text, Tone, link, text_button};
 use crate::ui::theme::*;
 
 /// Ensures `state.resolve` holds the parsed conflict for `path`, parsing
@@ -24,7 +23,6 @@ pub(super) fn conflict_resolver(
     raw: &str,
     new_blob: Option<&str>,
 ) -> Option<GitAction> {
-    let p = palette(ui.ctx());
     let matches_path = state.resolve.as_ref().is_some_and(|r| r.path == path);
     if !matches_path {
         state.resolve = new_blob.and_then(|text| ResolveState::parse(path, text));
@@ -32,19 +30,16 @@ pub(super) fn conflict_resolver(
 
     let Some(resolve) = state.resolve.as_mut() else {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(path).color(p.on_surface).strong());
+            Text::new(path).strong().show(ui);
             let side = if staged { "staged" } else { "unstaged" };
-            ui.label(RichText::new(side).color(p.on_surface_variant));
+            Text::new(side).muted().show(ui);
         });
         ui.separator();
         inline_diff_view(ui, &parse_unified(raw));
         ui.add_space(SPACE_SMALL);
-        ui.label(
-            RichText::new(
-                "This file's conflict markers could not be read. Resolve it in your editor.",
-            )
-            .color(p.warning),
-        );
+        Text::new("This file's conflict markers could not be read. Resolve it in your editor.")
+            .tone(Tone::Warning)
+            .show(ui);
         return None;
     };
     resolve_view(ui, path, staged, resolve)
@@ -79,7 +74,6 @@ fn resolve_view(
     staged: bool,
     resolve: &mut ResolveState,
 ) -> Option<GitAction> {
-    let p = palette(ui.ctx());
     let mut action = None;
 
     // Rendered fresh every frame from the current choices, by the exact
@@ -128,11 +122,10 @@ fn resolve_view(
                     ui.scope(|ui| {
                         ui.set_max_width(path_max_width);
                         ui.add(
-                            egui::Label::new(RichText::new(path).color(p.on_surface).strong())
-                                .truncate(),
+                            egui::Label::new(Text::new(path).strong().rich(ui.ctx())).truncate(),
                         );
                     });
-                    ui.label(RichText::new(side).color(p.on_surface_variant));
+                    Text::new(side).muted().show(ui);
                 },
             );
         });
@@ -141,12 +134,11 @@ fn resolve_view(
 
     let json = path.ends_with(".json");
     if json && all_chosen && apic_core::json::validate(&rendered).is_err() {
-        ui.label(
-            RichText::new(
-                "This resolution is not valid JSON. You can still resolve it and fix it in the repair editor.",
-            )
-            .color(p.warning),
-        );
+        Text::new(
+            "This resolution is not valid JSON. You can still resolve it and fix it in the repair editor.",
+        )
+        .tone(Tone::Warning)
+        .show(ui);
         ui.add_space(SPACE_EXTRA_SMALL);
     }
 
@@ -215,15 +207,15 @@ fn conflict_block_view(ui: &mut egui::Ui, sides: &Sides, json: bool, choice: &mu
     match *choice {
         None => {
             ui.horizontal(|ui| {
-                if lens(ui, "Accept Current") {
+                if link(ui, "Accept Current") {
                     *choice = Some(Choice::Ours);
                 }
-                ui.label(RichText::new("|").color(p.on_surface_variant));
-                if lens(ui, "Accept Incoming") {
+                Text::new("|").muted().show(ui);
+                if link(ui, "Accept Incoming") {
                     *choice = Some(Choice::Theirs);
                 }
-                ui.label(RichText::new("|").color(p.on_surface_variant));
-                if lens(ui, "Accept Both") {
+                Text::new("|").muted().show(ui);
+                if link(ui, "Accept Both") {
                     *choice = Some(Choice::Both);
                 }
             });
@@ -242,8 +234,8 @@ fn conflict_block_view(ui: &mut egui::Ui, sides: &Sides, json: bool, choice: &mu
         }
         Some(chosen) => {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(accepted_label(chosen)).color(p.on_surface_variant));
-                if lens(ui, "Undo") {
+                Text::new(accepted_label(chosen)).muted().show(ui);
+                if link(ui, "Undo") {
                     *choice = None;
                 }
             });
@@ -269,24 +261,14 @@ fn accepted_label(choice: Choice) -> &'static str {
     }
 }
 
-/// A small borderless clickable text in the primary colour, like VS Code's
-/// CodeLens links above a conflict.
-fn lens(ui: &mut egui::Ui, label: &str) -> bool {
-    let p = palette(ui.ctx());
-    ui.add(egui::Label::new(RichText::new(label).color(p.primary)).sense(egui::Sense::click()))
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-}
-
 /// A full-width header band naming one side of a conflict.
 fn band(ui: &mut egui::Ui, title: &str, fill: egui::Color32) {
-    let p = palette(ui.ctx());
     egui::Frame::new()
         .fill(fill)
         .inner_margin(SPACE_EXTRA_SMALL)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            ui.label(RichText::new(title).color(p.on_surface).small());
+            Text::new(title).size(Size::Tiny).show(ui);
         });
 }
 
@@ -317,7 +299,7 @@ fn code_text(ui: &mut egui::Ui, text: &str, json: bool) {
         let job = crate::ui::syntax_highlighting::highlight_json(text, font_id, p);
         ui.label(job);
     } else {
-        ui.label(RichText::new(text).color(p.on_surface).monospace());
+        Text::new(text).mono().show(ui);
     }
 }
 

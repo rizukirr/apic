@@ -50,6 +50,25 @@ pub(crate) fn plain_button(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>)
     ui.add(egui::Button::new(text).frame(false).truncate())
 }
 
+/// A text button as wide as the space it sits in and `height` tall, such as
+/// a "Load more" row at the end of a list. Returns `true` on click.
+#[must_use]
+pub(crate) fn wide_button(ui: &mut egui::Ui, label: &str, height: f32) -> bool {
+    let text = Text::new(label).rich(ui.ctx());
+    ui.add_sized([ui.available_width(), height], egui::Button::new(text))
+        .clicked()
+}
+
+/// Text that acts as a link: drawn in the primary tone with a pointing-hand
+/// cursor, and no frame. Returns `true` on click.
+#[must_use]
+pub(crate) fn link(ui: &mut egui::Ui, label: &str) -> bool {
+    let text = Text::new(label).tone(Tone::Primary).rich(ui.ctx());
+    ui.add(egui::Label::new(text).sense(egui::Sense::click()))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+}
+
 /// A row that can be selected, such as a file in a list: highlighted while
 /// `selected`, truncated with an ellipsis when its space runs out. Returns
 /// the response so callers can chain `.clicked()` or a context menu.

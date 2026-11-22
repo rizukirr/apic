@@ -28,11 +28,12 @@ mod layering {
     /// Feature folders under `src/` that draw only through base and
     /// components. A folder joins once its migration lands, and from then on
     /// it is held to the same rule as components.
-    const MIGRATED: &[&str] = &["features/contracts"];
+    const MIGRATED: &[&str] = &["features/contracts", "features/git"];
 
     /// Raw egui calls that build text or buttons outside base, so their look
     /// is chosen at the call site instead of by a base component.
-    const RAW_WIDGETS: &[&str] = &["RichText::new", "egui::Button::", "ui.button("];
+    /// `.button(` also catches `ui` and `.button(` split across lines.
+    const RAW_WIDGETS: &[&str] = &["RichText::new", "egui::Button::", ".button("];
 
     fn src() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
@@ -227,7 +228,7 @@ mod layering {
         let code = r#"ui.label(RichText::new("x").size(11.0)); ui.button("y");"#;
         assert_eq!(
             drawing_violations(code),
-            ["RichText::new", "ui.button(", ".size(<number>)"]
+            ["RichText::new", ".button(", ".size(<number>)"]
         );
         assert!(drawing_violations("Text::new(\"x\").size(Size::Caption).show(ui);").is_empty());
     }

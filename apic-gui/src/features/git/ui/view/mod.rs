@@ -11,7 +11,6 @@ mod resolver;
 use std::path::Path;
 
 use eframe::egui;
-use egui::RichText;
 
 pub(crate) use self::branches::branch_menu;
 use self::branches::{
@@ -28,7 +27,7 @@ use crate::features::git::domain::log::short;
 use crate::features::git::domain::status::{Status, split_conflicts};
 use crate::features::git::ui::state::GitAction;
 use crate::features::git::ui::state::GitState;
-use crate::ui::base::{ButtonKind, Tone, text_button};
+use crate::ui::base::{ButtonKind, Text, Tone, text_button};
 use crate::ui::components::{DialogButton, detail_box, dialog, empty_state};
 use crate::ui::theme::*;
 
@@ -66,15 +65,14 @@ pub(crate) fn changes_body(
     state: &mut GitState,
     repo_root: Option<&Path>,
 ) -> Option<GitAction> {
-    let p = palette(ui.ctx());
     let mut action = None;
     if !state.error.is_empty() {
-        ui.label(RichText::new(&state.error).color(p.error));
+        Text::new(&state.error).tone(Tone::Error).show(ui);
         ui.add_space(SPACE_SMALL);
     }
 
     if repo_root.is_none() {
-        ui.label(RichText::new("Not inside a git repository.").color(p.on_surface_variant));
+        Text::new("Not inside a git repository.").muted().show(ui);
         return action;
     }
 
@@ -103,29 +101,26 @@ pub(crate) fn changes_body(
                 });
             }
             if conflicted.is_empty() && changed.is_empty() && outside.is_empty() {
-                ui.label(RichText::new("No changes").color(p.on_surface_variant));
+                Text::new("No changes").muted().show(ui);
             }
 
             if !outside.is_empty() {
                 let title = format!("Outside this project  {}", outside.len());
-                let header =
-                    egui::CollapsingHeader::new(RichText::new(title).color(p.on_surface_variant))
-                        .id_salt("git_outside")
-                        .open(Some(show_outside))
-                        .show(ui, |ui| {
-                            for (file, ticked) in &outside {
-                                let mode = if file.conflicted {
-                                    RowMode::Conflicted
-                                } else {
-                                    RowMode::Changed
-                                };
-                                if let Some(a) =
-                                    file_row(ui, file, mode, *ticked, selected.as_ref())
-                                {
-                                    action = Some(a);
-                                }
+                let header = egui::CollapsingHeader::new(Text::new(title).muted().rich(ui.ctx()))
+                    .id_salt("git_outside")
+                    .open(Some(show_outside))
+                    .show(ui, |ui| {
+                        for (file, ticked) in &outside {
+                            let mode = if file.conflicted {
+                                RowMode::Conflicted
+                            } else {
+                                RowMode::Changed
+                            };
+                            if let Some(a) = file_row(ui, file, mode, *ticked, selected.as_ref()) {
+                                action = Some(a);
                             }
-                        });
+                        }
+                    });
                 if header.header_response.clicked() {
                     show_outside = !show_outside;
                 }
@@ -144,9 +139,10 @@ fn change_group(
     count: usize,
     body: impl FnOnce(&mut egui::Ui),
 ) {
-    let p = palette(ui.ctx());
     egui::CollapsingHeader::new(
-        RichText::new(format!("{title}  {count}")).color(p.on_surface_variant),
+        Text::new(format!("{title}  {count}"))
+            .muted()
+            .rich(ui.ctx()),
     )
     .id_salt(id)
     .default_open(true)
@@ -156,19 +152,17 @@ fn change_group(
 /// The commit box for the Git section: the Amend toggle, the Commit button
 /// and the message editor, which fills the space the controls leave.
 pub(crate) fn commit_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
-    let p = palette(ui.ctx());
     let mut action = None;
     egui::Panel::bottom("git_commit_controls")
         .show_separator_line(false)
         .show(ui, |ui| {
             ui.add_space(SPACE_EXTRA_SMALL);
             if let Some(upstream) = &state.amend_pushed_to {
-                ui.label(
-                    RichText::new(format!(
-                        "This commit is already on {upstream}. Amending it will need a force push."
-                    ))
-                    .color(p.warning),
-                );
+                Text::new(format!(
+                    "This commit is already on {upstream}. Amending it will need a force push."
+                ))
+                .tone(Tone::Warning)
+                .show(ui);
             }
             ui.horizontal(|ui| {
                 let mut amend = state.amend;
@@ -227,20 +221,18 @@ fn conflict_notice_dialog(ctx: &egui::Context, state: &mut GitState) {
     let Some(paths) = state.conflict_notice.clone() else {
         return;
     };
-    let p = palette(ctx);
     let outcome = dialog(
         ctx,
         "conflict_notice_modal",
         "Merge conflict",
         |ui| {
-            ui.label(
-                RichText::new("These files have conflicts. Resolve them in Changes.")
-                    .color(p.on_surface_variant),
-            );
+            Text::new("These files have conflicts. Resolve them in Changes.")
+                .muted()
+                .show(ui);
             ui.add_space(SPACE_SMALL);
             detail_box(ui, |ui| {
                 for path in &paths {
-                    ui.label(RichText::new(path).color(p.on_surface).monospace());
+                    Text::new(path).mono().show(ui);
                 }
             });
         },
@@ -258,19 +250,17 @@ fn amend_pushed_dialog(ctx: &egui::Context, state: &GitState) -> Option<GitActio
     if !state.confirm_amend {
         return None;
     }
-    let p = palette(ctx);
     let upstream = state.amend_pushed_to.as_deref().unwrap_or("the remote");
     let outcome = dialog(
         ctx,
         "amend_pushed_modal",
         "Amend pushed commit",
         |ui| {
-            ui.label(
-                RichText::new(format!(
-                    "This commit is already on {upstream}. Amending it rewrites history, so you will need to force push."
-                ))
-                .color(p.on_surface_variant),
-            );
+            Text::new(format!(
+                "This commit is already on {upstream}. Amending it rewrites history, so you will need to force push."
+            ))
+            .muted()
+            .show(ui);
         },
         &[
             DialogButton::new("Cancel", ButtonKind::Secondary),
@@ -298,7 +288,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
         let hash = state.log.selected.clone().unwrap_or_default();
         match &state.log.diff {
             Some((key, data)) if *key == (hash.clone(), path.clone()) => {
-                diff_body(ui, &mut state.show_fields, &path, short(&hash), data)
+                diff_body(ui, &mut state.show_line_diff, &path, short(&hash), data)
             }
             _ => empty_state(ui, "Loading diff...", ""),
         }
@@ -329,30 +319,41 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
     }
 
     let side = if staged { "staged" } else { "unstaged" };
-    diff_body(ui, &mut state.show_fields, &path, side, data);
+    diff_body(ui, &mut state.show_line_diff, &path, side, data);
     None
 }
 
 /// One read-only diff: `path` and `side` with the Show field changes toggle,
-/// then the field list when asked for and available, the inline diff
-/// otherwise. A non-contract file, an untracked file or a formatting-only
-/// change always shows the inline diff, so no selection renders an empty pane.
-fn diff_body(ui: &mut egui::Ui, show_fields: &mut bool, path: &str, side: &str, data: &DiffData) {
-    let p = palette(ui.ctx());
+/// then the field list when it is available and `show_line_diff` is off, the
+/// inline diff otherwise. A non-contract file, an untracked file or a
+/// formatting-only change always shows the inline diff, so no selection
+/// renders an empty pane.
+fn diff_body(
+    ui: &mut egui::Ui,
+    show_line_diff: &mut bool,
+    path: &str,
+    side: &str,
+    data: &DiffData,
+) {
     let field_changes =
         domain_diff::semantic_changes(data.old_blob.as_deref(), data.new_blob.as_deref());
     ui.add_space(SPACE_SMALL);
     ui.horizontal(|ui| {
-        ui.label(RichText::new(path).color(p.on_surface).strong());
-        ui.label(RichText::new(side).color(p.on_surface_variant));
+        Text::new(path).strong().show(ui);
+        Text::new(side).muted().show(ui);
         ui.add_enabled_ui(field_changes.is_some(), |ui| {
-            ui.checkbox(show_fields, "Show field changes")
+            let mut show_fields = !*show_line_diff;
+            let response = ui.checkbox(&mut show_fields, "Show field changes");
+            if response.changed() {
+                *show_line_diff = !show_fields;
+            }
+            response
         })
         .response
         .on_disabled_hover_text("No field-level view for this change");
     });
     ui.separator();
-    match field_changes.filter(|_| *show_fields) {
+    match field_changes.filter(|_| !*show_line_diff) {
         Some(changes) => semantic_diff_view(ui, &changes),
         None => inline_diff_view(ui, &data.rows),
     }
@@ -524,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn central_renders_the_field_list_when_show_fields_is_set() {
+    fn central_renders_the_field_list_by_default_for_a_changed_contract() {
         for preference in BOTH_THEMES {
             let old = domain_diff::parse(CONTRACT_GET).expect("valid contract");
             let new = domain_diff::parse(CONTRACT_POST).expect("valid contract");
@@ -538,7 +539,7 @@ mod tests {
                     Some(CONTRACT_POST),
                 ),
             );
-            state.show_fields = true;
+            assert!(!state.show_line_diff);
             run_in_theme(preference, |ui| {
                 central_body(ui, &mut state);
             });
@@ -546,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn central_renders_the_inline_diff_by_default_for_a_changed_contract() {
+    fn central_renders_the_inline_diff_when_show_line_diff_is_set() {
         for preference in BOTH_THEMES {
             let mut state = state_with_diff(
                 "contracts/login.json",
@@ -557,7 +558,7 @@ mod tests {
                     Some(CONTRACT_POST),
                 ),
             );
-            assert!(!state.show_fields);
+            state.show_line_diff = true;
             run_in_theme(preference, |ui| {
                 central_body(ui, &mut state);
             });
@@ -1439,10 +1440,10 @@ mod tests {
     #[test]
     fn log_view_central_shows_a_commit_file_diff() {
         for preference in BOTH_THEMES {
-            for show_fields in [false, true] {
+            for show_line_diff in [false, true] {
                 let hash = "a".repeat(40);
                 let mut state = GitState {
-                    show_fields,
+                    show_line_diff,
                     log: LogState {
                         selected: Some(hash.clone()),
                         selected_file: Some("contracts/a.json".into()),

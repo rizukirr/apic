@@ -29,7 +29,7 @@
             "description": "OK",
             "schema": {
                 "statusCode": 200,
-                "message": "Login berhasil",
+                "message": "berhasil",
                 "error": null,
                 "value": {
                     "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",

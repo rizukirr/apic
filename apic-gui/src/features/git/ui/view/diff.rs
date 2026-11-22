@@ -1,9 +1,9 @@
 //! The git central pane's diff rendering: the field-level semantic diff of a contract and the inline diff of any file.
 
 use eframe::egui;
-use egui::RichText;
 
 use crate::features::git::domain::diff::{self, DiffLine, DiffRow, FieldChange, LineKind};
+use crate::ui::base::{Text, Tone};
 use crate::ui::theme::*;
 
 /// Renders `diff::diff_models` as one block per change. A single-line change
@@ -29,17 +29,16 @@ pub(super) fn semantic_diff_view(ui: &mut egui::Ui, changes: &[FieldChange]) {
 
 /// One row for a change whose old and new values are each a single line.
 fn single_line_change_view(ui: &mut egui::Ui, change: &FieldChange) {
-    let p = palette(ui.ctx());
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new(&change.what).color(p.on_surface_variant));
+        Text::new(&change.what).muted().show(ui);
         if !change.from.is_empty() {
-            ui.label(RichText::new(&change.from).color(p.error));
+            Text::new(&change.from).tone(Tone::Error).show(ui);
         }
         if !change.from.is_empty() && !change.to.is_empty() {
-            ui.label(RichText::new("->").color(p.on_surface_variant));
+            Text::new("->").muted().show(ui);
         }
         if !change.to.is_empty() {
-            ui.label(RichText::new(&change.to).color(p.success));
+            Text::new(&change.to).tone(Tone::Success).show(ui);
         }
     });
 }
@@ -48,15 +47,14 @@ fn single_line_change_view(ui: &mut egui::Ui, change: &FieldChange) {
 /// only in `from` in the error colour, lines present only in `to` in the success colour, unchanged
 /// lines in the muted colour.
 fn multiline_change_view(ui: &mut egui::Ui, change: &FieldChange) {
-    let p = palette(ui.ctx());
-    ui.label(RichText::new(&change.what).color(p.on_surface_variant));
+    Text::new(&change.what).muted().show(ui);
     for row in diff::line_diff(&change.from, &change.to) {
-        let color = match row.kind {
-            diff::LineDiffKind::Removed => p.error,
-            diff::LineDiffKind::Added => p.success,
-            diff::LineDiffKind::Unchanged => p.on_surface_variant,
+        let tone = match row.kind {
+            diff::LineDiffKind::Removed => Tone::Error,
+            diff::LineDiffKind::Added => Tone::Success,
+            diff::LineDiffKind::Unchanged => Tone::Muted,
         };
-        ui.label(RichText::new(&row.text).color(color).monospace());
+        Text::new(&row.text).tone(tone).mono().show(ui);
     }
 }
 
