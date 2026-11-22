@@ -6,7 +6,8 @@ use egui::RichText;
 
 use crate::features::project::data::ImportSource;
 use crate::features::project::ui::state::{ProjectAction, ProjectState};
-use crate::ui::components::{ButtonKind, DialogButton, dialog, menu_item};
+use crate::ui::base::{ButtonKind, menu_item};
+use crate::ui::components::{DialogButton, dialog};
 use crate::ui::theme::*;
 
 /// The welcome screen for when no project is open: a title, a hint and the

@@ -7,9 +7,8 @@ use egui::containers::menu::SubMenuButton;
 
 use crate::features::git::domain::status::{Branches, DiscardTarget, discard_target};
 use crate::features::git::ui::state::{BranchOpKind, GitAction, GitState};
-use crate::ui::components::{
-    ButtonKind, DialogButton, bordered_input, detail_box, dialog, menu_item, submenu,
-};
+use crate::ui::base::{ButtonKind, bordered_input, menu_item};
+use crate::ui::components::{DialogButton, detail_box, dialog, submenu};
 use crate::ui::theme::*;
 
 /// Whether the menu may offer deleting `name`: not the current branch, which

@@ -6,7 +6,8 @@ use egui::RichText;
 
 use crate::features::contracts::domain::entry::DeleteTarget;
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState};
-use crate::ui::components::{ButtonKind, DialogButton, bordered_input, detail_box, dialog};
+use crate::ui::base::{ButtonKind, bordered_input};
+use crate::ui::components::{DialogButton, detail_box, dialog};
 use crate::ui::focus::take_pending_focus;
 use crate::ui::theme::*;
 

@@ -28,9 +28,8 @@ use crate::features::git::domain::log::short;
 use crate::features::git::domain::status::{Status, split_conflicts};
 use crate::features::git::ui::state::GitAction;
 use crate::features::git::ui::state::GitState;
-use crate::ui::components::{
-    ButtonKind, DialogButton, detail_box, dialog, empty_state, text_button,
-};
+use crate::ui::base::{ButtonKind, Tone, text_button};
+use crate::ui::components::{DialogButton, detail_box, dialog, empty_state};
 use crate::ui::theme::*;
 
 /// What the Git section header should render, decided purely from a `Status`: the label
@@ -180,7 +179,7 @@ pub(crate) fn commit_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Git
                     let enabled = !state.commit_message.trim().is_empty()
                         && (state.any_ticked() || state.amend);
                     ui.add_enabled_ui(enabled, |ui| {
-                        if text_button(ui, "Commit", p.primary) {
+                        if text_button(ui, "Commit", Tone::Primary) {
                             action = Some(GitAction::Commit);
                         }
                     });

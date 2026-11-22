@@ -29,7 +29,8 @@ use crate::features::project::data::{NewKind, project_root_of};
 use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
 use crate::features::project::ui::view::{format_items, welcome};
 use crate::platform::settings::Settings;
-use crate::ui::components::{icon_button, menu_item, section_header, submenu};
+use crate::ui::base::{Text, icon_button, menu_item};
+use crate::ui::components::{section_header, submenu};
 use crate::ui::theme::*;
 
 /// What the app bar's theme toggle switches to from the theme now showing,
@@ -362,8 +363,7 @@ impl App {
             .min_size(100.0)
             .show(ui, |ui| {
                 let commit_title =
-                    RichText::new(format!("{} Commit", egui_phosphor::regular::GIT_COMMIT))
-                        .color(p.on_surface);
+                    Text::new(format!("{} Commit", egui_phosphor::regular::GIT_COMMIT));
                 if self.shell.commit_open {
                     egui::Panel::bottom("commit_section_open")
                         .resizable(true)
@@ -453,9 +453,7 @@ impl App {
                 // list scrolls on its own so many templates never push the
                 // files off screen.
                 egui::Panel::top("templates_section").show(ui, |ui| {
-                    let label =
-                        RichText::new(format!("{} Templates", egui_phosphor::regular::DIAMOND))
-                            .color(p.on_surface);
+                    let label = Text::new(format!("{} Templates", egui_phosphor::regular::DIAMOND));
                     let toggled = section_header(ui, self.shell.templates_open, label, |ui| {
                         if icon_button(ui, egui_phosphor::regular::PLUS, "New template").clicked() {
                             action = Some(Action::Contracts(ContractsAction::OpenNewTemplate));
@@ -472,6 +470,8 @@ impl App {
                         if let Some(a) = body.inner {
                             action = Some(Action::Contracts(a));
                         }
+                        // Keep the last template off the divider below.
+                        ui.add_space(SPACE_SMALL);
                     }
                 });
                 match self.shell.sidebar_view {

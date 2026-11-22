@@ -1,7 +1,9 @@
 //! Text input primitives, including the line-numbered JSON editor.
 
 use eframe::egui::{self, TextBuffer};
-use egui::{RichText, Stroke};
+use egui::Stroke;
+
+use crate::ui::base::{Text, url_layout_job};
 
 use crate::ui::theme::SPACE_SMALL;
 
@@ -61,7 +63,7 @@ pub(crate) fn tcell_edit(ui: &mut egui::Ui, buf: &mut String, hint: &str) -> egu
     )
 }
 
-/// `tcell_edit` whose text is laid out by [`super::url_layout_job`], so the
+/// `tcell_edit` whose text is laid out by [`url_layout_job`], so the
 /// variable references in a value are coloured like the URL bar, by
 /// `defined`. `monospace` picks the monospace font (header values) over the
 /// body font (query values).
@@ -80,7 +82,7 @@ pub(crate) fn tcell_edit_vars(
     };
     let font = style.resolve(ui.style());
     let mut layouter = |ui: &egui::Ui, buf: &dyn TextBuffer, wrap_width: f32| {
-        let mut job = super::url_layout_job(buf.as_str(), p, font.clone(), defined);
+        let mut job = url_layout_job(buf.as_str(), p, font.clone(), defined);
         job.wrap.max_width = wrap_width;
         ui.fonts_mut(|f| f.layout_job(job))
     };
@@ -137,9 +139,7 @@ pub(crate) fn json_editor(ui: &mut egui::Ui, buf: &mut String, editing: bool) {
             ui.horizontal_top(|ui| {
                 let gutter: String = (1..=line_count).map(|n| format!("{n}\n")).collect();
                 ui.add(egui::Label::new(
-                    RichText::new(gutter)
-                        .color(p.on_surface_variant)
-                        .monospace(),
+                    Text::new(gutter).muted().mono().rich_in(p),
                 ));
                 ui.add_space(SPACE_SMALL);
                 ui.add(

@@ -1,7 +1,8 @@
 //! Sidebar primitives: the row action menu and the collapsible section header.
 
 use eframe::egui;
-use egui::RichText;
+
+use crate::ui::base::{Text, plain_button};
 
 /// The `⋮` action button at the right edge of a sidebar row. The button is
 /// always laid out, so its menu stays open while the pointer moves into the
@@ -12,20 +13,13 @@ pub(crate) fn row_menu_button(
     row_hovered: bool,
     menu: impl FnOnce(&mut egui::Ui),
 ) {
-    let p = crate::ui::theme::palette(ui.ctx());
-    let color = if row_hovered {
-        p.on_surface_variant
-    } else {
-        egui::Color32::TRANSPARENT
-    };
+    let glyph = Text::new(egui_phosphor::regular::DOTS_THREE_VERTICAL).muted();
+    let glyph = if row_hovered { glyph } else { glyph.hidden() };
     ui.scope(|ui| {
         let w = &mut ui.style_mut().visuals.widgets;
         w.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
         w.inactive.bg_stroke = egui::Stroke::NONE;
-        ui.menu_button(
-            RichText::new(egui_phosphor::regular::DOTS_THREE_VERTICAL).color(color),
-            menu,
-        );
+        ui.menu_button(glyph.rich(ui.ctx()), menu);
     });
 }
 
@@ -36,7 +30,7 @@ pub(crate) fn row_menu_button(
 pub(crate) fn section_header(
     ui: &mut egui::Ui,
     open: bool,
-    label: RichText,
+    label: Text,
     trailing: impl FnOnce(&mut egui::Ui),
 ) -> bool {
     let caret = if open {
@@ -49,10 +43,8 @@ pub(crate) fn section_header(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             trailing(ui);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.label(RichText::new(caret));
-                clicked = ui
-                    .add(egui::Button::new(label).frame(false).truncate())
-                    .clicked();
+                Text::new(caret).show(ui);
+                clicked = plain_button(ui, label.rich(ui.ctx())).clicked();
             });
         });
     });

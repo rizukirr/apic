@@ -3,7 +3,7 @@
 use eframe::egui;
 use egui::RichText;
 
-use crate::ui::theme::SIZE_SECONDARY;
+use crate::ui::theme::SIZE_CAPTION;
 
 /// The `Required` / `Optional` pill for the REQUIREMENT column. In edit mode it
 /// is a button that returns `Some(new_value)` when clicked; in view mode it is a
@@ -17,7 +17,7 @@ pub(crate) fn required_chip(ui: &mut egui::Ui, required: bool, editing: bool) ->
     };
     let text = RichText::new(format!(" {label} "))
         .color(fg)
-        .size(SIZE_SECONDARY)
+        .size(SIZE_CAPTION)
         .background_color(bg);
     if editing {
         if ui.add(egui::Button::new(text).frame(false)).clicked() {

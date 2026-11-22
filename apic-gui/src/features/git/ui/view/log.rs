@@ -8,9 +8,8 @@ use super::files::{FileTree, RowMode};
 use crate::features::git::domain::log::{Commit, LogFilter, PathFilter, Row, Since, short};
 use crate::features::git::domain::status::FileStatus;
 use crate::features::git::ui::state::{GitAction, GitState};
-use crate::ui::components::{
-    ButtonKind, DialogButton, detail_box, dialog, empty_state, icon_button,
-};
+use crate::ui::base::{ButtonKind, icon_button};
+use crate::ui::components::{DialogButton, detail_box, dialog, empty_state};
 use crate::ui::theme::*;
 
 /// Height of one commit row.
