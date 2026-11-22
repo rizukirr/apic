@@ -55,6 +55,19 @@ apic validate -f auth/login --json
 
 `apic create` refuses to overwrite a file. `apic edit` changes only the fields its flags name. Variables are `$name` or `${name}`, filled at send time from `.apic/env/NAME.toml` and `--var`.
 
+## Importing contracts
+
+When the user already has an OpenAPI spec or a Postman collection, import it instead of writing contracts by hand:
+
+```bash
+apic convert --openapi openapi.yaml --destination imported --json
+apic convert --postman MyAPI.postman.json --destination imported --json
+```
+
+`--openapi` takes OpenAPI 3.0, 3.1 or Swagger 2.0, in JSON or YAML, and writes one contract per operation in a folder per tag. Bodies are examples taken from the spec or built from its schemas, so review them before relying on them. Warnings on stderr name what was imported lossily. An import refuses to overwrite existing contracts. Only pass `--force` when the user asked to replace them.
+
+An imported URL can start with `{{baseUrl}}` when the spec names no server. Tell the user which env file needs `baseUrl`, then run `apic validate --json`.
+
 ## Safety rules
 
 - Never pass `--unsafe` to `apic check` unless the user asked for it. It makes folder runs send POST, PUT, PATCH and DELETE requests.

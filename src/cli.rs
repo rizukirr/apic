@@ -332,19 +332,27 @@ enum Commands {
         yes: bool,
     },
 
-    /// Import a Postman collection as apic contract files.
+    /// Import a Postman collection or an OpenAPI spec as apic contract files.
     ///
-    /// Reads a Postman Collection export (v1.0.0 / v2.0.0 / v2.1.0) and writes
-    /// one JSON contract per request, mirroring the collection's folder nesting.
-    /// Files are written under `--destination`, resolved within the configured
-    /// working directory; when omitted, the working directory itself is used.
-    /// `..` escapes and absolute paths elsewhere are rejected. An existing
-    /// contract is left untouched unless `--force` is passed. Requires an
-    /// initialized apic project (`apic init`).
+    /// `--postman` reads a Postman Collection export (v1.0.0 / v2.0.0 / v2.1.0)
+    /// and writes one JSON contract per request, mirroring the collection's
+    /// folder nesting. `--openapi` reads an OpenAPI 3.0 / 3.1 or Swagger 2.0
+    /// spec (JSON or YAML) and writes one contract per operation, in a folder
+    /// named after the operation's first tag. Files are written under
+    /// `--destination`, resolved within the configured working directory; when
+    /// omitted, the working directory itself is used. `..` escapes and
+    /// absolute paths elsewhere are rejected. An existing contract is left
+    /// untouched unless `--force` is passed. Requires an initialized apic
+    /// project (`apic init`).
+    #[command(group(clap::ArgGroup::new("source").required(true).args(["postman", "openapi"])))]
     Convert {
         /// Path to the Postman collection JSON file to import.
         #[arg(long, value_name = "FILE")]
-        postman: PathBuf,
+        postman: Option<PathBuf>,
+
+        /// Path to the OpenAPI or Swagger spec (JSON or YAML) to import.
+        #[arg(long, value_name = "FILE")]
+        openapi: Option<PathBuf>,
 
         /// Destination directory for the generated contracts, relative to the
         /// working directory (created if missing). Defaults to the working
@@ -1311,14 +1319,24 @@ fn remove_template_cmd(name: &str, yes: bool) -> Result<(), CliError> {
 }
 
 /// Handles `apic convert`: resolve the destination under the working directory,
-/// then parse the Postman collection and write contracts.
-fn convert_cmd(postman: &Path, destination: Option<&str>, force: bool) -> Result<(), CliError> {
+/// then parse the Postman collection or OpenAPI spec and write contracts.
+/// clap guarantees exactly one of `postman` and `openapi` is set.
+fn convert_cmd(
+    postman: Option<&Path>,
+    openapi: Option<&Path>,
+    destination: Option<&str>,
+    force: bool,
+) -> Result<(), CliError> {
     let root = read_config_file().and_then(|conf| conf.get_root_dir())?;
     let dest_base = match destination {
         Some(dir) => confine_to_dir(&root, Path::new(dir))?,
         None => root,
     };
-    let outcome = apic_core::convert::run(postman, &dest_base, force)?;
+    let outcome = match (postman, openapi) {
+        (Some(src), _) => apic_core::convert::run(src, &dest_base, force)?,
+        (None, Some(src)) => apic_core::convert::run_openapi(src, &dest_base, force)?,
+        (None, None) => return Err("pass --postman or --openapi".to_string().into()),
+    };
     for warning in &outcome.warnings {
         eprintln!("warning: {warning}");
     }
@@ -1588,9 +1606,15 @@ pub(crate) fn run() {
         } => remove_cmd(find.as_deref(), template.as_deref(), yes),
         Commands::Convert {
             postman,
+            openapi,
             destination,
             force,
-        } => convert_cmd(&postman, destination.as_deref(), force),
+        } => convert_cmd(
+            postman.as_deref(),
+            openapi.as_deref(),
+            destination.as_deref(),
+            force,
+        ),
         Commands::Docs { name } => crate::skill::docs_cmd(name),
         Commands::Skill { install, global } => crate::skill::skill_cmd(install, global),
     };

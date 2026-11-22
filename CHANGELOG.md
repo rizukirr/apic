@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `apic convert --openapi <file>` imports an OpenAPI 3.0, OpenAPI 3.1 or Swagger 2.0 spec, in JSON or YAML, as one contract per operation, in a folder per first tag. Bodies come from the spec's examples, or are built from the schemas with local `$ref`s followed. COMMAND.md lists what is mapped and what warns.
+- The GUI Import menu has an OpenAPI spec entry next to Postman collection.
+- The agent skill now covers importing with `apic convert --openapi` and `--postman`, including when to pass `--force` and what to do about a `{{baseUrl}}` URL. Run `apic skill --install` again to update an installed copy.
+
 ## [1.1.0] - 2026-11-15
 
 A CLI release for scripts, CI and AI coding agents. Every command can print JSON, exit codes now tell failures apart, `apic check` tests a live server against its contracts, `apic send --dry-run` previews a request without revealing secrets, and apic ships an agent skill. apic is also on Homebrew and has an MSIX for the Microsoft Store. The GUI and the contract format are unchanged, so existing projects need no migration.
