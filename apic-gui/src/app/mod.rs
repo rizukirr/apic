@@ -470,6 +470,8 @@ impl App {
                         if let Some(a) = body.inner {
                             action = Some(Action::Contracts(a));
                         }
+                        // Keep the last template off the divider below.
+                        ui.add_space(SPACE_SMALL);
                     }
                 });
                 match self.shell.sidebar_view {
