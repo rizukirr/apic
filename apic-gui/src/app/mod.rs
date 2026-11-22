@@ -64,6 +64,10 @@ pub(crate) fn fonts_with_icons() -> egui::FontDefinitions {
 /// their differing natural heights would give.
 const TOOLBAR_ROW_H: f32 = 26.0;
 
+/// The tallest the open Templates list grows before it scrolls, about six
+/// rows.
+const TEMPLATES_MAX_H: f32 = 160.0;
+
 /// Whole-app state.
 ///
 /// One field per feature. A new feature adds a field here and a match arm in the action dispatch; it does not touch any
@@ -343,8 +347,9 @@ impl App {
         });
     }
 
-    /// The left sidebar: the Contracts or Changes list, with the Templates and
-    /// Commit sections docked at the bottom.
+    /// The left sidebar: the view switcher, the Templates section under it,
+    /// the Contracts or Changes list, and the Commit section docked at the
+    /// bottom.
     fn sidebar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         if !self.shell.sidebar_open {
             return None;
@@ -356,24 +361,6 @@ impl App {
             .default_size(240.0)
             .min_size(100.0)
             .show(ui, |ui| {
-                egui::Panel::bottom("templates_section").show(ui, |ui| {
-                    let label =
-                        RichText::new(format!("{} Templates", egui_phosphor::regular::DIAMOND))
-                            .color(p.on_surface);
-                    let toggled = section_header(ui, self.shell.templates_open, label, |ui| {
-                        if icon_button(ui, egui_phosphor::regular::PLUS, "New template").clicked() {
-                            action = Some(Action::Contracts(ContractsAction::OpenNewTemplate));
-                        }
-                    });
-                    if toggled {
-                        action = Some(Action::Shell(ShellAction::ToggleTemplatesSection));
-                    }
-                    if self.shell.templates_open
-                        && let Some(a) = templates_body(ui, &mut self.contracts)
-                    {
-                        action = Some(Action::Contracts(a));
-                    }
-                });
                 let commit_title =
                     RichText::new(format!("{} Commit", egui_phosphor::regular::GIT_COMMIT))
                         .color(p.on_surface);
@@ -461,6 +448,31 @@ impl App {
                         });
                     });
                     ui.add_space(SPACE_SMALL);
+                });
+                // Templates sit at the top, above the contract files. The
+                // list scrolls on its own so many templates never push the
+                // files off screen.
+                egui::Panel::top("templates_section").show(ui, |ui| {
+                    let label =
+                        RichText::new(format!("{} Templates", egui_phosphor::regular::DIAMOND))
+                            .color(p.on_surface);
+                    let toggled = section_header(ui, self.shell.templates_open, label, |ui| {
+                        if icon_button(ui, egui_phosphor::regular::PLUS, "New template").clicked() {
+                            action = Some(Action::Contracts(ContractsAction::OpenNewTemplate));
+                        }
+                    });
+                    if toggled {
+                        action = Some(Action::Shell(ShellAction::ToggleTemplatesSection));
+                    }
+                    if self.shell.templates_open {
+                        let body = egui::ScrollArea::vertical()
+                            .id_salt("templates_list")
+                            .max_height(TEMPLATES_MAX_H)
+                            .show(ui, |ui| templates_body(ui, &mut self.contracts));
+                        if let Some(a) = body.inner {
+                            action = Some(Action::Contracts(a));
+                        }
+                    }
                 });
                 match self.shell.sidebar_view {
                     SidebarView::Contracts => {
