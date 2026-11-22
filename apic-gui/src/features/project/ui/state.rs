@@ -6,7 +6,7 @@ use std::sync::mpsc::Receiver;
 
 use eframe::egui;
 
-use crate::features::project::data::{self, NewKind, PickKind};
+use crate::features::project::data::{self, ImportSource, NewKind, PickKind};
 use crate::features::project::domain::open_refusal;
 
 /// Everything the project feature owns. `App` holds one of these; no other
@@ -32,9 +32,9 @@ pub(crate) struct ProjectState {
     /// dismissed. `None` when there is nothing to show.
     pub(crate) refusal: Option<String>,
 
-    /// The collection picked for an import into a new project, held until its
-    /// folder is picked.
-    pub(crate) import_src: Option<PathBuf>,
+    /// The file picked for an import into a new project and its format,
+    /// held until its folder is picked.
+    pub(crate) import_src: Option<(PathBuf, ImportSource)>,
 }
 
 /// A one-shot action from the project menu.
@@ -44,8 +44,9 @@ pub(crate) enum ProjectAction {
     Open,
     /// `[ New ]`: launch the folder picker.
     New,
-    /// `[ Import ]` → Postman: launch the file picker.
-    ImportPostman,
+    /// `[ Import ]` → Postman collection or OpenAPI spec: launch the file
+    /// picker.
+    Import(ImportSource),
     /// "+ New request" or "+ New template" with no project open: launch the
     /// folder picker for the project to create it in.
     PickForNew(NewKind),
@@ -86,7 +87,7 @@ impl ProjectState {
         match action {
             ProjectAction::Open => self.start_pick(PickKind::OpenProject, ctx),
             ProjectAction::New => self.start_pick(PickKind::NewProject, ctx),
-            ProjectAction::ImportPostman => self.start_pick(PickKind::ImportPostman, ctx),
+            ProjectAction::Import(source) => self.start_pick(PickKind::Import(source), ctx),
             ProjectAction::PickForNew(kind) => self.start_pick(PickKind::NewTarget(kind), ctx),
             ProjectAction::DismissRefusal => {
                 self.refusal = None;
@@ -120,13 +121,13 @@ impl ProjectState {
                 let events = match (kind, result) {
                     (PickKind::OpenProject, Some(p)) => self.finish_open(p),
                     (PickKind::NewProject, Some(p)) => self.finish_new(p),
-                    (PickKind::ImportPostman, Some(p)) if self.root.is_none() => {
-                        self.import_src = Some(p);
+                    (PickKind::Import(source), Some(p)) if self.root.is_none() => {
+                        self.import_src = Some((p, source));
                         return self.start_pick(PickKind::ImportTarget, ctx);
                     }
-                    (PickKind::ImportPostman, Some(p)) => self.finish_import_postman(p),
+                    (PickKind::Import(source), Some(p)) => self.finish_import(p, source),
                     (PickKind::ImportTarget, Some(folder)) => match self.import_src.take() {
-                        Some(src) => self.finish_import_into_new(folder, src),
+                        Some((src, source)) => self.finish_import_into_new(folder, src, source),
                         None => Vec::new(),
                     },
                     (PickKind::NewTarget(kind), Some(p)) => self.finish_new_for(p, kind),
@@ -151,7 +152,7 @@ impl ProjectState {
         }
     }
 
-    /// Forgets a collection held for an import into a new project, since a
+    /// Forgets a file held for an import into a new project, since a
     /// cancelled pick at either step abandons that import.
     ///
     /// # Returns
@@ -212,7 +213,8 @@ impl ProjectState {
     ///
     /// * `folder` - the folder picked for the new project, initialized unless
     ///   it already is one
-    /// * `src` - the Postman collection picked first
+    /// * `src` - the collection or spec picked first
+    /// * `source` - its format
     ///
     /// # Returns
     ///
@@ -221,13 +223,14 @@ impl ProjectState {
         &mut self,
         folder: PathBuf,
         src: PathBuf,
+        source: ImportSource,
     ) -> Vec<ProjectEvent> {
         // An Err means the folder is already a project, which is opened as is.
         let _ = data::init(&folder);
         let mut events = self.activate(folder);
         let status = match self.locate() {
             Ok(()) => match self.root.clone() {
-                Some(root) => import_status(data::import_postman(&src, &root)),
+                Some(root) => import_status(data::import(source, &src, &root)),
                 None => "no project to import into".to_string(),
             },
             Err(e) => format!("import error: {e}"),
@@ -236,13 +239,14 @@ impl ProjectState {
         events
     }
 
-    /// Imports a Postman collection into the project via apic-core's converter,
-    /// which writes contracts confined to the working dir and never overwrites.
-    fn finish_import_postman(&mut self, src: PathBuf) -> Vec<ProjectEvent> {
+    /// Imports a Postman collection or OpenAPI spec into the project via
+    /// apic-core's converter, which writes contracts confined to the working
+    /// dir and never overwrites.
+    fn finish_import(&mut self, src: PathBuf, source: ImportSource) -> Vec<ProjectEvent> {
         let Some(root) = self.root.clone() else {
             return vec![ProjectEvent::Status("no project to import into".into())];
         };
-        match data::import_postman(&src, &root) {
+        match data::import(source, &src, &root) {
             Ok(counts) => vec![
                 ProjectEvent::ContractsChanged,
                 ProjectEvent::Status(import_status(Ok(counts))),
@@ -278,7 +282,7 @@ impl ProjectState {
     }
 }
 
-/// The status line for a Postman import: how many contracts and warnings, or
+/// The status line for an import: how many contracts and warnings, or
 /// the converter's error.
 fn import_status(result: Result<(usize, usize), String>) -> String {
     match result {
@@ -363,7 +367,7 @@ mod tests {
         let folder = tempdir();
         let mut state = ProjectState::default();
 
-        let events = state.finish_import_into_new(folder.clone(), src);
+        let events = state.finish_import_into_new(folder.clone(), src, ImportSource::Postman);
 
         assert_eq!(events.first(), Some(&ProjectEvent::Opened(folder.clone())));
         assert!(
@@ -382,7 +386,7 @@ mod tests {
         let folder = tempdir();
         let mut state = ProjectState::default();
 
-        state.finish_import_into_new(folder.clone(), src);
+        state.finish_import_into_new(folder.clone(), src, ImportSource::Postman);
 
         let root = state.root.clone().expect("contracts dir located");
         let mut contracts = Vec::new();
@@ -406,10 +410,31 @@ mod tests {
     }
 
     #[test]
+    fn openapi_import_without_a_project_writes_the_contracts() {
+        let src = tempdir().join("spec.yaml");
+        std::fs::write(
+            &src,
+            "openapi: 3.0.0\npaths:\n  /users:\n    get:\n      tags: [users]\n      operationId: listUsers\n      responses:\n        '200':\n          description: ok\n",
+        )
+        .unwrap();
+        let folder = tempdir();
+        let mut state = ProjectState::default();
+
+        let events = state.finish_import_into_new(folder.clone(), src, ImportSource::OpenApi);
+
+        assert!(
+            matches!(events.get(1), Some(ProjectEvent::Status(s)) if s.starts_with("imported 1 contract")),
+            "{events:?}"
+        );
+        let root = state.root.clone().expect("contracts dir located");
+        assert!(root.join("users").join("list_users.json").is_file());
+    }
+
+    #[test]
     fn cancelling_the_folder_pick_changes_nothing() {
         let src = postman_collection(&tempdir());
         let mut state = ProjectState {
-            import_src: Some(src),
+            import_src: Some((src, ImportSource::Postman)),
             ..ProjectState::default()
         };
 

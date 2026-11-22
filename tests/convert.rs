@@ -86,3 +86,70 @@ fn convert_without_destination_uses_working_dir() {
 
     fs::remove_dir_all(&work).unwrap();
 }
+
+/// `apic convert --openapi` imports a YAML OpenAPI 3.0 spec into one folder per
+/// tag, and the generated contracts pass `apic validate`.
+#[test]
+fn convert_imports_openapi_yaml_spec() {
+    let work = std::env::temp_dir().join("apic_it_convert_openapi");
+    let _ = fs::remove_dir_all(&work);
+    fs::create_dir_all(&work).unwrap();
+
+    Command::cargo_bin("apic")
+        .unwrap()
+        .current_dir(&work)
+        .args(["init"])
+        .assert()
+        .success();
+    fs::remove_file(work.join(".apic/template/convention.json")).unwrap();
+
+    let fixture = format!(
+        "{}/tests/fixtures/convert/petstore-openapi-3.0.yaml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+
+    Command::cargo_bin("apic")
+        .unwrap()
+        .current_dir(&work)
+        .args([
+            "convert",
+            "--openapi",
+            &fixture,
+            "--destination",
+            "imported",
+        ])
+        .assert()
+        .success();
+
+    let get: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(work.join("imported/pets/get_pet.json")).unwrap())
+            .unwrap();
+    assert_eq!(get["url"], "https://petstore.example.com/v1/pets/{petId}");
+    assert_eq!(get["responses"][0]["schema"]["name"], "Rex");
+    assert!(work.join("imported/pets/list_pets.json").is_file());
+    assert!(work.join("imported/pets/create_pet.json").is_file());
+
+    Command::cargo_bin("apic")
+        .unwrap()
+        .current_dir(&work)
+        .args(["validate"])
+        .assert()
+        .success();
+
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// `apic convert` needs exactly one source: neither or both is a usage error.
+#[test]
+fn convert_requires_exactly_one_source() {
+    Command::cargo_bin("apic")
+        .unwrap()
+        .args(["convert"])
+        .assert()
+        .failure();
+    Command::cargo_bin("apic")
+        .unwrap()
+        .args(["convert", "--postman", "a.json", "--openapi", "b.yaml"])
+        .assert()
+        .failure();
+}

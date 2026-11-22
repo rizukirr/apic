@@ -25,7 +25,7 @@ use crate::features::contracts::ui::view::{
 };
 use crate::features::git::ui::state::{BranchOpKind, GitAction, GitEvent, GitState, LogState};
 use crate::features::git::ui::view;
-use crate::features::project::data::{NewKind, project_root_of};
+use crate::features::project::data::{ImportSource, NewKind, project_root_of};
 use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
 use crate::features::project::ui::view::welcome;
 use crate::platform::settings::Settings;
@@ -282,7 +282,15 @@ impl App {
                                 ui.close();
                             }
                             if ui.button("Import Postman collection").clicked() {
-                                action = Some(Action::Project(ProjectAction::ImportPostman));
+                                action = Some(Action::Project(ProjectAction::Import(
+                                    ImportSource::Postman,
+                                )));
+                                ui.close();
+                            }
+                            if ui.button("Import OpenAPI spec").clicked() {
+                                action = Some(Action::Project(ProjectAction::Import(
+                                    ImportSource::OpenApi,
+                                )));
                                 ui.close();
                             }
                         });
@@ -776,7 +784,7 @@ impl App {
                 let guarded = match action {
                     ProjectAction::Open => Some(Guarded::OpenProject),
                     ProjectAction::New => Some(Guarded::NewProject),
-                    ProjectAction::ImportPostman
+                    ProjectAction::Import(_)
                     | ProjectAction::DismissRefusal
                     | ProjectAction::PickForNew(_) => None,
                 };

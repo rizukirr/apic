@@ -1,5 +1,5 @@
 //! The project on disk: the native pickers, the project config, validation,
-//! initialization and the Postman import. No egui.
+//! initialization and the Postman and OpenAPI imports. No egui.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
@@ -11,14 +11,23 @@ pub(crate) enum PickKind {
     OpenProject,
     /// Initialize a fresh project in a folder.
     NewProject,
-    /// Import a Postman collection file into the open project, or pick one
-    /// for an import into a new project when none is open.
-    ImportPostman,
+    /// Import a Postman collection or OpenAPI spec into the open project, or
+    /// pick one for an import into a new project when none is open.
+    Import(ImportSource),
     /// Pick the folder that becomes the project an import is written into.
     ImportTarget,
     /// Pick the folder that becomes the project a new request or template
     /// is created in, when none is open.
     NewTarget(NewKind),
+}
+
+/// The format of a file picked for an import.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ImportSource {
+    /// A Postman collection (JSON).
+    Postman,
+    /// An OpenAPI 3.x or Swagger 2.0 spec (JSON or YAML).
+    OpenApi,
 }
 
 /// Which dialog a folder picked for a new request or template goes on to
@@ -35,7 +44,7 @@ pub(crate) enum NewKind {
 /// # Arguments
 ///
 /// * `kind` - which dialog to show: a folder picker for a project, a JSON
-///   file picker for a Postman import
+///   file picker for an import
 /// * `notify` - called once the result is sent, so the UI wakes to read it
 ///
 /// # Returns
@@ -57,14 +66,20 @@ pub(crate) fn pick(
                     PickKind::ImportTarget => "Folder for the imported project",
                     PickKind::NewTarget(NewKind::Request) => "Folder for the new request",
                     PickKind::NewTarget(NewKind::Template) => "Folder for the new template",
-                    PickKind::NewProject | PickKind::ImportPostman => "New apic project",
+                    PickKind::NewProject | PickKind::Import(_) => "New apic project",
                 };
                 pollster::block_on(rfd::AsyncFileDialog::new().set_title(title).pick_folder())
             }
-            PickKind::ImportPostman => pollster::block_on(
+            PickKind::Import(ImportSource::Postman) => pollster::block_on(
                 rfd::AsyncFileDialog::new()
                     .add_filter("Postman collection", &["json"])
                     .set_title("Import Postman collection")
+                    .pick_file(),
+            ),
+            PickKind::Import(ImportSource::OpenApi) => pollster::block_on(
+                rfd::AsyncFileDialog::new()
+                    .add_filter("OpenAPI spec", &["json", "yaml", "yml"])
+                    .set_title("Import OpenAPI spec")
                     .pick_file(),
             ),
         }
@@ -116,8 +131,8 @@ pub(crate) fn contracts_root(project_root: &Path) -> Result<PathBuf, String> {
     apic_core::config::read_config_in(project_root).and_then(|c| c.root_dir_in(project_root))
 }
 
-/// Imports the Postman collection at `src` into `root` via apic-core's
-/// converter, which writes contracts confined to the working dir.
+/// Imports the Postman collection or OpenAPI spec at `src` into `root` via
+/// apic-core's converter, which writes contracts confined to the working dir.
 ///
 /// # Returns
 ///
@@ -126,10 +141,18 @@ pub(crate) fn contracts_root(project_root: &Path) -> Result<PathBuf, String> {
 /// # Errors
 ///
 /// Returns the converter's error text.
-pub(crate) fn import_postman(src: &Path, root: &Path) -> Result<(usize, usize), String> {
+pub(crate) fn import(
+    source: ImportSource,
+    src: &Path,
+    root: &Path,
+) -> Result<(usize, usize), String> {
     // The GUI import never overwrites; existing contracts must be removed
     // first (or edited), matching the CLI default.
-    apic_core::convert::run(src, root, false).map(|out| (out.written, out.warnings.len()))
+    let run = match source {
+        ImportSource::Postman => apic_core::convert::run,
+        ImportSource::OpenApi => apic_core::convert::run_openapi,
+    };
+    run(src, root, false).map(|out| (out.written, out.warnings.len()))
 }
 
 #[cfg(test)]

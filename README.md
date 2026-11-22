@@ -45,7 +45,7 @@ New contracts start from the project template in `.apic/template/`, so the team'
 
 ## Desktop GUI
 
-`apic-gui` opens the same projects: browse and edit contracts in tables, edit JSON and multipart bodies, send requests with an environment and see the live response, import Postman collections, and stage, commit, switch branches and resolve conflicts with git, all on the same files the CLI uses. See [GUI.md](GUI.md).
+`apic-gui` opens the same projects: browse and edit contracts in tables, edit JSON and multipart bodies, send requests with an environment and see the live response, import Postman collections and OpenAPI specs, and stage, commit, switch branches and resolve conflicts with git, all on the same files the CLI uses. See [GUI.md](GUI.md).
 
 ## Contracts
 
@@ -64,7 +64,7 @@ A contract is one JSON file per endpoint: name, method, URL, query params, heade
 | `apic open` | Open a contract or template in your editor. |
 | `apic remove` | Delete a contract or template. |
 | `apic validate` | Check contracts against the schema, for CI or a pre-commit hook. |
-| `apic convert` | Import a Postman collection as contracts. |
+| `apic convert` | Import a Postman collection or an OpenAPI spec as contracts. |
 | `apic send` | Send a contract's request and print the response. |
 | `apic env` | List the environments in `.apic/env`. |
 | `apic vars` | Convert `{{name}}` variables to `$name`. |

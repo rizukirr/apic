@@ -291,6 +291,28 @@ warning: request "Preflight" uses method TRACE, unsupported by apic — imported
 Converted 12 contract(s) into imported (1 warning)
 ```
 
+## `apic convert --openapi <file> [--destination <dir>]`
+Imports an OpenAPI spec as apic contracts, one JSON file per operation. Accepts OpenAPI 3.0, OpenAPI 3.1 and Swagger 2.0, written in JSON or YAML (auto-detected). `--destination` and `--force` work as they do for `--postman`, and exactly one of `--postman` and `--openapi` is required.
+
+Each operation lands in a folder named after its first tag, or at the root when it has no tag. The file is named from the `operationId` (`listPets` becomes `list_pets.json`), then the `summary`, then the method and path. The contract `name` is the `summary`, then the `operationId`.
+
+- **URL.** The first server URL, with its variables filled from their defaults, followed by the path. Swagger 2.0 builds it from `schemes`, `host` and `basePath`. A spec with no server, or a relative one, starts with `{{baseUrl}}`, so the host comes from an environment variable.
+- **Parameters.** Query and header parameters become `query` and `headers` entries, with their `required` flags. Path parameters stay inline in the URL as `{name}`. Cookie parameters are ignored.
+- **Bodies.** A contract body is an example payload, so each body uses the spec's `example` or the first of its `examples` when present. Otherwise apic builds one from the schema, following local `$ref`s, merging `allOf` and taking the first `oneOf`/`anyOf` branch: strings become `"string"` (or a value shaped by `format`, such as a date or an email), numbers `0`, booleans `false`, and a recursive reference `null`. A `multipart/form-data` body becomes `multipart` parts, with `format: binary` properties as file parts.
+- **Responses.** Each status code becomes a response with its description, headers and body. A range such as `2XX` becomes `200`, and `default` is left out because it has no status code.
+
+These are imported with a warning: a body in a media type apic does not model (form-urlencoded, `text/plain`, `application/octet-stream`) is imported as a JSON body, an external or missing `$ref` is left out, and a `TRACE` operation is imported as `GET`.
+
+```bash
+apic convert --openapi openapi.yaml
+apic convert --openapi swagger.json --destination imported
+```
+
+```text
+warning: request "Upload a release asset" sends application/octet-stream, imported as a JSON body
+Converted 42 contract(s) into imported (1 warning)
+```
+
 ## `apic docs <name>`
 Prints a reference doc built into apic, as Markdown. `<name>` is `command` (this file), `sending` (environments, variables and dry runs) or `contract` (the contract file format). The text always matches the installed version, and the command works outside a project.
 

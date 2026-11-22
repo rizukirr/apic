@@ -1,4 +1,5 @@
-//! `apic convert` — import a Postman collection as apic contract files.
+//! `apic convert`: import a Postman collection or an OpenAPI spec as apic
+//! contract files.
 
 use std::collections::HashSet;
 use std::fs;
@@ -12,7 +13,7 @@ use crate::json::{Header, JsonContent, Query, Response, method_from_str};
 /// Convert a human request/folder name into a filesystem-safe slug using
 /// underscores: lowercase, runs of non-alphanumeric characters collapse to a
 /// single `_`, leading/trailing `_` trimmed. Empty input yields `"unnamed"`.
-fn slugify(name: &str) -> String {
+pub(crate) fn slugify(name: &str) -> String {
     let mut out = String::new();
     let mut prev_sep = true; // true so a leading separator run is dropped
     for ch in name.chars() {
@@ -36,7 +37,7 @@ fn slugify(name: &str) -> String {
 
 /// Reserve a unique slug within one directory. If `base` is taken, append
 /// `_2`, `_3`, … until free. Records the chosen slug in `taken`.
-fn unique_slug(taken: &mut HashSet<String>, base: &str) -> String {
+pub(crate) fn unique_slug(taken: &mut HashSet<String>, base: &str) -> String {
     if taken.insert(base.to_string()) {
         return base.to_string();
     }
@@ -173,7 +174,7 @@ pub(crate) struct MappedContract {
 /// Flags a request whose HTTP method apic does not model. Such methods are
 /// downgraded to GET by [`method_from_str`], silently losing the original verb;
 /// this surfaces that so the user can fix the imported contract.
-fn method_warning(method: &str, name: &str) -> Option<String> {
+pub(crate) fn method_warning(method: &str, name: &str) -> Option<String> {
     let upper = method.to_uppercase();
     if matches!(
         upper.as_str(),
@@ -463,7 +464,7 @@ fn map(collection: &PostmanCollection) -> Vec<MappedContract> {
 /// are created, and the pretty-printed JSON is written. An existing file is left
 /// untouched (erroring) unless `overwrite` is set. Returns the number of files
 /// written.
-fn write_contracts(
+pub(crate) fn write_contracts(
     dest_base: &Path,
     mapped: &[MappedContract],
     overwrite: bool,
@@ -511,6 +512,28 @@ pub fn run(
     }
     let written = write_contracts(dest_base, &mapped, overwrite)?;
     let warnings: Vec<String> = mapped.iter().filter_map(|m| m.warning.clone()).collect();
+    Ok(ConvertOutcome {
+        written,
+        destination: dest_base.to_path_buf(),
+        warnings,
+    })
+}
+
+/// Parses the OpenAPI 3.x or Swagger 2.0 spec (JSON or YAML) at `spec_path`,
+/// maps each operation to a contract, writes them under `dest_base`, and
+/// returns what happened. Does not print, the caller reports.
+pub fn run_openapi(
+    spec_path: &Path,
+    dest_base: &Path,
+    overwrite: bool,
+) -> Result<ConvertOutcome, String> {
+    let spec = crate::openapi::from_path(spec_path)?;
+    let (mapped, mut warnings) = crate::openapi::map(&spec)?;
+    if mapped.is_empty() {
+        return Err("spec contained no operations to convert".to_string());
+    }
+    let written = write_contracts(dest_base, &mapped, overwrite)?;
+    warnings.extend(mapped.iter().filter_map(|m| m.warning.clone()));
     Ok(ConvertOutcome {
         written,
         destination: dest_base.to_path_buf(),
