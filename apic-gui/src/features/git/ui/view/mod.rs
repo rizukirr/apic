@@ -288,7 +288,7 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
         let hash = state.log.selected.clone().unwrap_or_default();
         match &state.log.diff {
             Some((key, data)) if *key == (hash.clone(), path.clone()) => {
-                diff_body(ui, &mut state.show_fields, &path, short(&hash), data)
+                diff_body(ui, &mut state.show_line_diff, &path, short(&hash), data)
             }
             _ => empty_state(ui, "Loading diff...", ""),
         }
@@ -319,15 +319,22 @@ pub(crate) fn central_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Gi
     }
 
     let side = if staged { "staged" } else { "unstaged" };
-    diff_body(ui, &mut state.show_fields, &path, side, data);
+    diff_body(ui, &mut state.show_line_diff, &path, side, data);
     None
 }
 
 /// One read-only diff: `path` and `side` with the Show field changes toggle,
-/// then the field list when asked for and available, the inline diff
-/// otherwise. A non-contract file, an untracked file or a formatting-only
-/// change always shows the inline diff, so no selection renders an empty pane.
-fn diff_body(ui: &mut egui::Ui, show_fields: &mut bool, path: &str, side: &str, data: &DiffData) {
+/// then the field list when it is available and `show_line_diff` is off, the
+/// inline diff otherwise. A non-contract file, an untracked file or a
+/// formatting-only change always shows the inline diff, so no selection
+/// renders an empty pane.
+fn diff_body(
+    ui: &mut egui::Ui,
+    show_line_diff: &mut bool,
+    path: &str,
+    side: &str,
+    data: &DiffData,
+) {
     let field_changes =
         domain_diff::semantic_changes(data.old_blob.as_deref(), data.new_blob.as_deref());
     ui.add_space(SPACE_SMALL);
@@ -335,13 +342,18 @@ fn diff_body(ui: &mut egui::Ui, show_fields: &mut bool, path: &str, side: &str, 
         Text::new(path).strong().show(ui);
         Text::new(side).muted().show(ui);
         ui.add_enabled_ui(field_changes.is_some(), |ui| {
-            ui.checkbox(show_fields, "Show field changes")
+            let mut show_fields = !*show_line_diff;
+            let response = ui.checkbox(&mut show_fields, "Show field changes");
+            if response.changed() {
+                *show_line_diff = !show_fields;
+            }
+            response
         })
         .response
         .on_disabled_hover_text("No field-level view for this change");
     });
     ui.separator();
-    match field_changes.filter(|_| *show_fields) {
+    match field_changes.filter(|_| !*show_line_diff) {
         Some(changes) => semantic_diff_view(ui, &changes),
         None => inline_diff_view(ui, &data.rows),
     }
@@ -513,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn central_renders_the_field_list_when_show_fields_is_set() {
+    fn central_renders_the_field_list_by_default_for_a_changed_contract() {
         for preference in BOTH_THEMES {
             let old = domain_diff::parse(CONTRACT_GET).expect("valid contract");
             let new = domain_diff::parse(CONTRACT_POST).expect("valid contract");
@@ -527,7 +539,7 @@ mod tests {
                     Some(CONTRACT_POST),
                 ),
             );
-            state.show_fields = true;
+            assert!(!state.show_line_diff);
             run_in_theme(preference, |ui| {
                 central_body(ui, &mut state);
             });
@@ -535,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn central_renders_the_inline_diff_by_default_for_a_changed_contract() {
+    fn central_renders_the_inline_diff_when_show_line_diff_is_set() {
         for preference in BOTH_THEMES {
             let mut state = state_with_diff(
                 "contracts/login.json",
@@ -546,7 +558,7 @@ mod tests {
                     Some(CONTRACT_POST),
                 ),
             );
-            assert!(!state.show_fields);
+            state.show_line_diff = true;
             run_in_theme(preference, |ui| {
                 central_body(ui, &mut state);
             });
@@ -1428,10 +1440,10 @@ mod tests {
     #[test]
     fn log_view_central_shows_a_commit_file_diff() {
         for preference in BOTH_THEMES {
-            for show_fields in [false, true] {
+            for show_line_diff in [false, true] {
                 let hash = "a".repeat(40);
                 let mut state = GitState {
-                    show_fields,
+                    show_line_diff,
                     log: LogState {
                         selected: Some(hash.clone()),
                         selected_file: Some("contracts/a.json".into()),
