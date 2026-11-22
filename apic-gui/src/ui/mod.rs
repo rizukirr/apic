@@ -28,7 +28,7 @@ mod layering {
     /// Feature folders under `src/` that draw only through base and
     /// components. A folder joins once its migration lands, and from then on
     /// it is held to the same rule as components.
-    const MIGRATED: &[&str] = &[];
+    const MIGRATED: &[&str] = &["features/contracts"];
 
     /// Raw egui calls that build text or buttons outside base, so their look
     /// is chosen at the call site instead of by a base component.
@@ -57,18 +57,82 @@ mod layering {
     }
 
     /// A file's code without comment lines, which may name what the rules
-    /// forbid, and without its test module, which by convention closes the
-    /// file and may draw freely.
+    /// forbid, and without its `#[cfg(test)]` modules, which may draw freely.
+    /// Only each test module's own braced block is removed, so code after it
+    /// is still checked.
     fn code(path: &Path) -> String {
         let text = std::fs::read_to_string(path).expect("source file reads");
-        let text = match text.find("#[cfg(test)]") {
-            Some(at) => &text[..at],
-            None => &text,
-        };
+        strip_comments(&strip_test_modules(&text))
+    }
+
+    /// `text` without comment lines.
+    fn strip_comments(text: &str) -> String {
         text.lines()
             .filter(|line| !line.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// `text` with every `#[cfg(test)]` attribute and the braced item after
+    /// it removed.
+    fn strip_test_modules(text: &str) -> String {
+        let mut out = String::new();
+        let mut rest = text;
+        while let Some(at) = rest.find("#[cfg(test)]") {
+            out.push_str(&rest[..at]);
+            let after = &rest[at..];
+            rest = match after.find('{') {
+                Some(open) => &after[block_end(after, open)..],
+                None => "",
+            };
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// The byte just past the `}` that closes the `{` at `open`. Braces in
+    /// strings, raw strings, char literals and line comments are skipped.
+    fn block_end(text: &str, open: usize) -> usize {
+        let bytes = text.as_bytes();
+        let mut depth = 0usize;
+        let mut i = open;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return i + 1;
+                    }
+                }
+                b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                    i = text[i..].find('\n').map_or(bytes.len(), |n| i + n);
+                }
+                b'r' if matches!(bytes.get(i + 1), Some(b'#' | b'"')) => {
+                    let hashes = text[i + 1..].bytes().take_while(|b| *b == b'#').count();
+                    let quote = i + 1 + hashes;
+                    if bytes.get(quote) == Some(&b'"') {
+                        let close = format!("\"{}", "#".repeat(hashes));
+                        i = text[quote + 1..]
+                            .find(&close)
+                            .map_or(bytes.len(), |n| quote + n + close.len());
+                    }
+                }
+                b'"' => {
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != b'"' {
+                        i += if bytes[i] == b'\\' { 2 } else { 1 };
+                    }
+                }
+                b'\'' if bytes.get(i + 2) == Some(&b'\'') => i += 2,
+                b'\'' if bytes.get(i + 1) == Some(&b'\\') => {
+                    i = text[i + 2..].find('\'').map_or(bytes.len(), |n| i + 2 + n);
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        bytes.len()
     }
 
     /// What in `code` breaks the drawing rule: a raw widget, or a text size
@@ -147,6 +211,15 @@ mod layering {
             let bad = drawing_in(dir);
             assert!(bad.is_empty(), "{dir} must draw through base: {bad:#?}");
         }
+    }
+
+    #[test]
+    fn test_modules_are_skipped_but_code_after_them_is_checked() {
+        let text = "fn a() {}\n#[cfg(test)]\nmod tests {\n    fn t() { let s = \"}\"; let r = r#\"{\"#; let c = '}'; RichText::new(\"in test\"); }\n}\nfn after() { RichText::new(\"x\"); }\n";
+        let kept = strip_test_modules(text);
+        assert!(!kept.contains("in test"), "{kept}");
+        assert!(kept.contains("fn after()"), "{kept}");
+        assert_eq!(drawing_violations(&kept), ["RichText::new"]);
     }
 
     #[test]

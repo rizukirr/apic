@@ -6,43 +6,36 @@
 //! [`EditAction`]s.
 
 use eframe::egui;
-use egui::{Color32, RichText};
+use egui::Color32;
 
 use apic_core::edit::{BodyLoc, EditAction, EditBody, EditModel, EditPart, Field, apply};
 use apic_core::json::method_str;
 
 use crate::features::contracts::ui::state::ContractsAction;
 use crate::ui::base::{
-    Tone, delete_button, header_label, json_editor, required_chip, section_label, tcell_edit,
-    tcell_edit_vars, text_button, url_layout_job,
+    ChipTone, Text, Tone, badge, chip, delete_button, header_label, json_editor, menu_item,
+    required_chip, section_label, tcell_edit, tcell_edit_vars, text_button, url_layout_job,
 };
 use crate::ui::components::{fill_column, grid_cell, metadata_table, table_frame, url_bar};
 use crate::ui::focus::{request_new_row_focus, take_pending_focus};
 use crate::ui::theme::*;
 use egui_extras::Column;
 
-/// Color for an HTTP method badge.
-pub(super) fn method_color(method: &str, p: &Palette) -> Color32 {
+/// The tone of an HTTP method.
+pub(super) fn method_tone(method: &str) -> Tone {
     match method {
-        "GET" | "HEAD" => p.method_get,
-        "POST" => p.method_post,
-        "PUT" | "PATCH" => p.method_put,
-        "DELETE" => p.method_delete,
-        _ => p.on_surface_variant,
+        "GET" | "HEAD" => Tone::MethodGet,
+        "POST" => Tone::MethodPost,
+        "PUT" | "PATCH" => Tone::MethodPut,
+        "DELETE" => Tone::MethodDelete,
+        _ => Tone::Muted,
     }
 }
 
-/// A filled, rounded, method-colored pill (read mode); the edit view uses a
+/// A filled, rounded, method-coloured pill (read mode); the edit view uses a
 /// dropdown instead so it can change the method.
 fn method_badge(ui: &mut egui::Ui, method: &str) {
-    let p = palette(ui.ctx());
-    egui::Frame::NONE
-        .fill(method_color(method, p))
-        .corner_radius(egui::CornerRadius::same(4))
-        .inner_margin(egui::Margin::symmetric(8, 2))
-        .show(ui, |ui| {
-            ui.label(RichText::new(method).color(p.surface).strong());
-        });
+    badge(ui, method, method_tone(method));
 }
 
 // egui temp-data keys for the "focus a new row's cell" markers, one per
@@ -328,7 +321,7 @@ fn read_cell(
     let p = palette(ui.ctx());
     match column {
         RowColumn::Key | RowColumn::Name => {
-            ui.label(RichText::new(text).color(p.info));
+            Text::new(text).tone(Tone::Info).show(ui);
         }
         RowColumn::Value => {
             let style = if table.monospace_values() {
@@ -340,7 +333,7 @@ fn read_cell(
             ui.label(url_layout_job(text, p, font, defined));
         }
         RowColumn::ContentType | RowColumn::Description => {
-            ui.label(RichText::new(text).color(p.on_surface));
+            Text::new(text).show(ui);
         }
     }
 }
@@ -414,7 +407,7 @@ pub(super) fn endpoint_title(ui: &mut egui::Ui, model: &mut EditModel, editing: 
                     .desired_width(120.0)
                     .clip_text(false),
             );
-            ui.label(RichText::new(":").color(p.on_surface));
+            Text::new(":").show(ui);
             ui.add(
                 egui::TextEdit::singleline(&mut model.description)
                     .frame(egui::Frame::NONE)
@@ -427,18 +420,15 @@ pub(super) fn endpoint_title(ui: &mut egui::Ui, model: &mut EditModel, editing: 
     }
     let style = ui.style().clone();
     let mut job = egui::text::LayoutJob::default();
-    RichText::new(&model.name)
-        .strong()
-        .color(p.on_surface)
-        .append_to(
-            &mut job,
-            &style,
-            egui::FontSelection::Default,
-            egui::Align::Center,
-        );
+    Text::new(&model.name).strong().rich(ui.ctx()).append_to(
+        &mut job,
+        &style,
+        egui::FontSelection::Default,
+        egui::Align::Center,
+    );
     if !model.description.trim().is_empty() {
-        RichText::new(format!(": {}", model.description))
-            .color(p.on_surface)
+        Text::new(format!(": {}", model.description))
+            .rich(ui.ctx())
             .append_to(
                 &mut job,
                 &style,
@@ -480,9 +470,10 @@ pub(super) fn method_url_row(
             egui::ComboBox::from_id_salt("method")
                 .width(90.0)
                 .selected_text(
-                    RichText::new(&method)
-                        .color(method_color(&method, p))
-                        .strong(),
+                    Text::new(&method)
+                        .tone(method_tone(&method))
+                        .strong()
+                        .rich(ui.ctx()),
                 )
                 .show_ui(ui, |ui| {
                     for m in apic_core::json::method_all() {
@@ -491,7 +482,10 @@ pub(super) fn method_url_row(
                         if ui
                             .selectable_label(
                                 selected,
-                                RichText::new(&name).color(method_color(&name, p)).strong(),
+                                Text::new(&name)
+                                    .tone(method_tone(&name))
+                                    .strong()
+                                    .rich(ui.ctx()),
                             )
                             .clicked()
                         {
@@ -810,12 +804,11 @@ fn body_kind_dropdown(
     loc: BodyLoc,
     is_multipart: bool,
 ) -> Option<ContractsAction> {
-    let p = palette(ui.ctx());
     let label = |multipart: bool| if multipart { "Multipart" } else { "JSON" };
     let mut picked = None;
     egui::ComboBox::from_id_salt(("body_kind", format!("{loc:?}")))
         .width(90.0)
-        .selected_text(RichText::new(label(is_multipart)).color(p.on_surface))
+        .selected_text(Text::new(label(is_multipart)).rich(ui.ctx()))
         .show_ui(ui, |ui| {
             for multipart in [false, true] {
                 if ui
@@ -848,22 +841,12 @@ fn body_kind_row(ui: &mut egui::Ui, loc: BodyLoc, is_multipart: bool) -> Option<
 ///
 /// Whether it was clicked this frame (always `false` when not editing).
 fn part_kind_chip(ui: &mut egui::Ui, is_file: bool, editing: bool) -> bool {
-    let p = palette(ui.ctx());
-    let (label, fg) = if is_file {
-        ("File", p.info)
+    let (label, tone) = if is_file {
+        ("File", ChipTone::Info)
     } else {
-        ("Text", p.on_surface_variant)
+        ("Text", ChipTone::Neutral)
     };
-    let text = RichText::new(format!(" {label} "))
-        .color(fg)
-        .size(SIZE_CAPTION)
-        .background_color(p.secondary_container);
-    if editing {
-        ui.add(egui::Button::new(text).frame(false)).clicked()
-    } else {
-        ui.label(text);
-        false
-    }
+    chip(ui, label, tone, editing)
 }
 
 /// The parts of the multipart body at `loc` as a grid table: Name, Type,
@@ -882,7 +865,6 @@ fn parts_table(
     editing: bool,
     defined: &dyn Fn(&str) -> bool,
 ) -> Vec<EditAction> {
-    let p = palette(ui.ctx());
     let mode = Mode { editing, defined };
     let (table, salt) = match loc {
         BodyLoc::Request => (RowTable::RequestParts, "parts_request".to_string()),
@@ -944,14 +926,12 @@ fn parts_table(
                     if is_file && !editing {
                         row.col(|ui| {
                             grid_cell(ui, |ui| {
-                                ui.label(
-                                    RichText::new(format!(
-                                        "{} {}",
-                                        egui_phosphor::regular::FILE,
-                                        part.filename
-                                    ))
-                                    .color(p.on_surface),
-                                );
+                                Text::new(format!(
+                                    "{} {}",
+                                    egui_phosphor::regular::FILE,
+                                    part.filename
+                                ))
+                                .show(ui);
                             });
                         });
                     } else {
@@ -1065,17 +1045,17 @@ pub(super) fn request_body(
     action
 }
 
-/// Color for an HTTP status code by its class: 2xx success, 3xx info, 4xx
+/// The tone of an HTTP status code by its class: 2xx success, 3xx info, 4xx
 /// warning, 5xx and anything that is not a three-digit code error.
-pub(super) fn status_color(code: &str, p: &Palette) -> Color32 {
+pub(super) fn status_tone(code: &str) -> Tone {
     if code.len() != 3 || !code.bytes().all(|b| b.is_ascii_digit()) {
-        return p.error;
+        return Tone::Error;
     }
     match code.as_bytes()[0] {
-        b'2' => p.success,
-        b'3' => p.info,
-        b'4' => p.warning,
-        _ => p.error,
+        b'2' => Tone::Success,
+        b'3' => Tone::Info,
+        b'4' => Tone::Warning,
+        _ => Tone::Error,
     }
 }
 
@@ -1101,18 +1081,18 @@ pub(super) fn response_picker(
     resp_tab: &mut usize,
     editing: bool,
 ) -> Option<ContractsAction> {
-    let p = palette(ui.ctx());
     let mut action = None;
     let mut focus_code = false;
     let selected_text = model
         .responses
         .get(*resp_tab)
         .map(|r| {
-            RichText::new(status_picker_label(&r.code, &r.description))
-                .color(status_color(r.code.trim(), p))
+            Text::new(status_picker_label(&r.code, &r.description))
+                .tone(status_tone(r.code.trim()))
                 .strong()
         })
-        .unwrap_or_else(|| RichText::new("?").color(p.on_surface_variant));
+        .unwrap_or_else(|| Text::new("?").muted())
+        .rich(ui.ctx());
     ui.scope(|ui| {
         // No box around the closed dropdown, only the colored status text.
         let widgets = &mut ui.visuals_mut().widgets;
@@ -1130,8 +1110,9 @@ pub(super) fn response_picker(
             .selected_text(selected_text)
             .show_ui(ui, |ui| {
                 for (i, r) in model.responses.iter().enumerate() {
-                    let label = RichText::new(status_tab_label(&r.code, &r.description))
-                        .color(status_color(r.code.trim(), p));
+                    let label = Text::new(status_tab_label(&r.code, &r.description))
+                        .tone(status_tone(r.code.trim()))
+                        .rich(ui.ctx());
                     if ui.selectable_label(i == *resp_tab, label).clicked() {
                         *resp_tab = i;
                         focus_code = true;
@@ -1139,9 +1120,8 @@ pub(super) fn response_picker(
                 }
                 if editing {
                     ui.separator();
-                    if ui.button("+ New example").clicked() {
+                    if menu_item(ui, "+ New example") {
                         action = Some(ContractsAction::OpenNewExample);
-                        ui.close();
                     }
                 }
             });
@@ -1166,7 +1146,7 @@ pub(super) fn response_fields(ui: &mut egui::Ui, model: &mut EditModel, resp_tab
     ui.horizontal(|ui| {
         // Tight spacing so the fields read as one label.
         ui.spacing_mut().item_spacing.x = 4.0;
-        let color = status_color(model.responses[i].code.trim(), p);
+        let color = status_tone(model.responses[i].code.trim()).color(p);
         // Size the code field to its text (min 3 digits) so the `-` hugs the
         // code instead of sitting past a fixed width.
         let code_w = {
@@ -1199,7 +1179,7 @@ pub(super) fn response_fields(ui: &mut egui::Ui, model: &mut EditModel, resp_tab
                 .take(3)
                 .collect();
         }
-        ui.label(RichText::new("-").color(p.on_surface_variant));
+        Text::new("-").muted().show(ui);
         // Size the title field to its text (30-char cap) so the `x` sits right
         // after the title instead of a fixed gap.
         let title_w = {
@@ -1497,14 +1477,13 @@ mod tests {
     }
 
     #[test]
-    fn status_color_follows_the_code_class() {
-        let p = &crate::ui::theme::TOKYO_NIGHT_STORM;
-        assert_eq!(status_color("200", p), p.success);
-        assert_eq!(status_color("301", p), p.info);
-        assert_eq!(status_color("404", p), p.warning);
-        assert_eq!(status_color("500", p), p.error);
-        assert_eq!(status_color("abc", p), p.error);
-        assert_eq!(status_color("20", p), p.error);
+    fn status_tone_follows_the_code_class() {
+        assert_eq!(status_tone("200"), Tone::Success);
+        assert_eq!(status_tone("301"), Tone::Info);
+        assert_eq!(status_tone("404"), Tone::Warning);
+        assert_eq!(status_tone("500"), Tone::Error);
+        assert_eq!(status_tone("abc"), Tone::Error);
+        assert_eq!(status_tone("20"), Tone::Error);
     }
 
     #[test]

@@ -16,7 +16,7 @@ use crate::ui::theme::{
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Size {
-    /// Badges and status dots.
+    /// Badges, status dots and fine print under a field.
     Tiny,
     /// Sub-headings, chips, counts and other secondary labels.
     Caption,
@@ -52,10 +52,6 @@ impl Size {
 }
 
 /// What a piece of text means, which picks its colour from the palette.
-#[expect(
-    dead_code,
-    reason = "the full scale is the design; features use the rest as they move onto base"
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Tone {
     /// Ordinary text, `on_surface`.
@@ -75,8 +71,18 @@ pub(crate) enum Tone {
     Warning,
     /// Success.
     Success,
-    /// Information.
+    /// Information, and the names in a key and value list.
     Info,
+    /// A variable or path param name, `syntax_number`.
+    Variable,
+    /// `GET` and `HEAD`.
+    MethodGet,
+    /// `POST`.
+    MethodPost,
+    /// `PUT` and `PATCH`.
+    MethodPut,
+    /// `DELETE`.
+    MethodDelete,
 }
 
 impl Tone {
@@ -92,6 +98,11 @@ impl Tone {
             Tone::Warning => p.warning,
             Tone::Success => p.success,
             Tone::Info => p.info,
+            Tone::Variable => p.syntax_number,
+            Tone::MethodGet => p.method_get,
+            Tone::MethodPost => p.method_post,
+            Tone::MethodPut => p.method_put,
+            Tone::MethodDelete => p.method_delete,
         }
     }
 }

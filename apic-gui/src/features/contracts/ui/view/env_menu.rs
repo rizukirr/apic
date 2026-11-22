@@ -3,10 +3,9 @@
 use std::path::Path;
 
 use eframe::egui;
-use egui::RichText;
 
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState};
-use crate::ui::theme::*;
+use crate::ui::base::Text;
 
 /// The environment dropdown: "No environment" and every environment in
 /// `.apic/env`, re-read each time the dropdown is clicked open, or a hint
@@ -27,7 +26,6 @@ pub(crate) fn env_menu(
     state: &mut ContractsState,
     apic_dir: &Path,
 ) -> Option<ContractsAction> {
-    let p = palette(ui.ctx());
     let mut action = None;
     let current = state.send.env.clone();
     let envs = state.send.envs.clone();
@@ -38,7 +36,7 @@ pub(crate) fn env_menu(
         egui_phosphor::regular::CARET_DOWN
     );
     let response = ui
-        .menu_button(RichText::new(title).color(p.on_surface), |ui| {
+        .menu_button(Text::new(title).rich(ui.ctx()), |ui| {
             if ui
                 .selectable_label(current.is_none(), "No environment")
                 .clicked()
@@ -49,7 +47,7 @@ pub(crate) fn env_menu(
                 ui.close();
             }
             if envs.is_empty() {
-                ui.label(RichText::new("Add .apic/env/<name>.toml").color(p.on_surface_variant));
+                Text::new("Add .apic/env/<name>.toml").muted().show(ui);
             }
             for name in &envs {
                 let selected = current.as_deref() == Some(name.as_str());

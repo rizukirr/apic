@@ -2,11 +2,10 @@
 //! confirmation, unsaved changes, the body-type switch and the path params.
 
 use eframe::egui;
-use egui::RichText;
 
 use crate::features::contracts::domain::entry::DeleteTarget;
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState};
-use crate::ui::base::{ButtonKind, bordered_input};
+use crate::ui::base::{ButtonKind, Size, Text, Tone, bordered_input};
 use crate::ui::components::{DialogButton, detail_box, dialog};
 use crate::ui::focus::take_pending_focus;
 use crate::ui::theme::*;
@@ -49,7 +48,6 @@ pub(crate) fn dialogs(ctx: &egui::Context, state: &mut ContractsState) -> Option
 
 /// Renders the "new template" dialog when open, and returns what was chosen.
 fn new_template_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<ContractsAction> {
-    let p = palette(ctx);
     let buf = state.new_template.as_mut()?;
     let mut enter = false;
     let outcome = dialog(
@@ -57,7 +55,7 @@ fn new_template_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Optio
         "new_template_modal",
         "New template",
         |ui| {
-            ui.label(RichText::new("template name").color(p.on_surface_variant));
+            Text::new("template name").muted().show(ui);
             ui.add_space(SPACE_SMALL);
             let resp = bordered_input(ui, buf, f32::INFINITY, "");
             // Drop the caret into the input the frame the dialog opens.
@@ -81,7 +79,6 @@ fn new_template_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Optio
 
 /// Renders the "new request" dialog when open, and returns what was chosen.
 fn new_request_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<ContractsAction> {
-    let p = palette(ctx);
     state.new_request.as_ref()?;
     let mut enter = false;
     let outcome = dialog(
@@ -89,9 +86,9 @@ fn new_request_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option
         "new_request_modal",
         "New request",
         |ui| {
-            ui.label(
-                RichText::new("path under the contracts directory").color(p.on_surface_variant),
-            );
+            Text::new("path under the contracts directory")
+                .muted()
+                .show(ui);
             ui.add_space(SPACE_SMALL);
             let buf = state.new_request.as_mut().expect("dialog open");
             let resp = bordered_input(ui, buf, f32::INFINITY, "");
@@ -100,13 +97,12 @@ fn new_request_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option
             // Submit on Enter, same as clicking Create.
             enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.add_space(SPACE_EXTRA_SMALL);
-            ui.label(
-                RichText::new(
-                    "end with .json for a contract (auth/logout.json), a bare name makes a folder",
-                )
-                .color(p.on_surface_variant)
-                .size(10.0),
-            );
+            Text::new(
+                "end with .json for a contract (auth/logout.json), a bare name makes a folder",
+            )
+            .muted()
+            .size(Size::Tiny)
+            .show(ui);
 
             // With more than one template, let the user pick which one seeds
             // the contract. With one it is used automatically; with none the
@@ -119,9 +115,9 @@ fn new_request_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option
                     .unwrap_or_default();
                 ui.add_space(SPACE_MEDIUM);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("template").color(p.on_surface_variant));
+                    Text::new("template").muted().show(ui);
                     egui::ComboBox::from_id_salt("new_request_template")
-                        .selected_text(RichText::new(current).color(p.primary))
+                        .selected_text(Text::new(current).tone(Tone::Primary).rich(ui.ctx()))
                         .show_ui(ui, |ui| {
                             for (i, name) in names.iter().enumerate() {
                                 ui.selectable_value(&mut state.new_request_seed, i, name);
@@ -151,7 +147,6 @@ fn new_example_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option
         ctx.data_mut(|d| d.remove::<bool>(focused_id));
         return None;
     };
-    let p = palette(ctx);
     // The footer is built before the body edits the code, so Add's enabled
     // state follows the code as it stood at the start of this frame.
     let add_enabled = code.len() == 3;
@@ -163,7 +158,7 @@ fn new_example_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option
         |ui| {
             let code_resp = ui
                 .horizontal(|ui| {
-                    ui.label(RichText::new("Code").color(p.on_surface_variant));
+                    Text::new("Code").muted().show(ui);
                     bordered_input(ui, code, f32::INFINITY, "200")
                 })
                 .inner;
@@ -172,7 +167,7 @@ fn new_example_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option
             code.truncate(3);
             let name_resp = ui
                 .horizontal(|ui| {
-                    ui.label(RichText::new("Name").color(p.on_surface_variant));
+                    Text::new("Name").muted().show(ui);
                     bordered_input(ui, name, f32::INFINITY, "")
                 })
                 .inner;
@@ -210,7 +205,6 @@ fn new_example_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option
 /// Renders the delete-confirmation dialog when a delete is pending, and
 /// returns what was chosen.
 fn delete_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<ContractsAction> {
-    let p = palette(ctx);
     let target = state.pending_delete.clone()?;
     let (what, name, folder_warn) = match &target {
         DeleteTarget::Contract { rel, is_dir } => (
@@ -225,21 +219,17 @@ fn delete_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<Cont
         "delete_modal",
         &format!("Delete {what}"),
         |ui| {
-            ui.label(
-                RichText::new(format!("Are you sure you want to delete this {what}?"))
-                    .color(p.on_surface),
-            );
+            Text::new(format!("Are you sure you want to delete this {what}?")).show(ui);
             ui.add_space(SPACE_SMALL);
             detail_box(ui, |ui| {
-                ui.label(RichText::new(&name).color(p.on_surface).strong());
+                Text::new(&name).strong().show(ui);
             });
             if folder_warn {
                 ui.add_space(SPACE_EXTRA_SMALL);
-                ui.label(
-                    RichText::new("this also deletes every contract inside it")
-                        .color(p.error)
-                        .size(10.0),
-                );
+                Text::new("this also deletes every contract inside it")
+                    .tone(Tone::Error)
+                    .size(Size::Tiny)
+                    .show(ui);
             }
         },
         &[
@@ -260,7 +250,6 @@ fn delete_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<Cont
 /// what was chosen.
 fn unsaved_dialog(ctx: &egui::Context, state: &ContractsState) -> Option<ContractsAction> {
     state.pending_discard?;
-    let p = palette(ctx);
     let name = state
         .model
         .as_ref()
@@ -272,7 +261,7 @@ fn unsaved_dialog(ctx: &egui::Context, state: &ContractsState) -> Option<Contrac
         "unsaved_modal",
         "Unsaved changes",
         |ui| {
-            ui.label(RichText::new(format!("{name} has unsaved changes.")).color(p.on_surface));
+            Text::new(format!("{name} has unsaved changes.")).show(ui);
         },
         &[
             DialogButton::new("Keep editing", ButtonKind::Secondary),
@@ -293,7 +282,6 @@ fn unsaved_dialog(ctx: &egui::Context, state: &ContractsState) -> Option<Contrac
 /// returns what was chosen.
 fn body_switch_dialog(ctx: &egui::Context, state: &ContractsState) -> Option<ContractsAction> {
     let (_, multipart) = state.pending_body_switch.as_ref()?;
-    let p = palette(ctx);
     let (title, line) = if *multipart {
         ("Switch to multipart?", "The JSON body will be removed.")
     } else {
@@ -304,7 +292,7 @@ fn body_switch_dialog(ctx: &egui::Context, state: &ContractsState) -> Option<Con
         "body_switch_modal",
         title,
         |ui| {
-            ui.label(RichText::new(line).color(p.on_surface));
+            Text::new(line).show(ui);
         },
         &[
             DialogButton::new("Cancel", ButtonKind::Secondary),
@@ -328,7 +316,6 @@ fn params_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<Cont
         ctx.data_mut(|d| d.remove::<bool>(focused_id));
         return None;
     };
-    let p = palette(ctx);
     let ready = rows.iter().all(|(_, value)| !value.trim().is_empty());
     let mut enter = false;
     let outcome = dialog(
@@ -336,19 +323,17 @@ fn params_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option<Cont
         "path_params_modal",
         "Path parameters",
         |ui| {
-            ui.label(
-                RichText::new("The URL needs a value for each of these.")
-                    .color(p.on_surface_variant),
-            );
+            Text::new("The URL needs a value for each of these.")
+                .muted()
+                .show(ui);
             ui.add_space(SPACE_SMALL);
             for (i, (name, value)) in rows.iter_mut().enumerate() {
                 let resp = ui
                     .horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!("{{{name}}}"))
-                                .color(p.syntax_number)
-                                .monospace(),
-                        );
+                        Text::new(format!("{{{name}}}"))
+                            .tone(Tone::Variable)
+                            .mono()
+                            .show(ui);
                         bordered_input(ui, value, f32::INFINITY, "")
                     })
                     .inner;

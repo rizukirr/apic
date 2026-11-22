@@ -50,6 +50,14 @@ pub(crate) fn plain_button(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>)
     ui.add(egui::Button::new(text).frame(false).truncate())
 }
 
+/// A row that can be selected, such as a file in a list: highlighted while
+/// `selected`, truncated with an ellipsis when its space runs out. Returns
+/// the response so callers can chain `.clicked()` or a context menu.
+pub(crate) fn selectable_row(ui: &mut egui::Ui, selected: bool, text: Text) -> egui::Response {
+    let rich = text.rich(ui.ctx());
+    ui.add(egui::Button::selectable(selected, rich).truncate())
+}
+
 /// A frameless trash-icon row-removal button: muted by default, brightening to red
 /// over a subtle rounded backdrop on hover so it clearly reads as clickable.
 /// Returns `true` on click.
