@@ -16,6 +16,111 @@ use serde_json::{Map, Value, json};
 use crate::json::{Header, JsonContent, Part, method_str};
 use crate::vars::{Vars, tokens};
 
+/// What an export writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    /// A Postman Collection v2.1.
+    Postman,
+    /// An OpenAPI document of this version.
+    OpenApi(openapi::Version),
+}
+
+/// Loads the contracts at `paths` for export.
+///
+/// # Arguments
+///
+/// * `paths` - absolute contract paths, in the order to export them
+/// * `root` - the contracts folder, which each item's path is made relative to
+///
+/// # Returns
+///
+/// The parsed contracts, and a warning for each file that did not read or
+/// parse, which is left out.
+pub fn load_items(paths: &[PathBuf], root: &Path) -> (Vec<ExportItem>, Vec<String>) {
+    let mut items = Vec::new();
+    let mut warnings = Vec::new();
+    for path in paths {
+        let parsed = crate::file::read_file(path)
+            .map_err(|err| format!("failed to read {}: {err}", path.display()))
+            .and_then(|text| {
+                serde_json::from_str::<JsonContent>(&text)
+                    .map_err(|err| format!("{} is not a valid contract: {err}", path.display()))
+            });
+        match parsed {
+            Ok(contract) => items.push(ExportItem {
+                rel_path: path.strip_prefix(root).unwrap_or(path).to_path_buf(),
+                contract,
+            }),
+            Err(err) => warnings.push(format!("skipped {err}")),
+        }
+    }
+    (items, warnings)
+}
+
+/// Builds the export document and writes it to `out`, overwriting it.
+///
+/// # Arguments
+///
+/// * `format` - Postman, or OpenAPI of a version. OpenAPI is written as YAML
+///   when `out` ends in `.yaml` or `.yml`, as JSON otherwise.
+/// * `items` - the contracts to export
+/// * `values` - variable values from a shared env file
+/// * `name` - the collection name or OpenAPI title
+/// * `out` - the file to write
+/// * `root` - the contracts folder
+/// * `apic_dir` - the project's `.apic` folder
+///
+/// # Returns
+///
+/// Warnings for what was left out, and one when a `.json` file was written
+/// inside the contracts folder, where apic reads it as a broken contract.
+///
+/// # Errors
+///
+/// Returns the serialize or write error text.
+pub fn write(
+    format: Format,
+    items: &[ExportItem],
+    values: &Vars,
+    name: &str,
+    out: &Path,
+    root: &Path,
+    apic_dir: &Path,
+) -> Result<Vec<String>, String> {
+    let mut warnings = Vec::new();
+    let text = match format {
+        Format::Postman => serde_json::to_string_pretty(&postman_collection(name, items, values))
+            .map_err(|err| format!("failed to serialize collection: {err}"))?,
+        Format::OpenApi(version) => {
+            let info = openapi::Info {
+                title: name,
+                version: "1.0.0",
+            };
+            let (doc, skipped) = openapi::document(info, items, values, version);
+            warnings.extend(skipped);
+            let yaml = out.extension().is_some_and(|e| e == "yaml" || e == "yml");
+            openapi::to_text(&doc, yaml)?
+        }
+    };
+    std::fs::write(out, text).map_err(|err| format!("failed to write {}: {err}", out.display()))?;
+
+    // Only `.json` files are scanned as contracts.
+    let inside = |dir: &Path| {
+        out.canonicalize()
+            .ok()
+            .zip(dir.canonicalize().ok())
+            .is_some_and(|(out, dir)| out.starts_with(dir))
+    };
+    let scanned = out.extension().is_some_and(|e| e == "json");
+    if scanned && inside(root) && !inside(apic_dir) {
+        warnings.push(format!(
+            "{} is inside the contracts folder, so apic will read it as a contract. Write it outside that folder",
+            out.display()
+        ));
+    }
+    Ok(warnings)
+}
+
 /// The schema URL that marks a Postman Collection v2.1 document.
 const POSTMAN_SCHEMA: &str = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json";
 

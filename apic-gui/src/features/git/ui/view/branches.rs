@@ -7,7 +7,9 @@ use egui::containers::menu::SubMenuButton;
 
 use crate::features::git::domain::status::{Branches, DiscardTarget, discard_target};
 use crate::features::git::ui::state::{BranchOpKind, GitAction, GitState};
-use crate::ui::components::{ButtonKind, DialogButton, bordered_input, detail_box, dialog};
+use crate::ui::components::{
+    ButtonKind, DialogButton, bordered_input, detail_box, dialog, menu_item, submenu,
+};
 use crate::ui::theme::*;
 
 /// Whether the menu may offer deleting `name`: not the current branch, which
@@ -88,19 +90,18 @@ pub(crate) fn branch_menu(ui: &mut egui::Ui, state: &mut GitState) -> Option<Git
                 ))
                 .ui(ui, |ui| {
                     for kind in [BranchOpKind::Pull, BranchOpKind::Merge] {
-                        ui.menu_button(op_label(kind), |ui| {
+                        submenu(ui, true, op_label(kind), |ui| {
                             let sources = branch_op_sources(kind, name, &branches);
                             if sources.is_empty() {
                                 ui.add_enabled(false, egui::Button::new("no branches"));
                             }
                             for source in sources {
-                                if ui.button(&source).clicked() {
+                                if menu_item(ui, &source) {
                                     action = Some(GitAction::RequestBranchOp {
                                         kind,
                                         target: name.clone(),
                                         source,
                                     });
-                                    ui.close();
                                 }
                             }
                         });

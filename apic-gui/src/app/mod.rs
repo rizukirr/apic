@@ -25,11 +25,11 @@ use crate::features::contracts::ui::view::{
 };
 use crate::features::git::ui::state::{BranchOpKind, GitAction, GitEvent, GitState, LogState};
 use crate::features::git::ui::view;
-use crate::features::project::data::{ImportSource, NewKind, project_root_of};
+use crate::features::project::data::{NewKind, project_root_of};
 use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
-use crate::features::project::ui::view::welcome;
+use crate::features::project::ui::view::{format_items, welcome};
 use crate::platform::settings::Settings;
-use crate::ui::components::{icon_button, section_header};
+use crate::ui::components::{icon_button, menu_item, section_header, submenu};
 use crate::ui::theme::*;
 
 /// What the app bar's theme toggle switches to from the theme now showing,
@@ -258,6 +258,8 @@ impl App {
             .and_then(|root| root.file_name())
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "No project".to_string());
+        // Export needs a project with a contracts folder.
+        let has_project = self.project.root.is_some();
         egui::Panel::top("nav").show(ui, |ui| {
             ui.add_space(SPACE_EXTRA_SMALL);
             ui.horizontal(|ui| {
@@ -273,26 +275,22 @@ impl App {
                     .ui(ui, |ui| {
                         let title = format!("{project} {}", egui_phosphor::regular::CARET_DOWN);
                         ui.menu_button(RichText::new(title).color(p.on_surface).strong(), |ui| {
-                            if ui.button("New project").clicked() {
+                            if menu_item(ui, "New project") {
                                 action = Some(Action::Project(ProjectAction::New));
-                                ui.close();
                             }
-                            if ui.button("Open project").clicked() {
+                            if menu_item(ui, "Open project") {
                                 action = Some(Action::Project(ProjectAction::Open));
-                                ui.close();
                             }
-                            if ui.button("Import Postman collection").clicked() {
-                                action = Some(Action::Project(ProjectAction::Import(
-                                    ImportSource::Postman,
-                                )));
-                                ui.close();
-                            }
-                            if ui.button("Import OpenAPI spec").clicked() {
-                                action = Some(Action::Project(ProjectAction::Import(
-                                    ImportSource::OpenApi,
-                                )));
-                                ui.close();
-                            }
+                            submenu(ui, true, "Import", |ui| {
+                                if let Some(source) = format_items(ui) {
+                                    action = Some(Action::Project(ProjectAction::Import(source)));
+                                }
+                            });
+                            submenu(ui, has_project, "Export", |ui| {
+                                if let Some(source) = format_items(ui) {
+                                    action = Some(Action::Project(ProjectAction::Export(source)));
+                                }
+                            });
                         });
                         if self.shell.repo_root.is_some() {
                             if let Some(a) = view::branch_menu(ui, &mut self.git) {
@@ -785,13 +783,22 @@ impl App {
                     ProjectAction::Open => Some(Guarded::OpenProject),
                     ProjectAction::New => Some(Guarded::NewProject),
                     ProjectAction::Import(_)
+                    | ProjectAction::Export(_)
                     | ProjectAction::DismissRefusal
                     | ProjectAction::PickForNew(_) => None,
                 };
                 if guarded.is_some_and(|g| self.contracts.guard(g)) {
                     return;
                 }
-                let events = self.project.handle(action, ctx);
+                let events = match action {
+                    // Export fills variables from the environment chosen
+                    // for sending, which the contracts feature owns.
+                    ProjectAction::Export(source) => {
+                        let env = self.contracts.send.env.clone();
+                        self.project.start_export(source, env, ctx)
+                    }
+                    action => self.project.handle(action, ctx),
+                };
                 self.apply_project_events(events, ctx);
             }
             Action::Shell(ShellAction::ToggleSidebar) => {
