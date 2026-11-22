@@ -3,7 +3,6 @@
 //! it draws nothing, since the shell shows the welcome screen instead.
 
 use eframe::egui;
-use egui::RichText;
 
 use super::editor::{
     endpoint_title, headers, method_url_row, query_section, request_body, response_body,
@@ -12,7 +11,7 @@ use super::editor::{
 use super::live::{live_body, live_summary, live_switch};
 use crate::features::contracts::ui::send::SendState;
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState, RespTab};
-use crate::ui::base::{Tone, icon_button, text_button};
+use crate::ui::base::{Size, Text, Tone, icon_button, text_button};
 use crate::ui::components::{Tab, empty_state, tab_strip};
 use crate::ui::theme::*;
 
@@ -58,14 +57,19 @@ pub(crate) fn central_body(
     if let Some(rep) = repair.as_mut() {
         ui.add_space(SPACE_SMALL);
         if rep.error.is_empty() {
-            ui.label(
-                RichText::new("Valid, opening editor…")
-                    .color(p.success)
-                    .strong(),
-            );
+            Text::new("Valid, opening editor…")
+                .tone(Tone::Success)
+                .strong()
+                .show(ui);
         } else {
-            ui.label(RichText::new("Invalid contract").color(p.error).strong());
-            ui.label(RichText::new(&rep.error).color(p.warning).size(12.0));
+            Text::new("Invalid contract")
+                .tone(Tone::Error)
+                .strong()
+                .show(ui);
+            Text::new(&rep.error)
+                .tone(Tone::Warning)
+                .size(Size::Small)
+                .show(ui);
         }
         ui.add_space(SPACE_SMALL);
         let pretty = text_button(ui, "pretty", Tone::Warning);
@@ -121,7 +125,7 @@ pub(crate) fn central_body(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(SPACE_SMALL);
             if has_unsaved {
-                ui.label(RichText::new("●").color(p.warning).size(10.0));
+                Text::new("●").tone(Tone::Warning).size(Size::Tiny).show(ui);
             }
             if icon_button(ui, egui_phosphor::regular::FLOPPY_DISK, "Save").clicked() {
                 action = Some(ContractsAction::Save);
@@ -298,8 +302,7 @@ fn response_pane(
 
 /// A left-pane section heading: `label` in bold, in `on_surface_variant`.
 fn section_heading(ui: &mut egui::Ui, label: &str) {
-    let p = palette(ui.ctx());
-    ui.label(RichText::new(label).strong().color(p.on_surface_variant));
+    Text::new(label).muted().strong().show(ui);
     ui.add_space(6.0);
 }
 

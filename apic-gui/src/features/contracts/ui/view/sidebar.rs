@@ -2,13 +2,12 @@
 //! icons above it, and the template list.
 
 use eframe::egui;
-use egui::RichText;
 
-use super::editor::method_color;
+use super::editor::method_tone;
 use crate::features::contracts::domain::entry::DeleteTarget;
 use crate::features::contracts::domain::tree::{TreeNode, build_tree};
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState};
-use crate::ui::base::{bordered_input, icon_button};
+use crate::ui::base::{Size, Text, Tone, bordered_input, icon_button, menu_item, selectable_row};
 use crate::ui::components::row_menu_button;
 use crate::ui::theme::*;
 
@@ -18,10 +17,9 @@ pub(crate) fn templates_body(
     ui: &mut egui::Ui,
     state: &mut ContractsState,
 ) -> Option<ContractsAction> {
-    let p = palette(ui.ctx());
     let mut action = None;
     if state.templates.is_empty() {
-        ui.label(RichText::new("(none)").color(p.on_surface_variant));
+        Text::new("(none)").muted().show(ui);
     }
     let selected = state.selected_template;
     for (i, (name, path)) in state.templates.iter().enumerate() {
@@ -32,13 +30,11 @@ pub(crate) fn templates_body(
                     menu_items_ui(ui, template_menu_items(name, path), &mut action)
                 });
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    let row = ui.add(
-                        egui::Button::selectable(
-                            selected == Some(i),
-                            RichText::new(format!("{} {name}", egui_phosphor::regular::DIAMOND))
-                                .color(p.warning),
-                        )
-                        .truncate(),
+                    let row = selectable_row(
+                        ui,
+                        selected == Some(i),
+                        Text::new(format!("{} {name}", egui_phosphor::regular::DIAMOND))
+                            .tone(Tone::Warning),
                     );
                     if row.clicked() {
                         action = Some(ContractsAction::LoadTemplate(i));
@@ -142,9 +138,8 @@ fn menu_items_ui(
     out: &mut Option<ContractsAction>,
 ) {
     for (label, action) in items {
-        if ui.button(label).clicked() {
+        if menu_item(ui, label) {
             *out = Some(action);
-            ui.close();
         }
     }
 }
@@ -158,7 +153,6 @@ fn show_tree(
     selected: Option<usize>,
     action: &mut Option<ContractsAction>,
 ) {
-    let p = palette(ui.ctx());
     for (name, child) in &node.dirs {
         let folder_path = if prefix.is_empty() {
             name.clone()
@@ -178,7 +172,7 @@ fn show_tree(
                     });
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.add(
-                            egui::Label::new(RichText::new(name).color(p.on_surface_variant))
+                            egui::Label::new(Text::new(name).muted().rich(ui.ctx()))
                                 .truncate()
                                 .sense(egui::Sense::click()),
                         )
@@ -208,20 +202,16 @@ fn show_tree(
                 });
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     if *invalid {
-                        ui.label(RichText::new("●").color(p.error))
+                        Text::new("●")
+                            .tone(Tone::Error)
+                            .show(ui)
                             .on_hover_text("Invalid contract, click to repair");
                     }
-                    ui.label(
-                        RichText::new(method)
-                            .color(method_color(method, p))
-                            .size(11.0),
-                    );
-                    let file = egui::Button::selectable(
-                        selected == Some(*idx),
-                        RichText::new(label).color(p.on_surface),
-                    )
-                    .truncate();
-                    let response = ui.add(file);
+                    Text::new(method)
+                        .tone(method_tone(method))
+                        .size(Size::Caption)
+                        .show(ui);
+                    let response = selectable_row(ui, selected == Some(*idx), Text::new(label));
                     if response.clicked() {
                         *action = Some(ContractsAction::Load(*idx));
                     }

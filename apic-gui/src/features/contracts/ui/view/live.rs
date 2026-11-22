@@ -2,13 +2,12 @@
 //! summary in the header row, and the reply's body or headers below it.
 
 use eframe::egui;
-use egui::RichText;
 use egui_extras::Column;
 
-use super::editor::status_color;
+use super::editor::status_tone;
 use crate::features::contracts::ui::send::{LiveBody, LiveReply, SendState};
 use crate::features::contracts::ui::state::{ContractsAction, RespTab};
-use crate::ui::base::{header_label, json_editor};
+use crate::ui::base::{Text, Tone, header_label, json_editor};
 use crate::ui::components::{empty_state, fill_column, grid_cell, metadata_table, table_frame};
 use crate::ui::theme::*;
 
@@ -37,40 +36,37 @@ pub(super) fn live_switch(ui: &mut egui::Ui, live: bool) -> Option<ContractsActi
 /// reads first. The status uses the examples picker's colours. Nothing
 /// without a reply.
 pub(super) fn live_summary(ui: &mut egui::Ui, send: &SendState) {
-    let p = palette(ui.ctx());
     let Some(Ok(reply)) = &send.live else {
         return;
     };
-    ui.label(RichText::new(size_label(reply.size)).color(p.on_surface_variant));
-    ui.label(RichText::new(format!("{} ms", reply.millis)).color(p.on_surface_variant));
+    Text::new(size_label(reply.size)).muted().show(ui);
+    Text::new(format!("{} ms", reply.millis)).muted().show(ui);
     let status = if reply.reason.is_empty() {
         reply.status.to_string()
     } else {
         format!("{} {}", reply.status, reply.reason)
     };
-    ui.label(
-        RichText::new(status)
-            .color(status_color(&reply.status.to_string(), p))
-            .strong(),
-    );
+    Text::new(status)
+        .tone(status_tone(&reply.status.to_string()))
+        .strong()
+        .show(ui);
 }
 
 /// The Live pane's body: a spinner while a send is in flight, the hint
 /// before any send, the error of a failed send, or the reply's body or
 /// headers by `tab`.
 pub(super) fn live_body(ui: &mut egui::Ui, send: &mut SendState, tab: RespTab) {
-    let p = palette(ui.ctx());
     if send.is_pending() {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.label(RichText::new("Sending").color(p.on_surface_variant));
+            Text::new("Sending").muted().show(ui);
         });
         return;
     }
     match &mut send.live {
         None => empty_state(ui, "Send the request to see the real response", ""),
         Some(Err(err)) => {
-            ui.label(RichText::new(err.as_str()).color(p.error));
+            Text::new(err.as_str()).tone(Tone::Error).show(ui);
         }
         Some(Ok(reply)) => match tab {
             RespTab::Body => reply_body(ui, reply),
@@ -82,10 +78,9 @@ pub(super) fn live_body(ui: &mut egui::Ui, send: &mut SendState, tab: RespTab) {
 /// A reply body: JSON in the read-only highlighted code view, other text as
 /// it is, a binary body by its size, and a note when the body was cut.
 fn reply_body(ui: &mut egui::Ui, reply: &mut LiveReply) {
-    let p = palette(ui.ctx());
     match &mut reply.body {
         LiveBody::Json(text) | LiveBody::Text(text) if text.is_empty() => {
-            ui.label(RichText::new("Empty body").color(p.on_surface_variant));
+            Text::new("Empty body").muted().show(ui);
         }
         LiveBody::Json(text) => json_editor(ui, text, false),
         LiveBody::Text(text) => {
@@ -98,19 +93,20 @@ fn reply_body(ui: &mut egui::Ui, reply: &mut LiveReply) {
             );
         }
         LiveBody::Binary(len) => {
-            ui.label(
-                RichText::new(format!("Binary body, {len} bytes")).color(p.on_surface_variant),
-            );
+            Text::new(format!("Binary body, {len} bytes"))
+                .muted()
+                .show(ui);
         }
     }
     if reply.truncated {
-        ui.label(RichText::new("Showing the first 2 MB of the body.").color(p.warning));
+        Text::new("Showing the first 2 MB of the body.")
+            .tone(Tone::Warning)
+            .show(ui);
     }
 }
 
 /// The reply headers in the read-only grid table.
 fn reply_headers(ui: &mut egui::Ui, headers: &[(String, String)]) {
-    let p = palette(ui.ctx());
     if headers.is_empty() {
         empty_state(ui, "No headers", "");
         return;
@@ -131,12 +127,12 @@ fn reply_headers(ui: &mut egui::Ui, headers: &[(String, String)]) {
                     body.row(TABLE_ROW_H, |mut row| {
                         row.col(|ui| {
                             grid_cell(ui, |ui| {
-                                ui.label(RichText::new(name).color(p.info));
+                                Text::new(name).tone(Tone::Info).show(ui);
                             });
                         });
                         row.col(|ui| {
                             grid_cell(ui, |ui| {
-                                ui.label(RichText::new(value).color(p.on_surface));
+                                Text::new(value).show(ui);
                             });
                         });
                     });
