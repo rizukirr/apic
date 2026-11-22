@@ -68,7 +68,7 @@ apic convert --postman MyAPI.postman.json --destination imported --json
 
 An imported URL can start with `{{baseUrl}}` when the spec names no server. Tell the user which env file needs `baseUrl`, then run `apic validate --json`.
 
-To hand contracts to Postman, run `apic export --postman ../api.postman.json --json`. Write the file outside the contracts folder, or apic reads it as a broken contract. `-f folder/` exports one folder, and `--env NAME` fills the collection variables from that env's shared file only, never the local one.
+To hand contracts to Postman, run `apic export --postman ../api.postman.json --json`. For an OpenAPI document, run `apic export --openapi ../openapi.yaml --json`. Write a `.json` export outside the contracts folder, or apic reads it as a broken contract. `-f folder/` exports one folder, and `--env NAME` fills variable values from that env's shared file only, never the local one. Report export warnings to the user, since they name contracts that were left out.
 
 ## Safety rules
 

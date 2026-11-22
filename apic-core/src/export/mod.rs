@@ -1,9 +1,12 @@
-//! `apic export`: write apic contracts out as a Postman collection.
+//! `apic export`: write apic contracts out as a Postman collection or, in
+//! [`openapi`], an OpenAPI document.
 //!
-//! The mapping is the reverse of [`crate::convert`]: each folder becomes a
-//! Postman folder, each contract a request, and each documented response a
-//! saved example. Variables are rewritten to Postman's `{{name}}` form and
-//! path params to `:name`.
+//! The Postman mapping is the reverse of [`crate::convert`]: each folder
+//! becomes a Postman folder, each contract a request, and each documented
+//! response a saved example. Variables are rewritten to Postman's `{{name}}`
+//! form and path params to `:name`.
+
+pub mod openapi;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

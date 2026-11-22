@@ -152,3 +152,99 @@ fn export_postman_folder_scope_and_json() {
 
     fs::remove_dir_all(&work).unwrap();
 }
+
+/// `apic export --openapi` writes YAML with a server variable filled from the
+/// shared env file only, a bearer security scheme for the Authorization
+/// header, and imports back through `apic convert --openapi` into contracts
+/// that validate.
+#[test]
+fn export_openapi_yaml_round_trips_and_never_leaks_local_values() {
+    let work = project("openapi");
+    let out_file = std::env::temp_dir().join("apic_it_export_openapi.yaml");
+    let _ = fs::remove_file(&out_file);
+    let out_arg = out_file.to_str().unwrap();
+
+    Command::cargo_bin("apic")
+        .unwrap()
+        .current_dir(&work)
+        .args([
+            "export",
+            "--openapi",
+            out_arg,
+            "--env",
+            "dev",
+            "--name",
+            "Demo",
+        ])
+        .assert()
+        .success();
+
+    let text = fs::read_to_string(&out_file).unwrap();
+    assert!(
+        !text.contains("s3cret"),
+        "local env values must never be exported"
+    );
+    assert!(text.starts_with("openapi: 3.0.3"), "{text}");
+    assert!(text.contains("default: https://api.example.com"), "{text}");
+    assert!(text.contains("bearerAuth"), "{text}");
+
+    Command::cargo_bin("apic")
+        .unwrap()
+        .current_dir(&work)
+        .args([
+            "convert",
+            "--openapi",
+            out_arg,
+            "--destination",
+            "reimported",
+        ])
+        .assert()
+        .success();
+    let back: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(work.join("reimported/users/get_user.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(back["url"], "https://api.example.com/users/{id}");
+    assert_eq!(back["responses"][0]["schema"], serde_json::json!({"id": 1}));
+    Command::cargo_bin("apic")
+        .unwrap()
+        .current_dir(&work)
+        .args(["validate"])
+        .assert()
+        .success();
+
+    fs::remove_dir_all(&work).unwrap();
+    fs::remove_file(&out_file).unwrap();
+}
+
+/// `--openapi-version 3.1` writes OpenAPI 3.1 as JSON for a `.json` file, and
+/// `--openapi-version` without `--openapi` is a usage error.
+#[test]
+fn export_openapi_3_1_json_and_version_needs_openapi() {
+    let work = project("openapi31");
+    let out_file = std::env::temp_dir().join("apic_it_export_openapi31.json");
+    let _ = fs::remove_file(&out_file);
+    let out_arg = out_file.to_str().unwrap();
+
+    Command::cargo_bin("apic")
+        .unwrap()
+        .current_dir(&work)
+        .args(["export", "--openapi", out_arg, "--openapi-version", "3.1"])
+        .assert()
+        .success();
+    let doc: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&out_file).unwrap()).unwrap();
+    assert_eq!(doc["openapi"], "3.1.0");
+    // Without --env the server variable has an empty default.
+    assert_eq!(doc["servers"][0]["variables"]["base"]["default"], "");
+
+    Command::cargo_bin("apic")
+        .unwrap()
+        .current_dir(&work)
+        .args(["export", "--postman", "x.json", "--openapi-version", "3.1"])
+        .assert()
+        .failure();
+
+    fs::remove_dir_all(&work).unwrap();
+    fs::remove_file(&out_file).unwrap();
+}

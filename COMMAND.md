@@ -336,6 +336,28 @@ apic export --postman ../users.postman.json -f users/ --name "Users API"
 Exported 12 contract(s) to ../MyAPI.postman.json
 ```
 
+## `apic export --openapi <file> [--openapi-version <3.0|3.1>] [-f <query>] [--env <name>] [--name <name>] [--force]`
+Exports contracts as an OpenAPI document, written as YAML when the file ends in `.yaml` or `.yml` and as JSON otherwise. `-f`, `--env`, `--name` (the `info.title`) and `--force` work as they do for `--postman`. `--openapi-version` picks 3.0 (the default, `3.0.3`, supported by the most tools) or 3.1 (`3.1.0`).
+
+- **Operations.** Each contract becomes one operation. Its folder is the tag, its file name the `operationId` (prefixed with the folder when two files share a name), its `name` the `summary` and its `description` the description.
+- **Servers.** A URL that starts with variables, such as `$base/users` or `{{baseUrl}}/{{base_path}}/users`, uses them as the server (`{base}` or `{baseUrl}/{base_path}`), with each server variable's default taken from the shared env file named by `--env`, or empty. A URL with a scheme uses its origin. The server most contracts use goes at the top level, and an operation on another server gets its own `servers` entry.
+- **Parameters.** `{id}` path params and any other variable in the path become required path params. Query params and headers keep their `required` flags and descriptions. Their values become examples, typed as a boolean or number when the text reads back exactly (`20`, `true`), otherwise kept as text, variables included.
+- **Bodies.** Each JSON body is exported as its example plus a schema inferred from it: objects with `properties`, arrays typed by their first item, and `null` as an untyped value. The schema only knows what the example shows, so enums, formats, bounds and `required` lists are not recovered. A multipart body becomes `multipart/form-data` with file parts as `format: binary`. A `Content-Type` header sets the request body's media type instead of becoming a parameter.
+- **Auth.** OpenAPI does not allow `Authorization` as a header parameter. An `Authorization: Bearer ...` header becomes a `bearerAuth` security scheme, `Basic ...` becomes `basicAuth`, and any other value an API key scheme.
+- **Responses.** Each documented status becomes a response with its headers and body. When a contract documents a status more than once, the bodies become named `examples` under that status, each with its description as the summary, and `apic convert --openapi` turns them back into separate responses. A contract with no responses gets a `default` one, since OpenAPI requires one.
+
+These warn: two contracts with the same method and path (OpenAPI keys operations by path, so the second is skipped even if it targets another server), a status outside 100 to 599, and a repeated status with a multipart body. File paths of multipart file parts are not exported.
+
+```bash
+apic export --openapi ../openapi.yaml --env dev
+apic export --openapi ../openapi.json --openapi-version 3.1 -f users/
+```
+
+```text
+warning: skipped profile/logout.json: POST /auth/logout is already exported from authentication/logout.json
+Exported 14 contract(s) to ../openapi.yaml (1 warning)
+```
+
 ## `apic docs <name>`
 Prints a reference doc built into apic, as Markdown. `<name>` is `command` (this file), `sending` (environments, variables and dry runs) or `contract` (the contract file format). The text always matches the installed version, and the command works outside a project.
 
