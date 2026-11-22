@@ -36,7 +36,7 @@ use crate::ui::theme::*;
 /// the colour, `error` when anything has changed at all and `on_surface_variant` (the
 /// unchanged colour) otherwise. Selection is shown through the tab's filled
 /// background, so this never needs to consider which tab is selected.
-pub(crate) fn tab_label(name: &str, status: &Status, p: &Palette) -> (String, egui::Color32) {
+pub(crate) fn tab_label(name: &str, status: &Status) -> (String, Tone) {
     let all = status.inside.iter().chain(status.outside.iter());
     let mut dirty = false;
     let mut conflicted = false;
@@ -51,8 +51,8 @@ pub(crate) fn tab_label(name: &str, status: &Status, p: &Palette) -> (String, eg
     } else {
         name.to_string()
     };
-    let color = if dirty { p.error } else { p.on_surface_variant };
-    (label, color)
+    let tone = if dirty { Tone::Error } else { Tone::Muted };
+    (label, tone)
 }
 
 /// The file list for the Git section: the error line when set, then the
@@ -394,8 +394,8 @@ mod tests {
     #[test]
     fn tab_label_is_the_plain_name_and_dim_when_clean() {
         assert_eq!(
-            tab_label("Git", &Status::default(), &TOKYO_NIGHT_STORM),
-            ("Git".to_string(), TOKYO_NIGHT_STORM.on_surface_variant)
+            tab_label("Git", &Status::default()),
+            ("Git".to_string(), Tone::Muted)
         );
     }
 
@@ -405,10 +405,7 @@ mod tests {
             inside: vec![file("a.json", false)],
             outside: vec![],
         };
-        assert_eq!(
-            tab_label("Git", &status, &TOKYO_NIGHT_STORM),
-            ("Git".to_string(), TOKYO_NIGHT_STORM.error)
-        );
+        assert_eq!(tab_label("Git", &status), ("Git".to_string(), Tone::Error));
     }
 
     #[test]
@@ -418,8 +415,8 @@ mod tests {
             outside: vec![],
         };
         assert_eq!(
-            tab_label("Git", &status, &TOKYO_NIGHT_STORM),
-            ("Git [conflict]".to_string(), TOKYO_NIGHT_STORM.error)
+            tab_label("Git", &status),
+            ("Git [conflict]".to_string(), Tone::Error)
         );
     }
 
@@ -430,8 +427,8 @@ mod tests {
             outside: vec![file("c.json", false)],
         };
         assert_eq!(
-            tab_label("Git", &status, &TOKYO_NIGHT_STORM),
-            ("Git [conflict]".to_string(), TOKYO_NIGHT_STORM.error)
+            tab_label("Git", &status),
+            ("Git [conflict]".to_string(), Tone::Error)
         );
     }
 
