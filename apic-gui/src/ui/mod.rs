@@ -25,10 +25,10 @@ pub(crate) mod theme;
 mod layering {
     use std::path::{Path, PathBuf};
 
-    /// Feature folders under `src/` that draw only through base and
-    /// components. A folder joins once its migration lands, and from then on
-    /// it is held to the same rule as components.
-    const MIGRATED: &[&str] = &["features/contracts", "features/git"];
+    /// The folders under `src/` that draw only through base and components,
+    /// held to the same rule as components. Whole trees, so a new feature is
+    /// checked from its first line.
+    const FEATURE_CODE: &[&str] = &["features", "app"];
 
     /// Raw egui calls that build text or buttons outside base, so their look
     /// is chosen at the call site instead of by a base component.
@@ -74,17 +74,21 @@ mod layering {
             .join("\n")
     }
 
-    /// `text` with every `#[cfg(test)]` attribute and the braced item after
-    /// it removed.
+    /// `text` with every `#[cfg(test)]` attribute and the item after it
+    /// removed: a braced item through its closing `}`, or an item without a
+    /// body, such as `mod test_support;`, through its `;`.
     fn strip_test_modules(text: &str) -> String {
         let mut out = String::new();
         let mut rest = text;
         while let Some(at) = rest.find("#[cfg(test)]") {
             out.push_str(&rest[..at]);
             let after = &rest[at..];
+            let semi = after.find(';');
             rest = match after.find('{') {
-                Some(open) => &after[block_end(after, open)..],
-                None => "",
+                Some(open) if semi.is_none_or(|semi| open < semi) => {
+                    &after[block_end(after, open)..]
+                }
+                _ => semi.map_or("", |semi| &after[semi + 1..]),
             };
         }
         out.push_str(rest);
@@ -206,8 +210,8 @@ mod layering {
     }
 
     #[test]
-    fn migrated_features_draw_through_base_and_components() {
-        for dir in MIGRATED {
+    fn features_and_app_draw_through_base_and_components() {
+        for dir in FEATURE_CODE {
             assert!(src().join(dir).is_dir(), "{dir} is not a folder under src/");
             let bad = drawing_in(dir);
             assert!(bad.is_empty(), "{dir} must draw through base: {bad:#?}");
@@ -220,6 +224,14 @@ mod layering {
         let kept = strip_test_modules(text);
         assert!(!kept.contains("in test"), "{kept}");
         assert!(kept.contains("fn after()"), "{kept}");
+        assert_eq!(drawing_violations(&kept), ["RichText::new"]);
+    }
+
+    #[test]
+    fn a_test_only_module_declaration_removes_only_itself() {
+        let text = "#[cfg(test)]\nmod test_support;\nfn app() { RichText::new(\"x\"); }\n";
+        let kept = strip_test_modules(text);
+        assert!(kept.contains("fn app()"), "{kept}");
         assert_eq!(drawing_violations(&kept), ["RichText::new"]);
     }
 

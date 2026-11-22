@@ -10,10 +10,6 @@ use crate::ui::theme::{
 
 /// A step on the type scale. Each maps to a token in
 /// [`crate::ui::theme::typography`]; `Body` is egui's default size.
-#[expect(
-    dead_code,
-    reason = "the full scale is the design; features use the rest as they move onto base"
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Size {
     /// Badges, status dots and fine print under a field.

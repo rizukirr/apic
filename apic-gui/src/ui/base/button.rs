@@ -17,6 +17,8 @@ pub(crate) enum ButtonKind {
     Primary,
     /// Filled `error` with `surface` text.
     Danger,
+    /// egui's ordinary framed button with default-tone text.
+    Standard,
 }
 
 /// The height of a [`button`], so filled and frameless ones line up.
@@ -32,12 +34,14 @@ pub(crate) fn button(ui: &mut egui::Ui, label: &str, kind: ButtonKind) -> egui::
         ButtonKind::SecondaryDanger => (Tone::Error, None),
         ButtonKind::Primary => (Tone::OnPrimary, Some(p.primary)),
         ButtonKind::Danger => (Tone::Surface, Some(p.error)),
+        ButtonKind::Standard => (Tone::Default, None),
     };
     let text = Text::new(label).tone(tone).rich(ui.ctx());
     let mut widget = egui::Button::new(text).min_size(egui::vec2(0.0, BUTTON_H));
-    widget = match fill {
-        Some(fill) => widget.fill(fill).corner_radius(4),
-        None => widget.frame_when_inactive(false),
+    widget = match (fill, kind) {
+        (Some(fill), _) => widget.fill(fill).corner_radius(4),
+        (None, ButtonKind::Standard) => widget,
+        (None, _) => widget.frame_when_inactive(false),
     };
     ui.add(widget)
 }
@@ -67,6 +71,14 @@ pub(crate) fn link(ui: &mut egui::Ui, label: &str) -> bool {
     ui.add(egui::Label::new(text).sense(egui::Sense::click()))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
+}
+
+/// A button that stays highlighted while `on`, such as the toolbar icon
+/// that shows or hides a panel. Returns the response so callers can chain
+/// `.clicked()` or a hover text.
+pub(crate) fn toggle_button(ui: &mut egui::Ui, on: bool, text: Text) -> egui::Response {
+    let rich = text.rich(ui.ctx());
+    ui.add(egui::Button::selectable(on, rich))
 }
 
 /// A row that can be selected, such as a file in a list: highlighted while

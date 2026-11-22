@@ -2,11 +2,10 @@
 //! open, and the popup shown when a picked folder cannot be opened.
 
 use eframe::egui;
-use egui::RichText;
 
 use crate::features::project::data::ImportSource;
 use crate::features::project::ui::state::{ProjectAction, ProjectState};
-use crate::ui::base::{ButtonKind, menu_item};
+use crate::ui::base::{ButtonKind, Size, Text, button, menu_item};
 use crate::ui::components::{DialogButton, dialog};
 use crate::ui::theme::*;
 
@@ -36,7 +35,6 @@ pub(crate) fn format_items(ui: &mut egui::Ui) -> Option<ImportSource> {
 }
 
 pub(crate) fn welcome(ui: &mut egui::Ui) -> Option<ProjectAction> {
-    let p = palette(ui.ctx());
     let mut action = None;
     let rect = ui.available_rect_before_wrap();
     ui.scope_builder(
@@ -46,16 +44,11 @@ pub(crate) fn welcome(ui: &mut egui::Ui) -> Option<ProjectAction> {
         |ui| {
             // About the height of the three rows below, so they sit centred.
             ui.add_space(((rect.height() - 110.0) / 2.0).max(0.0));
-            ui.label(
-                RichText::new("Welcome to apic")
-                    .color(p.on_surface)
-                    .size(22.0),
-            );
+            Text::new("Welcome to apic").size(Size::Display).show(ui);
             ui.add_space(SPACE_SMALL);
-            ui.label(
-                RichText::new("Open a project folder, or create a new one.")
-                    .color(p.on_surface_variant),
-            );
+            Text::new("Open a project folder, or create a new one.")
+                .muted()
+                .show(ui);
             ui.add_space(SPACE_MEDIUM);
             // A horizontal row starts at its left edge, so it goes in a child
             // sized to the width the row took last frame, which the centred
@@ -67,20 +60,14 @@ pub(crate) fn welcome(ui: &mut egui::Ui) -> Option<ProjectAction> {
                 egui::vec2(row_width, 28.0),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
-                    let new = egui::Button::new(RichText::new("New project").color(p.on_primary))
-                        .fill(p.primary)
-                        .corner_radius(4)
-                        .min_size(egui::vec2(0.0, 28.0));
-                    if ui.add(new).clicked() {
+                    if button(ui, "New project", ButtonKind::Primary).clicked() {
                         action = Some(ProjectAction::New);
                     }
-                    let open = egui::Button::new(RichText::new("Open project").color(p.on_surface))
-                        .min_size(egui::vec2(0.0, 28.0));
-                    if ui.add(open).clicked() {
+                    if button(ui, "Open project", ButtonKind::Standard).clicked() {
                         action = Some(ProjectAction::Open);
                     }
                     let import = format!("Import {}", egui_phosphor::regular::CARET_DOWN);
-                    ui.menu_button(RichText::new(import).color(p.on_surface), |ui| {
+                    ui.menu_button(Text::new(import).rich(ui.ctx()), |ui| {
                         if let Some(source) = format_items(ui) {
                             action = Some(ProjectAction::Import(source));
                         }
@@ -105,14 +92,13 @@ pub(crate) fn welcome(ui: &mut egui::Ui) -> Option<ProjectAction> {
 /// [`ProjectAction::DismissRefusal`] when OK is clicked or the popup is
 /// closed.
 pub(crate) fn refusal_dialog(ctx: &egui::Context, state: &ProjectState) -> Option<ProjectAction> {
-    let p = palette(ctx);
     let refusal = state.refusal.as_ref()?;
     let outcome = dialog(
         ctx,
         "open_refused_modal",
         "Cannot open folder",
         |ui| {
-            ui.label(RichText::new(refusal).color(p.on_surface));
+            Text::new(refusal).show(ui);
         },
         &[DialogButton::new("OK", ButtonKind::Primary)],
     );

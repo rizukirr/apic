@@ -12,7 +12,6 @@ pub(crate) mod test_support;
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
-use egui::RichText;
 
 use crate::app::actions::{Action, ShellAction};
 use crate::app::state::{CentralView, ShellState, SidebarView};
@@ -29,7 +28,7 @@ use crate::features::project::data::{NewKind, project_root_of};
 use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
 use crate::features::project::ui::view::{format_items, welcome};
 use crate::platform::settings::Settings;
-use crate::ui::base::{Text, icon_button, menu_item};
+use crate::ui::base::{Size, Text, icon_button, menu_item, toggle_button};
 use crate::ui::components::{section_header, submenu};
 use crate::ui::theme::*;
 
@@ -254,7 +253,6 @@ impl App {
 
     /// Top header: sidebar toggle, the project dropdown (new, open, import), the branch dropdown, the environment dropdown and the theme toggle. Returns an action when one of those is chosen.
     fn top_bar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
-        let p = palette(ui.ctx());
         let mut action = None;
         let project = self
             .project
@@ -279,7 +277,7 @@ impl App {
                     })
                     .ui(ui, |ui| {
                         let title = format!("{project} {}", egui_phosphor::regular::CARET_DOWN);
-                        ui.menu_button(RichText::new(title).color(p.on_surface).strong(), |ui| {
+                        ui.menu_button(Text::new(title).strong().rich(ui.ctx()), |ui| {
                             if menu_item(ui, "New project") {
                                 action = Some(Action::Project(ProjectAction::New));
                             }
@@ -302,10 +300,8 @@ impl App {
                                 action = Some(Action::Git(a));
                             }
                             let clock =
-                                RichText::new(egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE)
-                                    .color(p.on_surface_variant);
-                            if ui
-                                .add(egui::Button::selectable(self.git.log.open, clock))
+                                Text::new(egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE).muted();
+                            if toggle_button(ui, self.git.log.open, clock)
                                 .on_hover_text("Git log")
                                 .clicked()
                             {
@@ -333,16 +329,14 @@ impl App {
 
     /// Bottom bar: the loaded contract's location (home-relative), nothing else.
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
-        let p = palette(ui.ctx());
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(&self.shell.status).color(p.on_surface_variant));
+                Text::new(&self.shell.status).muted().show(ui);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(concat!("apic v", env!("CARGO_PKG_VERSION")))
-                            .color(p.on_surface_variant)
-                            .size(11.0),
-                    );
+                    Text::new(concat!("apic v", env!("CARGO_PKG_VERSION")))
+                        .muted()
+                        .size(Size::Caption)
+                        .show(ui);
                 });
             });
         });
@@ -355,7 +349,6 @@ impl App {
         if !self.shell.sidebar_open {
             return None;
         }
-        let p = palette(ui.ctx());
         let mut action = None;
         egui::Panel::left("sidebar")
             .resizable(true)
@@ -387,43 +380,35 @@ impl App {
                 egui::Panel::top("sidebar_header").show(ui, |ui| {
                     ui.add_space(SPACE_SMALL);
                     ui.horizontal(|ui| {
-                        let (changes_label, changes_color) =
-                            view::tab_label("Changes", &self.git.status, p);
+                        let (changes_label, changes_tone) =
+                            view::tab_label("Changes", &self.git.status);
                         let changes_title =
                             format!("{} {changes_label}", egui_phosphor::regular::GIT_DIFF);
                         let current = match self.shell.sidebar_view {
-                            SidebarView::Contracts => RichText::new(format!(
+                            SidebarView::Contracts => Text::new(format!(
                                 "{} Contracts {}",
                                 egui_phosphor::regular::FOLDER_SIMPLE,
                                 egui_phosphor::regular::CARET_DOWN
-                            ))
-                            .color(p.on_surface),
-                            SidebarView::Changes => RichText::new(format!(
+                            )),
+                            SidebarView::Changes => Text::new(format!(
                                 "{changes_title} {}",
                                 egui_phosphor::regular::CARET_DOWN
                             ))
-                            .color(changes_color),
+                            .tone(changes_tone),
                         };
-                        ui.menu_button(current, |ui| {
+                        ui.menu_button(current.rich(ui.ctx()), |ui| {
                             let contracts =
                                 format!("{} Contracts", egui_phosphor::regular::FOLDER_SIMPLE);
-                            if ui
-                                .button(RichText::new(contracts).color(p.on_surface))
-                                .clicked()
-                            {
+                            if menu_item(ui, Text::new(contracts).rich(ui.ctx())) {
                                 action = Some(Action::Shell(ShellAction::SwitchView(
                                     SidebarView::Contracts,
                                 )));
-                                ui.close();
                             }
-                            if ui
-                                .button(RichText::new(changes_title).color(changes_color))
-                                .clicked()
-                            {
+                            let changes = Text::new(changes_title).tone(changes_tone);
+                            if menu_item(ui, changes.rich(ui.ctx())) {
                                 action = Some(Action::Shell(ShellAction::SwitchView(
                                     SidebarView::Changes,
                                 )));
-                                ui.close();
                             }
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
