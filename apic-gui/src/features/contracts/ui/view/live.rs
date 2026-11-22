@@ -8,9 +8,8 @@ use egui_extras::Column;
 use super::editor::status_color;
 use crate::features::contracts::ui::send::{LiveBody, LiveReply, SendState};
 use crate::features::contracts::ui::state::{ContractsAction, RespTab};
-use crate::ui::components::{
-    empty_state, fill_column, grid_cell, header_label, json_editor, metadata_table, table_frame,
-};
+use crate::ui::base::{header_label, json_editor};
+use crate::ui::components::{empty_state, fill_column, grid_cell, metadata_table, table_frame};
 use crate::ui::theme::*;
 
 /// The Examples | Live switch at the left of the response pane's header.

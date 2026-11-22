@@ -2,10 +2,9 @@
 //! body, buttons right-aligned.
 
 use eframe::egui;
-use egui::RichText;
 
-use crate::ui::components::icon_button;
-use crate::ui::theme::{Palette, palette};
+use crate::ui::base::{ButtonKind, Size, Text, button, icon_button};
+use crate::ui::theme::palette;
 
 /// Every dialog is this wide, so popups read as one family.
 const DIALOG_WIDTH: f32 = 420.0;
@@ -16,24 +15,11 @@ const HEADER_PAD_Y: i8 = 10;
 /// The header row's height, fitting the title and the close button.
 const HEADER_ROW_H: f32 = 24.0;
 
-/// How a dialog button looks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ButtonKind {
-    /// Frameless text in `on_surface_variant`.
-    Secondary,
-    /// Frameless text in `error`.
-    SecondaryDanger,
-    /// Filled `primary` with `on_primary` text.
-    Primary,
-    /// Filled `error` with `surface` text.
-    Danger,
-}
-
 /// One button in a dialog's footer.
 pub(crate) struct DialogButton<'a> {
     /// The button's text.
     pub(crate) label: &'a str,
-    /// How the button looks.
+    /// How the button looks, one of the base [`ButtonKind`]s.
     pub(crate) kind: ButtonKind,
     /// Whether the button can be clicked.
     pub(crate) enabled: bool,
@@ -80,7 +66,6 @@ pub(crate) fn dialog(
     body: impl FnOnce(&mut egui::Ui),
     buttons: &[DialogButton],
 ) -> DialogOutcome {
-    let p = palette(ctx);
     let frame = egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(0);
     let mut outcome = DialogOutcome::default();
     let modal = egui::Modal::new(egui::Id::new(id))
@@ -101,7 +86,7 @@ pub(crate) fn dialog(
                     // full available height and leave a gap under the title.
                     egui::containers::Sides::new().height(HEADER_ROW_H).show(
                         ui,
-                        |ui| ui.label(RichText::new(title).color(p.on_surface).size(15.0)),
+                        |ui| Text::new(title).size(Size::Title).show(ui),
                         |ui| {
                             if icon_button(ui, egui_phosphor::regular::X, "Close").clicked() {
                                 outcome.closed = true;
@@ -121,8 +106,13 @@ pub(crate) fn dialog(
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // right_to_left places the first widget rightmost, so
                         // walk backwards to keep the given reading order.
-                        for (index, button) in buttons.iter().enumerate().rev() {
-                            if footer_button(ui, button, p) {
+                        for (index, spec) in buttons.iter().enumerate().rev() {
+                            let clicked = ui
+                                .add_enabled_ui(spec.enabled, |ui| {
+                                    button(ui, spec.label, spec.kind).clicked()
+                                })
+                                .inner;
+                            if clicked {
                                 outcome.clicked = Some(index);
                             }
                         }
@@ -133,23 +123,6 @@ pub(crate) fn dialog(
         outcome.closed = true;
     }
     outcome
-}
-
-/// Draws one footer button in its kind's look. Returns `true` on click.
-fn footer_button(ui: &mut egui::Ui, button: &DialogButton, p: &Palette) -> bool {
-    let (text, fill) = match button.kind {
-        ButtonKind::Secondary => (p.on_surface_variant, None),
-        ButtonKind::SecondaryDanger => (p.error, None),
-        ButtonKind::Primary => (p.on_primary, Some(p.primary)),
-        ButtonKind::Danger => (p.surface, Some(p.error)),
-    };
-    let mut widget =
-        egui::Button::new(RichText::new(button.label).color(text)).min_size(egui::vec2(0.0, 28.0));
-    widget = match fill {
-        Some(fill) => widget.fill(fill).corner_radius(4),
-        None => widget.frame_when_inactive(false),
-    };
-    ui.add_enabled(button.enabled, widget).clicked()
 }
 
 /// Draws `add` inside a full-width rounded box on `surface_container`, for

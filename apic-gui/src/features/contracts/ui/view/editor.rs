@@ -12,11 +12,11 @@ use apic_core::edit::{BodyLoc, EditAction, EditBody, EditModel, EditPart, Field,
 use apic_core::json::method_str;
 
 use crate::features::contracts::ui::state::ContractsAction;
-use crate::ui::components::{
-    delete_button, fill_column, grid_cell, header_label, json_editor, metadata_table,
-    required_chip, section_label, table_frame, tcell_edit, tcell_edit_vars, text_button, url_bar,
-    url_layout_job,
+use crate::ui::base::{
+    Tone, delete_button, header_label, json_editor, required_chip, section_label, tcell_edit,
+    tcell_edit_vars, text_button, url_layout_job,
 };
+use crate::ui::components::{fill_column, grid_cell, metadata_table, table_frame, url_bar};
 use crate::ui::focus::{request_new_row_focus, take_pending_focus};
 use crate::ui::theme::*;
 use egui_extras::Column;
@@ -504,12 +504,12 @@ pub(super) fn method_url_row(
         }
         ui.add_space(SPACE_MEDIUM);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let (label, color) = if pending {
-                ("Cancel", p.error)
+            let (label, tone) = if pending {
+                ("Cancel", Tone::Error)
             } else {
-                ("Send", p.primary)
+                ("Send", Tone::Primary)
             };
-            if text_button(ui, label, color) {
+            if text_button(ui, label, tone) {
                 action = Some(if pending {
                     ContractsAction::CancelSend
                 } else {
@@ -856,7 +856,7 @@ fn part_kind_chip(ui: &mut egui::Ui, is_file: bool, editing: bool) -> bool {
     };
     let text = RichText::new(format!(" {label} "))
         .color(fg)
-        .size(SIZE_SECONDARY)
+        .size(SIZE_CAPTION)
         .background_color(p.secondary_container);
     if editing {
         ui.add(egui::Button::new(text).frame(false)).clicked()
@@ -1024,7 +1024,6 @@ pub(super) fn request_body(
     editing: bool,
     defined: &dyn Fn(&str) -> bool,
 ) -> Option<ContractsAction> {
-    let p = palette(ui.ctx());
     ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
     let is_multipart = !model.multipart.is_empty();
     let mut action = None;
@@ -1049,7 +1048,7 @@ pub(super) fn request_body(
             ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
             action = body_kind_row(ui, BodyLoc::Request, false);
             ui.add_space(SPACE_MEDIUM);
-            if text_button(ui, "Pretty", p.warning) {
+            if text_button(ui, "Pretty", Tone::Warning) {
                 req.example = apic_core::json::pretty_json(&req.example);
             }
         });
@@ -1279,7 +1278,6 @@ pub(super) fn response_body(
     idx: usize,
     editing: bool,
 ) -> Option<ContractsAction> {
-    let p = palette(ui.ctx());
     ui.spacing_mut().item_spacing.y = SPACE_SMALL;
     let loc = BodyLoc::Response(idx);
     let is_multipart = !model.responses[idx].multipart.is_empty();
@@ -1303,7 +1301,7 @@ pub(super) fn response_body(
             ui.spacing_mut().item_spacing.x = SPACE_MEDIUM;
             action = body_kind_row(ui, loc, false);
             ui.add_space(SPACE_MEDIUM);
-            if text_button(ui, "Pretty", p.warning) {
+            if text_button(ui, "Pretty", Tone::Warning) {
                 r.example = apic_core::json::pretty_json(&r.example);
             }
         });

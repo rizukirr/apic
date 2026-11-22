@@ -9,7 +9,7 @@ use super::diff::inline_diff_view;
 use crate::features::git::domain::conflict::{self, Choice, Segment};
 use crate::features::git::domain::diff::parse_unified;
 use crate::features::git::ui::state::{GitAction, GitState, ResolveState};
-use crate::ui::components::text_button;
+use crate::ui::base::{Tone, text_button};
 use crate::ui::theme::*;
 
 /// Ensures `state.resolve` holds the parsed conflict for `path`, parsing
@@ -96,17 +96,17 @@ fn resolve_view(
         // take-all, which only fills in a choice, rather than on Resolve.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(all_chosen, |ui| {
-                if text_button(ui, &resolve_label(&resolve.choices), p.primary) {
+                if text_button(ui, &resolve_label(&resolve.choices), Tone::Primary) {
                     action = Some(GitAction::ResolveConflict {
                         path: path.to_string(),
                         text: rendered.clone(),
                     });
                 }
             });
-            if text_button(ui, "Take all theirs", p.primary) {
+            if text_button(ui, "Take all theirs", Tone::Primary) {
                 resolve.choices.fill(Some(Choice::Theirs));
             }
-            if text_button(ui, "Take all ours", p.primary) {
+            if text_button(ui, "Take all ours", Tone::Primary) {
                 resolve.choices.fill(Some(Choice::Ours));
             }
 

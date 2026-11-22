@@ -8,7 +8,8 @@ use super::editor::method_color;
 use crate::features::contracts::domain::entry::DeleteTarget;
 use crate::features::contracts::domain::tree::{TreeNode, build_tree};
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState};
-use crate::ui::components::{bordered_input, icon_button, row_menu_button};
+use crate::ui::base::{bordered_input, icon_button};
+use crate::ui::components::row_menu_button;
 use crate::ui::theme::*;
 
 /// The template list shown inside the Templates section: one selectable row

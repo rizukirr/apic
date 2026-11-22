@@ -90,7 +90,7 @@ pub(crate) fn table_frame<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::components::{chip::required_chip, input::tcell_edit, text::header_label};
+    use crate::ui::base::{header_label, required_chip, tcell_edit};
     use crate::ui::theme::{TABLE_HEADER_H, TABLE_ROW_H};
 
     #[test]

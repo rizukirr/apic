@@ -12,7 +12,8 @@ use super::editor::{
 use super::live::{live_body, live_summary, live_switch};
 use crate::features::contracts::ui::send::SendState;
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState, RespTab};
-use crate::ui::components::{Tab, empty_state, icon_button, tab_strip, text_button};
+use crate::ui::base::{Tone, icon_button, text_button};
+use crate::ui::components::{Tab, empty_state, tab_strip};
 use crate::ui::theme::*;
 
 /// The central body for the loaded contract: the viewer/editor, the repair
@@ -67,7 +68,7 @@ pub(crate) fn central_body(
             ui.label(RichText::new(&rep.error).color(p.warning).size(12.0));
         }
         ui.add_space(SPACE_SMALL);
-        let pretty = text_button(ui, "pretty", p.warning);
+        let pretty = text_button(ui, "pretty", Tone::Warning);
         if pretty {
             rep.buffer = apic_core::json::pretty_json(&rep.buffer);
         }

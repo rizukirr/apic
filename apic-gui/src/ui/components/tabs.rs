@@ -1,8 +1,8 @@
 //! A row of underline tabs with optional counts, shared by every tabbed pane.
 
 use eframe::egui;
-use egui::RichText;
 
+use crate::ui::base::{Size, Text, Tone, plain_button};
 use crate::ui::theme::{Palette, palette};
 
 /// One tab in a [`tab_strip`].
@@ -13,8 +13,8 @@ pub(crate) struct Tab<'a> {
     /// A count drawn after the label, hidden when `None` or zero.
     pub(crate) count: Option<usize>,
 
-    /// A colour that overrides the selected and unselected text colours.
-    pub(crate) color: Option<egui::Color32>,
+    /// A tone that overrides the selected and unselected tones.
+    pub(crate) tone: Option<Tone>,
 }
 
 impl<'a> Tab<'a> {
@@ -23,7 +23,7 @@ impl<'a> Tab<'a> {
         Tab {
             label,
             count: None,
-            color: None,
+            tone: None,
         }
     }
 
@@ -35,8 +35,8 @@ impl<'a> Tab<'a> {
 }
 
 /// Draws `tabs` in one horizontally scrolling row. The selected tab (index
-/// `current`) draws in `on_surface` with a 2px `primary` underline, the rest
-/// in `on_surface_variant`, unless a tab sets `color`. Clicking a tab sets
+/// `current`) draws in the default tone with a 2px `primary` underline, the
+/// rest muted, unless a tab sets `tone`. Clicking a tab sets
 /// `current`.
 ///
 /// # Returns
@@ -54,7 +54,7 @@ pub(crate) fn tab_strip(ui: &mut egui::Ui, current: &mut usize, tabs: &[Tab]) ->
                 for (i, tab) in tabs.iter().enumerate() {
                     let selected = i == *current;
                     let text = tab_text(ui.style(), tab, selected, p);
-                    let response = ui.add(egui::Button::new(text).frame(false));
+                    let response = plain_button(ui, text);
                     if selected {
                         let r = response.rect;
                         ui.painter().line_segment(
@@ -79,29 +79,27 @@ pub(crate) fn tab_strip(ui: &mut egui::Ui, current: &mut usize, tabs: &[Tab]) ->
 /// coloured for the selected or unselected state. The count is drawn smaller
 /// and raised to the top of the line, after a thin space.
 fn tab_text(style: &egui::Style, tab: &Tab, selected: bool, p: &Palette) -> egui::text::LayoutJob {
-    let color = tab.color.unwrap_or(if selected {
-        p.on_surface
-    } else {
-        p.on_surface_variant
-    });
+    let tone = tab
+        .tone
+        .unwrap_or(if selected { Tone::Default } else { Tone::Muted });
     let mut text = egui::text::LayoutJob::default();
-    RichText::new(tab.label).color(color).append_to(
+    Text::new(tab.label).tone(tone).rich_in(p).append_to(
         &mut text,
         style,
         egui::FontSelection::Default,
         egui::Align::Center,
     );
     if let Some(n) = tab.count.filter(|n| *n > 0) {
-        let label_size = egui::TextStyle::Body.resolve(style).size;
-        RichText::new("\u{2009}").append_to(
+        Text::new("\u{2009}").rich_in(p).append_to(
             &mut text,
             style,
             egui::FontSelection::Default,
             egui::Align::Center,
         );
-        RichText::new(n.to_string())
-            .size(label_size * 0.75)
-            .color(p.on_surface_variant)
+        Text::new(n.to_string())
+            .size(Size::Tiny)
+            .muted()
+            .rich_in(p)
             .append_to(
                 &mut text,
                 style,
@@ -209,7 +207,7 @@ mod tests {
             run_in_theme(preference, |ui| {
                 let mut current = 1;
                 let mut colored = Tab::new("Errors").count(2);
-                colored.color = Some(egui::Color32::RED);
+                colored.tone = Some(Tone::Error);
                 tab_strip(ui, &mut current, &[Tab::new("Body"), colored]);
                 url_bar(ui, |ui| ui.label("GET https://example.com"));
                 empty_state(ui, "Nothing here", "Pick something.");
