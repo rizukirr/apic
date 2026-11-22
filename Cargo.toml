@@ -16,7 +16,6 @@ description = "A lightweight, Git-friendly CLI tool for designing and collaborat
 license = "GPL-3.0-only"
 readme = "README.md"
 repository = "https://github.com/rizukirr/apic"
-homepage = "https://github.com/rizukirr/apic"
 keywords = ["api", "contract", "cli", "rest", "json"]
 categories = ["command-line-utilities", "development-tools"]
 exclude = ["/.github", "/.apic", "/example"]
