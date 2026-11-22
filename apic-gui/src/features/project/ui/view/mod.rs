@@ -6,7 +6,7 @@ use egui::RichText;
 
 use crate::features::project::data::ImportSource;
 use crate::features::project::ui::state::{ProjectAction, ProjectState};
-use crate::ui::components::{ButtonKind, DialogButton, dialog};
+use crate::ui::components::{ButtonKind, DialogButton, dialog, menu_item};
 use crate::ui::theme::*;
 
 /// The welcome screen for when no project is open: a title, a hint and the
@@ -15,6 +15,25 @@ use crate::ui::theme::*;
 /// # Returns
 ///
 /// The project action a button or the Import menu asks for this frame.
+/// The file formats a project imports from and exports to, as menu items.
+/// Closes the menu on a click.
+///
+/// # Returns
+///
+/// The format clicked, if any.
+pub(crate) fn format_items(ui: &mut egui::Ui) -> Option<ImportSource> {
+    let mut picked = None;
+    for (label, source) in [
+        ("Postman collection", ImportSource::Postman),
+        ("OpenAPI spec", ImportSource::OpenApi),
+    ] {
+        if menu_item(ui, label) {
+            picked = Some(source);
+        }
+    }
+    picked
+}
+
 pub(crate) fn welcome(ui: &mut egui::Ui) -> Option<ProjectAction> {
     let p = palette(ui.ctx());
     let mut action = None;
@@ -61,13 +80,8 @@ pub(crate) fn welcome(ui: &mut egui::Ui) -> Option<ProjectAction> {
                     }
                     let import = format!("Import {}", egui_phosphor::regular::CARET_DOWN);
                     ui.menu_button(RichText::new(import).color(p.on_surface), |ui| {
-                        if ui.button("Postman collection").clicked() {
-                            action = Some(ProjectAction::Import(ImportSource::Postman));
-                            ui.close();
-                        }
-                        if ui.button("OpenAPI spec").clicked() {
-                            action = Some(ProjectAction::Import(ImportSource::OpenApi));
-                            ui.close();
+                        if let Some(source) = format_items(ui) {
+                            action = Some(ProjectAction::Import(source));
                         }
                     });
                     let used = ui.min_rect().width();

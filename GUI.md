@@ -8,16 +8,17 @@ apic-gui
 
 ## Projects
 
-- **Open, New, Import.** With no project open, the welcome screen offers New project, Open project and an Import menu. The same actions live in the project dropdown in the app bar.
+- **Open, New, Import, Export.** With no project open, the welcome screen offers New project, Open project and an Import menu. The project dropdown in the app bar holds New project, Open project, and Import and Export submenus, each with Postman collection and OpenAPI spec.
   - **Open** only accepts a folder that already holds `.apic/config.toml`, and says so in a popup otherwise.
   - **New** sets up `.apic` in a folder and opens it.
   - **Import** reads a Postman collection or an OpenAPI spec (3.0, 3.1 or Swagger 2.0, JSON or YAML) into the open project. With no project open, it asks for a folder, sets it up as a new project and imports into it.
+  - **Export** writes every contract in the open project to a file you choose: a Postman collection, or an OpenAPI 3.0 spec as YAML or JSON by the file's extension. The environment selected for sending fills variable values from its shared file, and its local file is never read. The save dialog opens in the folder above the project, since a `.json` export inside the contracts folder would be read as a contract. The status line shows how many contracts were exported and how many warnings there were. `apic export` on the command line prints the warnings themselves.
 - **Remembered.** The last project reopens on the next launch, and so does the last contract or template you had open in each project, as long as that file is still a valid contract inside that project.
 - **Theme.** The sun and moon icon on the right of the app bar switches between light and dark, and the choice is saved.
 
 ## Contracts
 
-- **Browse.** The sidebar lists every contract as a folder tree with its method badge. The search icon filters the tree, and `+` starts a new request. With no project open, `+` and the Templates section's `+` first ask for a folder, set it up as a project unless it already is one, open it, and then show the dialog. Hover a row for its `⋮` menu, or right-click it: a folder offers New request here and Delete folder, and a contract offers Delete. Templates live in the collapsible Templates section at the bottom.
+- **Browse.** The sidebar lists every contract as a folder tree with its method badge. The search icon filters the tree, and `+` starts a new request. With no project open, `+` and the Templates section's `+` first ask for a folder, set it up as a project unless it already is one, open it, and then show the dialog. Hover a row for its `⋮` menu, or right-click it: a folder offers New request here and Delete folder, and a contract offers Delete. Templates live in the collapsible Templates section at the top, under the Contracts and Changes switcher, and its list scrolls once it holds more than about six templates.
 - **Read and edit.** Selecting a contract shows its name and description, the method and URL, and the Headers, Query and Request sections, with the responses on the right. The pencil enters edit mode, and the disk saves. A dot next to the disk means unsaved edits.
   - Headers, query params and response headers are grid tables. While editing, the trash icon removes a row and typing into the empty last row adds one.
   - Variables in the URL and in values, `$name`, `${name}`, `{{name}}` and `{name}`, are highlighted in the variable colour. With an environment selected, a name it does not define is drawn in the warning colour instead, unless the path-param popup has a value for it.

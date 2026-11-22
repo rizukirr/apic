@@ -35,6 +35,10 @@ pub(crate) struct ProjectState {
     /// The file picked for an import into a new project and its format,
     /// held until its folder is picked.
     pub(crate) import_src: Option<(PathBuf, ImportSource)>,
+
+    /// The environment an export fills variable values from, held while its
+    /// save dialog is open.
+    pub(crate) export_env: Option<String>,
 }
 
 /// A one-shot action from the project menu.
@@ -47,6 +51,10 @@ pub(crate) enum ProjectAction {
     /// `[ Import ]` → Postman collection or OpenAPI spec: launch the file
     /// picker.
     Import(ImportSource),
+    /// `[ Export ]` → Postman collection or OpenAPI spec: launch the save
+    /// dialog. The app shell starts it through
+    /// [`ProjectState::start_export`], which takes the selected environment.
+    Export(ImportSource),
     /// "+ New request" or "+ New template" with no project open: launch the
     /// folder picker for the project to create it in.
     PickForNew(NewKind),
@@ -88,6 +96,7 @@ impl ProjectState {
             ProjectAction::Open => self.start_pick(PickKind::OpenProject, ctx),
             ProjectAction::New => self.start_pick(PickKind::NewProject, ctx),
             ProjectAction::Import(source) => self.start_pick(PickKind::Import(source), ctx),
+            ProjectAction::Export(source) => self.start_export(source, None, ctx),
             ProjectAction::PickForNew(kind) => self.start_pick(PickKind::NewTarget(kind), ctx),
             ProjectAction::DismissRefusal => {
                 self.refusal = None;
@@ -108,6 +117,67 @@ impl ProjectState {
         vec![ProjectEvent::Status("Waiting for the file dialog…".into())]
     }
 
+    /// Starts the save dialog for an export of the open project, unless a
+    /// dialog is already pending.
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - what to export
+    /// * `env` - the selected environment, whose shared file fills variable
+    ///   values
+    /// * `ctx` - repainted once the dialog returns
+    pub(crate) fn start_export(
+        &mut self,
+        source: ImportSource,
+        env: Option<String>,
+        ctx: &egui::Context,
+    ) -> Vec<ProjectEvent> {
+        if self.pending.is_some() {
+            return Vec::new();
+        }
+        let Some(project_root) = self.project_root.clone() else {
+            return vec![ProjectEvent::Status("no project to export".into())];
+        };
+        let name = project_root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "apic".to_string());
+        let file_name = match source {
+            ImportSource::Postman => format!("{name}.postman.json"),
+            ImportSource::OpenApi => format!("{name}.openapi.yaml"),
+        };
+        // Suggest the folder above the project, since a `.json` export
+        // inside the contracts folder would be read as a contract.
+        let dir = project_root.parent().map(PathBuf::from);
+        self.export_env = env;
+        let ctx = ctx.clone();
+        let rx = data::pick_save(source, file_name, dir, move || ctx.request_repaint());
+        self.pending = Some((PickKind::Export(source), rx));
+        vec![ProjectEvent::Status("Waiting for the file dialog…".into())]
+    }
+
+    /// Writes the export chosen in the save dialog.
+    pub(crate) fn finish_export(
+        &mut self,
+        out: PathBuf,
+        source: ImportSource,
+    ) -> Vec<ProjectEvent> {
+        let env = self.export_env.take();
+        let (Some(project_root), Some(root)) = (self.project_root.clone(), self.root.clone())
+        else {
+            return vec![ProjectEvent::Status("no project to export".into())];
+        };
+        let shown = apic_core::file::home_relative(&apic_core::file::to_slash(&out));
+        let status = match data::export(source, &project_root, &root, &out, env.as_deref()) {
+            Ok((n, 0)) => format!("exported {n} contract(s) to {shown}"),
+            Ok((n, w)) => format!("exported {n} contract(s) to {shown}, {w} warning(s)"),
+            Err(e) => format!("export error: {e}"),
+        };
+        // A `.json` export inside the contracts folder shows up as a
+        // contract, so the tree reloads.
+        vec![ProjectEvent::ContractsChanged, ProjectEvent::Status(status)]
+    }
+
     /// Polls the in-flight dialog and runs its action once a path is chosen (or
     /// clears it on cancel). Called every frame from `App::ui`.
     pub(crate) fn poll(&mut self, ctx: &egui::Context) -> Vec<ProjectEvent> {
@@ -126,6 +196,7 @@ impl ProjectState {
                         return self.start_pick(PickKind::ImportTarget, ctx);
                     }
                     (PickKind::Import(source), Some(p)) => self.finish_import(p, source),
+                    (PickKind::Export(source), Some(p)) => self.finish_export(p, source),
                     (PickKind::ImportTarget, Some(folder)) => match self.import_src.take() {
                         Some((src, source)) => self.finish_import_into_new(folder, src, source),
                         None => Vec::new(),
@@ -160,6 +231,7 @@ impl ProjectState {
     /// No events, so the caller shows the idle status.
     pub(crate) fn cancel_pick(&mut self) -> Vec<ProjectEvent> {
         self.import_src = None;
+        self.export_env = None;
         Vec::new()
     }
 
@@ -428,6 +500,63 @@ mod tests {
         );
         let root = state.root.clone().expect("contracts dir located");
         assert!(root.join("users").join("list_users.json").is_file());
+    }
+
+    /// A project with one imported contract, using `$base` and `$token`, and a
+    /// `dev` env whose local file holds a secret.
+    fn exportable_project() -> (ProjectState, PathBuf) {
+        let src = tempdir().join("spec.yaml");
+        std::fs::write(
+            &src,
+            "openapi: 3.0.0\nservers:\n  - url: '{base}'\n    variables:\n      base:\n        default: ''\npaths:\n  /users:\n    get:\n      tags: [users]\n      operationId: listUsers\n      responses:\n        '200':\n          description: ok\n",
+        )
+        .unwrap();
+        let folder = tempdir();
+        let mut state = ProjectState::default();
+        state.finish_import_into_new(folder.clone(), src, ImportSource::OpenApi);
+        let env = folder.join(".apic").join("env");
+        std::fs::create_dir_all(&env).unwrap();
+        std::fs::write(env.join("dev.toml"), "base = \"https://api.example.com\"\n").unwrap();
+        std::fs::write(
+            env.join("dev.local.toml"),
+            "base = \"https://s3cret.example.com\"\n",
+        )
+        .unwrap();
+        (state, folder)
+    }
+
+    #[test]
+    fn export_writes_the_project_with_shared_env_values_only() {
+        let (mut state, _folder) = exportable_project();
+        let out = tempdir().join("api.openapi.yaml");
+        state.export_env = Some("dev".into());
+
+        let events = state.finish_export(out.clone(), ImportSource::OpenApi);
+
+        assert!(
+            matches!(events.get(1), Some(ProjectEvent::Status(s)) if s.starts_with("exported 1 contract")),
+            "{events:?}"
+        );
+        let text = std::fs::read_to_string(&out).unwrap();
+        assert!(text.starts_with("openapi: 3.0.3"), "{text}");
+        assert!(text.contains("https://api.example.com"), "{text}");
+        assert!(
+            !text.contains("s3cret"),
+            "local env values must never be exported"
+        );
+        assert!(state.export_env.is_none(), "the held env is dropped");
+    }
+
+    #[test]
+    fn postman_export_writes_a_collection() {
+        let (mut state, _folder) = exportable_project();
+        let out = tempdir().join("api.postman.json");
+
+        state.finish_export(out.clone(), ImportSource::Postman);
+
+        let text = std::fs::read_to_string(&out).unwrap();
+        assert!(text.contains("collection/v2.1.0"), "{text}");
+        assert!(text.contains("\"name\": \"users\""), "{text}");
     }
 
     #[test]

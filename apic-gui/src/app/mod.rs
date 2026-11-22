@@ -25,11 +25,11 @@ use crate::features::contracts::ui::view::{
 };
 use crate::features::git::ui::state::{BranchOpKind, GitAction, GitEvent, GitState, LogState};
 use crate::features::git::ui::view;
-use crate::features::project::data::{ImportSource, NewKind, project_root_of};
+use crate::features::project::data::{NewKind, project_root_of};
 use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
-use crate::features::project::ui::view::welcome;
+use crate::features::project::ui::view::{format_items, welcome};
 use crate::platform::settings::Settings;
-use crate::ui::components::{icon_button, section_header};
+use crate::ui::components::{icon_button, menu_item, section_header, submenu};
 use crate::ui::theme::*;
 
 /// What the app bar's theme toggle switches to from the theme now showing,
@@ -63,6 +63,10 @@ pub(crate) fn fonts_with_icons() -> egui::FontDefinitions {
 /// `small_button` line up on one vertical centre instead of whatever baseline
 /// their differing natural heights would give.
 const TOOLBAR_ROW_H: f32 = 26.0;
+
+/// The tallest the open Templates list grows before it scrolls, about six
+/// rows.
+const TEMPLATES_MAX_H: f32 = 160.0;
 
 /// Whole-app state.
 ///
@@ -258,6 +262,8 @@ impl App {
             .and_then(|root| root.file_name())
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "No project".to_string());
+        // Export needs a project with a contracts folder.
+        let has_project = self.project.root.is_some();
         egui::Panel::top("nav").show(ui, |ui| {
             ui.add_space(SPACE_EXTRA_SMALL);
             ui.horizontal(|ui| {
@@ -273,26 +279,22 @@ impl App {
                     .ui(ui, |ui| {
                         let title = format!("{project} {}", egui_phosphor::regular::CARET_DOWN);
                         ui.menu_button(RichText::new(title).color(p.on_surface).strong(), |ui| {
-                            if ui.button("New project").clicked() {
+                            if menu_item(ui, "New project") {
                                 action = Some(Action::Project(ProjectAction::New));
-                                ui.close();
                             }
-                            if ui.button("Open project").clicked() {
+                            if menu_item(ui, "Open project") {
                                 action = Some(Action::Project(ProjectAction::Open));
-                                ui.close();
                             }
-                            if ui.button("Import Postman collection").clicked() {
-                                action = Some(Action::Project(ProjectAction::Import(
-                                    ImportSource::Postman,
-                                )));
-                                ui.close();
-                            }
-                            if ui.button("Import OpenAPI spec").clicked() {
-                                action = Some(Action::Project(ProjectAction::Import(
-                                    ImportSource::OpenApi,
-                                )));
-                                ui.close();
-                            }
+                            submenu(ui, true, "Import", |ui| {
+                                if let Some(source) = format_items(ui) {
+                                    action = Some(Action::Project(ProjectAction::Import(source)));
+                                }
+                            });
+                            submenu(ui, has_project, "Export", |ui| {
+                                if let Some(source) = format_items(ui) {
+                                    action = Some(Action::Project(ProjectAction::Export(source)));
+                                }
+                            });
                         });
                         if self.shell.repo_root.is_some() {
                             if let Some(a) = view::branch_menu(ui, &mut self.git) {
@@ -345,8 +347,9 @@ impl App {
         });
     }
 
-    /// The left sidebar: the Contracts or Changes list, with the Templates and
-    /// Commit sections docked at the bottom.
+    /// The left sidebar: the view switcher, the Templates section under it,
+    /// the Contracts or Changes list, and the Commit section docked at the
+    /// bottom.
     fn sidebar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         if !self.shell.sidebar_open {
             return None;
@@ -358,24 +361,6 @@ impl App {
             .default_size(240.0)
             .min_size(100.0)
             .show(ui, |ui| {
-                egui::Panel::bottom("templates_section").show(ui, |ui| {
-                    let label =
-                        RichText::new(format!("{} Templates", egui_phosphor::regular::DIAMOND))
-                            .color(p.on_surface);
-                    let toggled = section_header(ui, self.shell.templates_open, label, |ui| {
-                        if icon_button(ui, egui_phosphor::regular::PLUS, "New template").clicked() {
-                            action = Some(Action::Contracts(ContractsAction::OpenNewTemplate));
-                        }
-                    });
-                    if toggled {
-                        action = Some(Action::Shell(ShellAction::ToggleTemplatesSection));
-                    }
-                    if self.shell.templates_open
-                        && let Some(a) = templates_body(ui, &mut self.contracts)
-                    {
-                        action = Some(Action::Contracts(a));
-                    }
-                });
                 let commit_title =
                     RichText::new(format!("{} Commit", egui_phosphor::regular::GIT_COMMIT))
                         .color(p.on_surface);
@@ -463,6 +448,31 @@ impl App {
                         });
                     });
                     ui.add_space(SPACE_SMALL);
+                });
+                // Templates sit at the top, above the contract files. The
+                // list scrolls on its own so many templates never push the
+                // files off screen.
+                egui::Panel::top("templates_section").show(ui, |ui| {
+                    let label =
+                        RichText::new(format!("{} Templates", egui_phosphor::regular::DIAMOND))
+                            .color(p.on_surface);
+                    let toggled = section_header(ui, self.shell.templates_open, label, |ui| {
+                        if icon_button(ui, egui_phosphor::regular::PLUS, "New template").clicked() {
+                            action = Some(Action::Contracts(ContractsAction::OpenNewTemplate));
+                        }
+                    });
+                    if toggled {
+                        action = Some(Action::Shell(ShellAction::ToggleTemplatesSection));
+                    }
+                    if self.shell.templates_open {
+                        let body = egui::ScrollArea::vertical()
+                            .id_salt("templates_list")
+                            .max_height(TEMPLATES_MAX_H)
+                            .show(ui, |ui| templates_body(ui, &mut self.contracts));
+                        if let Some(a) = body.inner {
+                            action = Some(Action::Contracts(a));
+                        }
+                    }
                 });
                 match self.shell.sidebar_view {
                     SidebarView::Contracts => {
@@ -785,13 +795,22 @@ impl App {
                     ProjectAction::Open => Some(Guarded::OpenProject),
                     ProjectAction::New => Some(Guarded::NewProject),
                     ProjectAction::Import(_)
+                    | ProjectAction::Export(_)
                     | ProjectAction::DismissRefusal
                     | ProjectAction::PickForNew(_) => None,
                 };
                 if guarded.is_some_and(|g| self.contracts.guard(g)) {
                     return;
                 }
-                let events = self.project.handle(action, ctx);
+                let events = match action {
+                    // Export fills variables from the environment chosen
+                    // for sending, which the contracts feature owns.
+                    ProjectAction::Export(source) => {
+                        let env = self.contracts.send.env.clone();
+                        self.project.start_export(source, env, ctx)
+                    }
+                    action => self.project.handle(action, ctx),
+                };
                 self.apply_project_events(events, ctx);
             }
             Action::Shell(ShellAction::ToggleSidebar) => {

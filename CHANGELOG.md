@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `apic convert --openapi <file>` imports an OpenAPI 3.0, OpenAPI 3.1 or Swagger 2.0 spec, in JSON or YAML, as one contract per operation, in a folder per first tag. Bodies come from the spec's examples, or are built from the schemas with local `$ref`s followed. COMMAND.md lists what is mapped and what warns.
 - The GUI Import menu has an OpenAPI spec entry next to Postman collection.
+- The GUI project menu has an Export submenu next to Import, writing the open project as a Postman collection or an OpenAPI spec, with variable values from the selected environment's shared file. Import and Export are now nested submenus.
+
+### Changed
+
+- The GUI Templates section moved from the bottom of the sidebar to the top, under the Contracts and Changes switcher, and its list scrolls once it holds more than about six templates.
 - The agent skill now covers importing with `apic convert --openapi` and `--postman` and exporting with `apic export --postman` and `--openapi`, including when to pass `--force`, which variables an import leaves for the user to fill, and that exported OpenAPI schemas are inferred. Run `apic skill --install` again to update an installed copy.
 - `apic export --postman <file>` writes contracts as a Postman Collection v2.1: folders become Postman folders, contracts become requests, and documented responses become saved examples. `$name` variables become `{{name}}` and `{id}` path params become `:id`. `-f` exports one contract or a folder, and `--env` fills the collection variables from that environment's shared file only, so local secrets are never exported.
 - `apic export --openapi <file>` writes contracts as an OpenAPI 3.0 document, or 3.1 with `--openapi-version 3.1`, in YAML or JSON by the file's extension. Each body is exported as its example plus a schema inferred from it. Leading URL variables become server variables, `Authorization` headers become security schemes, and a status documented more than once becomes named examples. Exporting GitHub's REST spec after importing it and importing it again gives back all 1281 contracts unchanged.

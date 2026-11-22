@@ -1415,17 +1415,12 @@ fn convert_cmd(
     Ok(())
 }
 
-/// What `apic export` writes, and where.
-enum ExportFormat {
-    Postman(PathBuf),
-    OpenApi(PathBuf, apic_core::export::openapi::Version),
-}
-
 /// Handles `apic export`: collect the selected contracts, build the Postman
 /// collection or OpenAPI document and write it. A contract that does not parse is skipped with a
 /// warning, unless it was the single one asked for.
 fn export_cmd(
-    format: &ExportFormat,
+    format: &apic_core::export::Format,
+    out: &Path,
     find: Option<&str>,
     env: Option<&str>,
     name: Option<&str>,
@@ -1434,9 +1429,6 @@ fn export_cmd(
     let apic_dir = find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
     let project_root = apic_dir.parent().unwrap_or(&apic_dir).to_path_buf();
     let root = read_config_file().and_then(|conf| conf.get_root_dir())?;
-    let out = match format {
-        ExportFormat::Postman(out) | ExportFormat::OpenApi(out, _) => out.as_path(),
-    };
     if !force && out.exists() {
         return Err(format!(
             "{} already exists, pass --force to overwrite",
@@ -1449,21 +1441,24 @@ fn export_cmd(
         None => apic_core::vars::Vars::new(),
     };
 
-    let single = find.filter(|q| !q.ends_with('/'));
-    let mut targets = query_targets(find)?.unwrap_or_default();
-    targets.sort();
-    let mut items = Vec::new();
-    let mut warnings = Vec::new();
-    for path in targets {
-        match crate::send::load_contract(&path) {
-            Ok(contract) => items.push(apic_core::export::ExportItem {
-                rel_path: path.strip_prefix(&root).unwrap_or(&path).to_path_buf(),
-                contract,
-            }),
-            Err(err) if single.is_some() => return Err(err),
-            Err(err) => warnings.push(format!("skipped {}", err.message)),
+    // A single contract that does not parse is the command's error; in a
+    // folder or project run it is skipped with a warning.
+    let (items, mut warnings) = match find.filter(|q| !q.ends_with('/')) {
+        Some(query) => {
+            let path = resolve_one(query)?;
+            let contract = crate::send::load_contract(&path)?;
+            let rel_path = path.strip_prefix(&root).unwrap_or(&path).to_path_buf();
+            (
+                vec![apic_core::export::ExportItem { rel_path, contract }],
+                Vec::new(),
+            )
         }
-    }
+        None => {
+            let mut targets = query_targets(find)?.unwrap_or_default();
+            targets.sort();
+            apic_core::export::load_items(&targets, &root)
+        }
+    };
     if items.is_empty() {
         return Err(CliError::new(ErrorKind::NotFound, "No contracts to export"));
     }
@@ -1474,42 +1469,9 @@ fn export_cmd(
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "apic".to_string())
     });
-    let text = match format {
-        ExportFormat::Postman(_) => {
-            let collection = apic_core::export::postman_collection(&name, &items, &values);
-            serde_json::to_string_pretty(&collection)
-                .map_err(|err| format!("failed to serialize collection: {err}"))?
-        }
-        ExportFormat::OpenApi(_, version) => {
-            use apic_core::export::openapi;
-            let info = openapi::Info {
-                title: &name,
-                version: "1.0.0",
-            };
-            let (doc, skipped) = openapi::document(info, &items, &values, *version);
-            warnings.extend(skipped);
-            let yaml = out.extension().is_some_and(|e| e == "yaml" || e == "yml");
-            openapi::to_text(&doc, yaml)?
-        }
-    };
-    fs::write(out, text).map_err(|err| format!("failed to write {}: {err}", out.display()))?;
-
-    // A JSON export inside the contracts folder is scanned as a contract, so
-    // `apic validate` and the GUI would report it as broken. Only `.json`
-    // files are scanned.
-    let inside = |dir: &Path| {
-        out.canonicalize()
-            .ok()
-            .zip(dir.canonicalize().ok())
-            .is_some_and(|(out, dir)| out.starts_with(dir))
-    };
-    let scanned = out.extension().is_some_and(|e| e == "json");
-    if scanned && inside(&root) && !inside(&apic_dir) {
-        warnings.push(format!(
-            "{} is inside the contracts folder, so apic will read it as a contract. Write it outside that folder",
-            out.display()
-        ));
-    }
+    warnings.extend(apic_core::export::write(
+        *format, &items, &values, &name, out, &root, &apic_dir,
+    )?);
 
     for warning in &warnings {
         eprintln!("warning: {warning}");
@@ -1798,7 +1760,7 @@ pub(crate) fn run() {
             name,
             force,
         } => {
-            use apic_core::export::openapi::Version;
+            use apic_core::export::{Format, openapi::Version};
             let version = match openapi_version.as_deref() {
                 Some("3.1") => Version::V3_1,
                 _ => Version::V3_0,
@@ -1809,13 +1771,14 @@ pub(crate) fn run() {
                     ErrorKind::Usage,
                     "--openapi-version needs --openapi",
                 )),
-                (Some(out), _) => Ok(ExportFormat::Postman(out)),
-                (None, Some(out)) => Ok(ExportFormat::OpenApi(out, version)),
+                (Some(out), _) => Ok((out, Format::Postman)),
+                (None, Some(out)) => Ok((out, Format::OpenApi(version))),
                 (None, None) => Err("pass --postman or --openapi".to_string().into()),
             };
-            format.and_then(|format| {
+            format.and_then(|(out, format)| {
                 export_cmd(
                     &format,
+                    &out,
                     find.as_deref(),
                     env.as_deref(),
                     name.as_deref(),
