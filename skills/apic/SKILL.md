@@ -66,9 +66,17 @@ apic convert --postman MyAPI.postman.json --destination imported --json
 
 `--openapi` takes OpenAPI 3.0, 3.1 or Swagger 2.0, in JSON or YAML, and writes one contract per operation in a folder per tag. Bodies are examples taken from the spec or built from its schemas, so review them before relying on them. Warnings on stderr name what was imported lossily. An import refuses to overwrite existing contracts. Only pass `--force` when the user asked to replace them.
 
-An imported URL can start with `{{baseUrl}}` when the spec names no server. Tell the user which env file needs `baseUrl`, then run `apic validate --json`.
+An imported spec can leave variables for the user to fill. A URL starts with `{{baseUrl}}`, or another server variable, when the spec names no full server, and a security scheme adds a header holding `$token`, `$basic_auth` or `$api_key`. Tell the user which variables need values in their env files, then run `apic validate --json`.
 
-To hand contracts to Postman, run `apic export --postman ../api.postman.json --json`. For an OpenAPI document, run `apic export --openapi ../openapi.yaml --json`. Write a `.json` export outside the contracts folder, or apic reads it as a broken contract. `-f folder/` exports one folder, and `--env NAME` fills variable values from that env's shared file only, never the local one. Report export warnings to the user, since they name contracts that were left out.
+Export contracts to share them with other tools:
+
+```bash
+apic export --postman ../api.postman.json --json
+apic export --openapi ../openapi.yaml --json
+apic export --openapi ../openapi.json --openapi-version 3.1 -f users/ --json
+```
+
+`--openapi` writes YAML or JSON by the file's extension, OpenAPI 3.0 unless `--openapi-version 3.1` is given. Its schemas are inferred from the example bodies, so they lack enums, formats and required lists. Say so before the user publishes the document. `-f folder/` exports one folder, and `--env NAME` fills variable values from that env's shared file only, never the local one. Write a `.json` export outside the contracts folder, or apic reads it as a broken contract. An export refuses to overwrite a file, so only pass `--force` when the user asked to replace it. Report export warnings to the user, since they name contracts or responses that were left out.
 
 ## Safety rules
 
