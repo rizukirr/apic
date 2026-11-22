@@ -313,6 +313,29 @@ warning: request "Upload a release asset" sends application/octet-stream, import
 Converted 42 contract(s) into imported (1 warning)
 ```
 
+## `apic export --postman <file> [-f <query>] [--env <name>] [--name <name>] [--force]`
+Exports contracts as a Postman Collection v2.1 file, ready to import into Postman.
+
+- `--postman <file>`, the collection file to write. An existing file is left untouched unless `--force` is passed.
+- `-f <query>`, one contract (path, extensionless or fuzzy), or a folder ending in `/`. Omit it to export every contract.
+- `--env <name>`, fill the collection variables from that environment's shared file, `.apic/env/<name>.toml`. The local file is never read, so secrets stay on your machine.
+- `--name <name>`, the collection name. Defaults to the project folder's name.
+
+Each contract folder becomes a Postman folder, each contract a request, and each documented response a saved example with its status, headers and body. `$name`, `${name}` and `{{name}}` become `{{name}}`, `$$` becomes `$`, and a `{id}` path param in the URL becomes `:id`. Every variable the contracts use is listed as a collection variable, with an empty value when the shared env file has none. A multipart body becomes `formdata`, with each file part's path as its `src`.
+
+Postman has no `required` flag on query params or headers, so that is not exported. A contract that does not parse is skipped with a warning.
+
+Keep the output file outside the contracts folder. A collection written inside it is read as a contract, so `apic validate` reports it as broken, and the export warns about it.
+
+```bash
+apic export --postman ../MyAPI.postman.json --env dev
+apic export --postman ../users.postman.json -f users/ --name "Users API"
+```
+
+```text
+Exported 12 contract(s) to ../MyAPI.postman.json
+```
+
 ## `apic docs <name>`
 Prints a reference doc built into apic, as Markdown. `<name>` is `command` (this file), `sending` (environments, variables and dry runs) or `contract` (the contract file format). The text always matches the installed version, and the command works outside a project.
 
@@ -371,6 +394,7 @@ What each command prints with `--json`:
 | `vars --convert` | `{"files": [{"path", "count"}], "total", "written"}` |
 | `create`, `edit`, `remove` | `{"action": "created" / "updated" / "removed", "path"}` |
 | `convert` | `{"written", "destination"}` |
+| `export` | `{"exported", "output"}` |
 | `open` | `{"path"}` once the editor closes |
 | `init` | `{"status": "initialized" / "template_seeded"}` |
 | `config` | `{"working_dir"}` |

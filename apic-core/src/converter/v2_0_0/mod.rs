@@ -18,7 +18,7 @@ pub(crate) struct Spec {
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum Items {
-    Item(Item),
+    Item(Box<Item>),
     ItemGroup(ItemGroup),
 }
 
@@ -41,6 +41,9 @@ pub(crate) struct ItemGroup {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct RequestClass {
+    /// Postman's own exports keep a request's docs here rather than on the
+    /// item.
+    pub(crate) description: Option<DescriptionUnion>,
     pub(crate) method: Option<String>,
     pub(crate) url: Option<Url>,
     pub(crate) header: Option<Vec<Header>>,
@@ -58,6 +61,8 @@ pub(crate) enum Url {
 #[derive(Debug, Deserialize)]
 pub(crate) struct UrlClass {
     pub(crate) raw: Option<String>,
+    /// Kept loose so an unusual shape never fails the whole import.
+    pub(crate) query: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +81,8 @@ pub(crate) struct Body {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ResponseClass {
+    /// Kept loose: some exports write the headers as one string.
+    pub(crate) header: Option<serde_json::Value>,
     pub(crate) code: Option<i64>,
     pub(crate) status: Option<String>,
     pub(crate) body: Option<String>,

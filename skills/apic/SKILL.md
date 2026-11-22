@@ -55,7 +55,7 @@ apic validate -f auth/login --json
 
 `apic create` refuses to overwrite a file. `apic edit` changes only the fields its flags name. Variables are `$name` or `${name}`, filled at send time from `.apic/env/NAME.toml` and `--var`.
 
-## Importing contracts
+## Importing and exporting contracts
 
 When the user already has an OpenAPI spec or a Postman collection, import it instead of writing contracts by hand:
 
@@ -67,6 +67,8 @@ apic convert --postman MyAPI.postman.json --destination imported --json
 `--openapi` takes OpenAPI 3.0, 3.1 or Swagger 2.0, in JSON or YAML, and writes one contract per operation in a folder per tag. Bodies are examples taken from the spec or built from its schemas, so review them before relying on them. Warnings on stderr name what was imported lossily. An import refuses to overwrite existing contracts. Only pass `--force` when the user asked to replace them.
 
 An imported URL can start with `{{baseUrl}}` when the spec names no server. Tell the user which env file needs `baseUrl`, then run `apic validate --json`.
+
+To hand contracts to Postman, run `apic export --postman ../api.postman.json --json`. Write the file outside the contracts folder, or apic reads it as a broken contract. `-f folder/` exports one folder, and `--env NAME` fills the collection variables from that env's shared file only, never the local one.
 
 ## Safety rules
 

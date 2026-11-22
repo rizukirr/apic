@@ -365,6 +365,39 @@ enum Commands {
         force: bool,
     },
 
+    /// Export contracts as a Postman collection.
+    ///
+    /// Writes a Postman Collection v2.1 file with one folder per contract
+    /// folder, one request per contract, and each documented response as a
+    /// saved example. `$name` variables become `{{name}}` and `{id}` path
+    /// params become `:id`. Every variable used is listed as a collection
+    /// variable, with its value from the shared env file named by `--env`.
+    /// Local env files are never read. An existing output file is left
+    /// untouched unless `--force` is passed.
+    #[command(group(clap::ArgGroup::new("format").required(true).args(["postman"])))]
+    Export {
+        /// Write a Postman collection to this file.
+        #[arg(long, value_name = "FILE")]
+        postman: Option<PathBuf>,
+
+        /// Contract to export (path, extensionless, or fuzzy), or a folder
+        /// ending in `/`. Omit to export every contract.
+        #[arg(long, short = 'f', value_name = "QUERY")]
+        find: Option<String>,
+
+        /// Fill collection variables from this environment's shared file.
+        #[arg(long, value_name = "NAME")]
+        env: Option<String>,
+
+        /// Collection name. Defaults to the project folder's name.
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+
+        /// Overwrite the output file if it exists.
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Print a reference doc built into apic, as Markdown.
     Docs {
         /// Which doc: `command` (every command and flag), `sending`
@@ -1360,6 +1393,101 @@ fn convert_cmd(
     Ok(())
 }
 
+/// Handles `apic export`: collect the selected contracts, build the Postman
+/// collection and write it. A contract that does not parse is skipped with a
+/// warning, unless it was the single one asked for.
+fn export_cmd(
+    postman: &Path,
+    find: Option<&str>,
+    env: Option<&str>,
+    name: Option<&str>,
+    force: bool,
+) -> Result<(), CliError> {
+    let apic_dir = find_apic_dir().ok_or("Not in an apic project (run `apic init`)")?;
+    let project_root = apic_dir.parent().unwrap_or(&apic_dir).to_path_buf();
+    let root = read_config_file().and_then(|conf| conf.get_root_dir())?;
+    if !force && postman.exists() {
+        return Err(format!(
+            "{} already exists, pass --force to overwrite",
+            postman.display()
+        )
+        .into());
+    }
+    let values = match env {
+        Some(env) => apic_core::env::load_shared(&apic_dir, env)?,
+        None => apic_core::vars::Vars::new(),
+    };
+
+    let single = find.filter(|q| !q.ends_with('/'));
+    let mut targets = query_targets(find)?.unwrap_or_default();
+    targets.sort();
+    let mut items = Vec::new();
+    let mut warnings = Vec::new();
+    for path in targets {
+        match crate::send::load_contract(&path) {
+            Ok(contract) => items.push(apic_core::export::ExportItem {
+                rel_path: path.strip_prefix(&root).unwrap_or(&path).to_path_buf(),
+                contract,
+            }),
+            Err(err) if single.is_some() => return Err(err),
+            Err(err) => warnings.push(format!("skipped {}", err.message)),
+        }
+    }
+    if items.is_empty() {
+        return Err(CliError::new(ErrorKind::NotFound, "No contracts to export"));
+    }
+
+    let name = name.map(str::to_string).unwrap_or_else(|| {
+        project_root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "apic".to_string())
+    });
+    let collection = apic_core::export::postman_collection(&name, &items, &values);
+    let text = serde_json::to_string_pretty(&collection)
+        .map_err(|err| format!("failed to serialize collection: {err}"))?;
+    fs::write(postman, text)
+        .map_err(|err| format!("failed to write {}: {err}", postman.display()))?;
+
+    // A collection inside the contracts folder is scanned as a contract, so
+    // `apic validate` and the GUI would report it as broken.
+    let inside = |dir: &Path| {
+        postman
+            .canonicalize()
+            .ok()
+            .zip(dir.canonicalize().ok())
+            .is_some_and(|(out, dir)| out.starts_with(dir))
+    };
+    if inside(&root) && !inside(&apic_dir) {
+        warnings.push(format!(
+            "{} is inside the contracts folder, so apic will read it as a contract. Write it outside that folder",
+            postman.display()
+        ));
+    }
+
+    for warning in &warnings {
+        eprintln!("warning: {warning}");
+    }
+    if output::json() {
+        output::emit(&json!({
+            "exported": items.len(),
+            "output": display_path(postman),
+        }));
+    } else {
+        let suffix = match warnings.len() {
+            0 => String::new(),
+            1 => " (1 warning)".to_string(),
+            n => format!(" ({n} warnings)"),
+        };
+        println!(
+            "Exported {} contract(s) to {}{suffix}",
+            items.len(),
+            postman.display()
+        );
+    }
+    Ok(())
+}
+
 /// Asks the user `prompt` and returns whether they confirmed (default no).
 ///
 /// Only prompts on an interactive terminal: when stdin or stdout is not a TTY
@@ -1615,6 +1743,22 @@ pub(crate) fn run() {
             destination.as_deref(),
             force,
         ),
+        Commands::Export {
+            postman,
+            find,
+            env,
+            name,
+            force,
+        } => match postman {
+            Some(out) => export_cmd(
+                &out,
+                find.as_deref(),
+                env.as_deref(),
+                name.as_deref(),
+                force,
+            ),
+            None => Err("pass --postman".to_string().into()),
+        },
         Commands::Docs { name } => crate::skill::docs_cmd(name),
         Commands::Skill { install, global } => crate::skill::skill_cmd(install, global),
     };

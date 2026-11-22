@@ -99,8 +99,58 @@ struct RawRequest {
     /// Raw request body text (e.g. Postman `body.raw`), if any.
     body: Option<String>,
 
-    /// Saved responses: (status code, status text, raw body text).
-    responses: Vec<(u16, String, Option<String>)>,
+    /// Descriptions of query params by key, from the structured URL.
+    query_docs: Vec<(String, String)>,
+
+    responses: Vec<RawResponse>,
+}
+
+/// One saved response, version-agnostic.
+struct RawResponse {
+    code: u16,
+    status: String,
+    /// Raw body text, if any.
+    body: Option<String>,
+    headers: Vec<(String, String)>,
+}
+
+/// `key`/`value` pairs from a Postman list such as a response's `header`.
+/// Anything that is not a list of objects, such as the plain string some
+/// exports use, gives nothing, and disabled entries are skipped.
+fn key_values(list: Option<&serde_json::Value>) -> Vec<(String, String)> {
+    list.and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter(|h| h.get("disabled").and_then(|d| d.as_bool()) != Some(true))
+                .filter_map(|h| {
+                    let key = h.get("key")?.as_str()?;
+                    let value = h.get("value").and_then(|v| v.as_str()).unwrap_or_default();
+                    Some((key.to_string(), value.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Query param descriptions by key from a structured Postman URL's `query`.
+/// A description may be a string or an object with `content`.
+fn query_docs(list: Option<&serde_json::Value>) -> Vec<(String, String)> {
+    list.and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|q| {
+                    let key = q.get("key")?.as_str()?;
+                    let doc = q.get("description")?;
+                    let doc = doc
+                        .as_str()
+                        .or_else(|| doc.get("content").and_then(|c| c.as_str()))?;
+                    Some((key.to_string(), doc.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Parse `raw` body/response text as JSON; fall back to a JSON string value when
@@ -136,18 +186,31 @@ fn build_contract(raw: RawRequest) -> JsonContent {
     let responses = raw
         .responses
         .into_iter()
-        .map(|(code, status, body)| Response {
-            code,
-            description: status,
-            headers: Vec::new(),
-            schema: body_example(body.as_deref()),
+        .map(|r| Response {
+            code: r.code,
+            description: r.status,
+            headers: r
+                .headers
+                .into_iter()
+                .map(|(name, value)| Header {
+                    name,
+                    value,
+                    required: false,
+                })
+                .collect(),
+            schema: body_example(r.body.as_deref()),
             // Postman `formdata` import is a later stage. Until then every
             // converted response carries a JSON body or none.
             multipart: None,
         })
         .collect();
 
-    let (url, query) = split_raw_url(&raw.raw_url);
+    let (url, mut query) = split_raw_url(&raw.raw_url);
+    for q in &mut query {
+        if let Some((_, doc)) = raw.query_docs.iter().find(|(k, _)| *k == q.name) {
+            q.description = Some(doc.clone());
+        }
+    }
     JsonContent {
         name: raw.name,
         description: raw.description,
@@ -225,9 +288,17 @@ fn raw_request_v2_1(item: &v2_1_0::Item) -> RawRequest {
     let req = &item.request;
 
     let name = item.name.clone().unwrap_or_else(|| "request".to_string());
-    let description = item.description.as_ref().and_then(description_text_v2_1);
+    let description = item
+        .description
+        .as_ref()
+        .or(req.description.as_ref())
+        .and_then(description_text_v2_1);
     let method = req.method.clone().unwrap_or_else(|| "GET".to_string());
     let raw_url = req.url.as_ref().map(url_raw_v2_1).unwrap_or_default();
+    let query_docs = match &req.url {
+        Some(v2_1_0::Url::UrlClass(u)) => query_docs(u.query.as_ref()),
+        _ => Vec::new(),
+    };
 
     let headers = match &req.header {
         Some(list) => list
@@ -248,7 +319,12 @@ fn raw_request_v2_1(item: &v2_1_0::Item) -> RawRequest {
                 .map(|r| {
                     let code = r.code.unwrap_or(0) as u16;
                     let status = r.status.clone().unwrap_or_else(|| code.to_string());
-                    (code, status, r.body.clone())
+                    RawResponse {
+                        code,
+                        status,
+                        body: r.body.clone(),
+                        headers: key_values(r.header.as_ref()),
+                    }
                 })
                 .collect()
         })
@@ -261,6 +337,7 @@ fn raw_request_v2_1(item: &v2_1_0::Item) -> RawRequest {
         raw_url,
         headers,
         body,
+        query_docs,
         responses,
     }
 }
@@ -315,9 +392,17 @@ fn raw_request_v2_0(item: &v2_0_0::Item) -> RawRequest {
     let req = &item.request;
 
     let name = item.name.clone().unwrap_or_else(|| "request".to_string());
-    let description = item.description.as_ref().and_then(description_text_v2_0);
+    let description = item
+        .description
+        .as_ref()
+        .or(req.description.as_ref())
+        .and_then(description_text_v2_0);
     let method = req.method.clone().unwrap_or_else(|| "GET".to_string());
     let raw_url = req.url.as_ref().map(url_raw_v2_0).unwrap_or_default();
+    let query_docs = match &req.url {
+        Some(v2_0_0::Url::UrlClass(u)) => query_docs(u.query.as_ref()),
+        _ => Vec::new(),
+    };
 
     let headers = match &req.header {
         Some(list) => list
@@ -338,7 +423,12 @@ fn raw_request_v2_0(item: &v2_0_0::Item) -> RawRequest {
                 .map(|r| {
                     let code = r.code.unwrap_or(0) as u16;
                     let status = r.status.clone().unwrap_or_else(|| code.to_string());
-                    (code, status, r.body.clone())
+                    RawResponse {
+                        code,
+                        status,
+                        body: r.body.clone(),
+                        headers: key_values(r.header.as_ref()),
+                    }
                 })
                 .collect()
         })
@@ -351,6 +441,7 @@ fn raw_request_v2_0(item: &v2_0_0::Item) -> RawRequest {
         raw_url,
         headers,
         body,
+        query_docs,
         responses,
     }
 }
@@ -437,6 +528,7 @@ fn raw_request_v1(req: &v1_0_0::Request) -> RawRequest {
         raw_url,
         headers: parse_v1_headers(&req.headers),
         body,
+        query_docs: Vec::new(),
         responses: Vec::new(),
     }
 }
@@ -604,7 +696,13 @@ mod tests {
             raw_url: "https://api.example.com/users/:id".into(),
             headers: vec![("Accept".into(), "application/json".into())],
             body: None,
-            responses: vec![(200, "200 OK".into(), Some("{\"id\":1}".into()))],
+            query_docs: vec![],
+            responses: vec![RawResponse {
+                code: 200,
+                status: "200 OK".into(),
+                body: Some("{\"id\":1}".into()),
+                headers: vec![],
+            }],
         };
         let c = build_contract(raw);
         assert_eq!(c.name, "Get User");
@@ -719,6 +817,43 @@ mod tests {
         for contract in mapped.iter().map(|m| &m.contract) {
             assert!(contract.headers.iter().all(|h| h.name != "Authorization"));
         }
+    }
+
+    #[test]
+    fn v2_1_keeps_query_docs_and_response_headers() {
+        let json = r#"{
+          "info": { "name": "X", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+          "item": [
+            { "name": "List",
+              "request": { "method": "GET",
+                "url": { "raw": "https://h/x?page=2",
+                  "query": [ { "key": "page", "value": "2", "description": "Page number" } ] } },
+              "response": [
+                { "code": 200, "status": "OK", "header": [ { "key": "Link", "value": "<next>" } ] },
+                { "code": 500, "status": "Err", "header": "Content-Type: text/plain" }
+              ] }
+          ]
+        }"#;
+        let mapped = map_v2_1(&v2_1_collection(json));
+        let c = &mapped[0].contract;
+        assert_eq!(c.query[0].description.as_deref(), Some("Page number"));
+        assert_eq!(c.responses[0].headers[0].name, "Link");
+        // A string header list is not an error, just no headers.
+        assert!(c.responses[1].headers.is_empty());
+    }
+
+    #[test]
+    fn v2_1_reads_the_description_from_the_request_too() {
+        let json = r#"{
+          "info": { "name": "X", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+          "item": [
+            { "name": "Get",
+              "request": { "method": "GET", "description": "Fetch it",
+                "url": { "raw": "https://api.example.com/x" } } }
+          ]
+        }"#;
+        let mapped = map_v2_1(&v2_1_collection(json));
+        assert_eq!(mapped[0].contract.description.as_deref(), Some("Fetch it"));
     }
 
     #[test]
@@ -852,6 +987,7 @@ mod tests {
                 raw_url: "https://api.example.com/users/1".into(),
                 headers: vec![],
                 body: None,
+                query_docs: vec![],
                 responses: vec![],
             }),
             warning: None,

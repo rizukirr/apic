@@ -11,7 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `apic convert --openapi <file>` imports an OpenAPI 3.0, OpenAPI 3.1 or Swagger 2.0 spec, in JSON or YAML, as one contract per operation, in a folder per first tag. Bodies come from the spec's examples, or are built from the schemas with local `$ref`s followed. COMMAND.md lists what is mapped and what warns.
 - The GUI Import menu has an OpenAPI spec entry next to Postman collection.
-- The agent skill now covers importing with `apic convert --openapi` and `--postman`, including when to pass `--force` and what to do about a `{{baseUrl}}` URL. Run `apic skill --install` again to update an installed copy.
+- The agent skill now covers importing with `apic convert --openapi` and `--postman` and exporting with `apic export --postman`, including when to pass `--force` and what to do about a `{{baseUrl}}` URL. Run `apic skill --install` again to update an installed copy.
+- `apic export --postman <file>` writes contracts as a Postman Collection v2.1: folders become Postman folders, contracts become requests, and documented responses become saved examples. `$name` variables become `{{name}}` and `{id}` path params become `:id`. `-f` exports one contract or a folder, and `--env` fills the collection variables from that environment's shared file only, so local secrets are never exported.
+
+### Fixed
+
+- `apic convert --postman` now keeps request descriptions stored on the request, as Postman's own exports write them, query param descriptions, and response headers.
+- `apic convert --openapi` follows `$ref`s inside example values, as GitHub's spec uses them. They were imported as literal `{"$ref": ...}` objects, which apic then read as a `$ref` variable.
 
 ## [1.1.0] - 2026-11-15
 
