@@ -29,6 +29,12 @@ An import and export release. apic now reads OpenAPI 3.0, OpenAPI 3.1 and Swagge
 
 - `apic convert --postman` now keeps request descriptions stored on the request, as Postman's own exports write them, query param descriptions, and response headers.
 
+### Packaging
+
+- Flatpak: the app now builds on the `org.freedesktop.Platform` 26.08 runtime, up from 25.08, and the manifest pins its git source to the release commit as well as the tag.
+- winget: `submit.ps1` takes `ReleaseNotes` from this changelog's section for the version when the GitHub release has no notes.
+- Copr and Debian: `release.sh` scripts build and upload a release, and Launchpad uploads for the Ubuntu PPA are signed with a new OpenPGP key.
+
 ## [1.1.0] - 2026-11-15
 
 A CLI release for scripts, CI and AI coding agents. Every command can print JSON, exit codes now tell failures apart, `apic check` tests a live server against its contracts, `apic send --dry-run` previews a request without revealing secrets, and apic ships an agent skill. apic is also on Homebrew and has an MSIX for the Microsoft Store. The GUI and the contract format are unchanged, so existing projects need no migration.
