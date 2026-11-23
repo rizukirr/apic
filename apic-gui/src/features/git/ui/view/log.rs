@@ -8,7 +8,8 @@ use crate::features::git::domain::log::{Commit, LogFilter, PathFilter, Row, Sinc
 use crate::features::git::domain::status::FileStatus;
 use crate::features::git::ui::state::{GitAction, GitState};
 use crate::ui::base::{
-    ButtonKind, Text, Tone, icon_button, menu_item, menu_item_enabled, text_button, wide_button,
+    ButtonKind, Text, Tone, dropdown, dropdown_option, icon_button, menu_item, menu_item_enabled,
+    text_button, toggle_button, wide_button,
 };
 use crate::ui::components::{DialogButton, detail_box, dialog, empty_state};
 use crate::ui::theme::*;
@@ -102,15 +103,13 @@ fn toolbar(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
             }
             None => {}
         }
-        if ui
-            .selectable_label(filter.regex, ".*")
+        if toggle_button(ui, filter.regex, Text::new(".*"))
             .on_hover_text("Regular expression")
             .clicked()
         {
             action = Some(set(&filter, |f| f.regex = !f.regex));
         }
-        if ui
-            .selectable_label(filter.match_case, "Cc")
+        if toggle_button(ui, filter.match_case, Text::new("Cc"))
             .on_hover_text("Match case")
             .clicked()
         {
@@ -123,17 +122,16 @@ fn toolbar(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
             .clone()
             .or(current.clone())
             .unwrap_or_else(|| "HEAD".to_string());
-        ui.menu_button(format!("Branch: {shown}"), |ui| {
+        dropdown(ui, Text::new(format!("Branch: {shown}")), |ui| {
             for name in state
                 .branches
                 .all
                 .iter()
                 .chain(state.branches.remotes.iter())
             {
-                if ui.selectable_label(*name == shown, name.as_str()).clicked() {
+                if dropdown_option(ui, *name == shown, Text::new(name)) {
                     let pick = (Some(name) != current.as_ref()).then(|| name.clone());
                     action = Some(set(&filter, |f| f.branch = pick));
-                    ui.close();
                 }
             }
         });
@@ -146,59 +144,43 @@ fn toolbar(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
             .collect();
         authors.sort_unstable();
         authors.dedup();
-        ui.menu_button(
-            format!("User: {}", filter.author.as_deref().unwrap_or("All")),
-            |ui| {
-                if ui
-                    .selectable_label(filter.author.is_none(), "All")
-                    .clicked()
-                {
-                    action = Some(set(&filter, |f| f.author = None));
-                    ui.close();
+        let user = format!("User: {}", filter.author.as_deref().unwrap_or("All"));
+        dropdown(ui, Text::new(user), |ui| {
+            if dropdown_option(ui, filter.author.is_none(), Text::new("All")) {
+                action = Some(set(&filter, |f| f.author = None));
+            }
+            for author in &authors {
+                let selected = filter.author.as_deref() == Some(*author);
+                if dropdown_option(ui, selected, Text::new(*author)) {
+                    action = Some(set(&filter, |f| f.author = Some(author.to_string())));
                 }
-                for author in &authors {
-                    if ui
-                        .selectable_label(filter.author.as_deref() == Some(*author), *author)
-                        .clicked()
-                    {
-                        action = Some(set(&filter, |f| f.author = Some(author.to_string())));
-                        ui.close();
+            }
+        });
+
+        dropdown(
+            ui,
+            Text::new(format!("Date: {}", filter.since.label())),
+            |ui| {
+                for since in Since::ALL {
+                    if dropdown_option(ui, filter.since == since, Text::new(since.label())) {
+                        action = Some(set(&filter, |f| f.since = since));
                     }
                 }
             },
         );
-
-        ui.menu_button(format!("Date: {}", filter.since.label()), |ui| {
-            for since in Since::ALL {
-                if ui
-                    .selectable_label(filter.since == since, since.label())
-                    .clicked()
-                {
-                    action = Some(set(&filter, |f| f.since = since));
-                    ui.close();
-                }
-            }
-        });
 
         let path_label = match &filter.path {
             PathFilter::All => "All".to_string(),
             PathFilter::Contracts => "Contracts folder".to_string(),
             PathFilter::Typed(path) => path.clone(),
         };
-        ui.menu_button(format!("Paths: {path_label}"), |ui| {
-            if ui
-                .selectable_label(filter.path == PathFilter::All, "All")
-                .clicked()
-            {
+        dropdown(ui, Text::new(format!("Paths: {path_label}")), |ui| {
+            if dropdown_option(ui, filter.path == PathFilter::All, Text::new("All")) {
                 action = Some(set(&filter, |f| f.path = PathFilter::All));
-                ui.close();
             }
-            if ui
-                .selectable_label(filter.path == PathFilter::Contracts, "Contracts folder")
-                .clicked()
-            {
+            let contracts = filter.path == PathFilter::Contracts;
+            if dropdown_option(ui, contracts, Text::new("Contracts folder")) {
                 action = Some(set(&filter, |f| f.path = PathFilter::Contracts));
-                ui.close();
             }
             ui.horizontal(|ui| {
                 let typed = ui.add(

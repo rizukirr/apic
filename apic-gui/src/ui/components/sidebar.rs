@@ -2,7 +2,7 @@
 
 use eframe::egui;
 
-use crate::ui::base::{Text, plain_button};
+use crate::ui::base::{Text, icon_menu, plain_button};
 
 /// The `⋮` action button at the right edge of a sidebar row. The button is
 /// always laid out, so its menu stays open while the pointer moves into the
@@ -15,12 +15,7 @@ pub(crate) fn row_menu_button(
 ) {
     let glyph = Text::new(egui_phosphor::regular::DOTS_THREE_VERTICAL).muted();
     let glyph = if row_hovered { glyph } else { glyph.hidden() };
-    ui.scope(|ui| {
-        let w = &mut ui.style_mut().visuals.widgets;
-        w.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
-        w.inactive.bg_stroke = egui::Stroke::NONE;
-        ui.menu_button(glyph.rich(ui.ctx()), menu);
-    });
+    icon_menu(ui, glyph, menu);
 }
 
 /// One collapsible section header row: a caret, then `label`, with

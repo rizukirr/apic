@@ -32,8 +32,17 @@ mod layering {
 
     /// Raw egui calls that build text or buttons outside base, so their look
     /// is chosen at the call site instead of by a base component.
-    /// `.button(` also catches `ui` and `.button(` split across lines.
-    const RAW_WIDGETS: &[&str] = &["RichText::new", "egui::Button::", ".button("];
+    /// `.button(` also catches `ui` and `.button(` split across lines, and
+    /// `.menu_button(` does not match the `row_menu_button(` component.
+    const RAW_WIDGETS: &[&str] = &[
+        "RichText::new",
+        "egui::Button::",
+        ".button(",
+        ".menu_button(",
+        "ComboBox::",
+        "selectable_label(",
+        "selectable_value(",
+    ];
 
     fn src() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("src")

@@ -6,15 +6,15 @@
 //! [`EditAction`]s.
 
 use eframe::egui;
-use egui::Color32;
 
 use apic_core::edit::{BodyLoc, EditAction, EditBody, EditModel, EditPart, Field, apply};
 use apic_core::json::method_str;
 
 use crate::features::contracts::ui::state::ContractsAction;
 use crate::ui::base::{
-    ChipTone, Text, Tone, badge, chip, delete_button, header_label, json_editor, menu_item,
-    required_chip, section_label, tcell_edit, tcell_edit_vars, text_button, url_layout_job,
+    ChipTone, Select, Text, Tone, badge, chip, delete_button, dropdown_option, header_label,
+    json_editor, menu_item, required_chip, section_label, tcell_edit, tcell_edit_vars, text_button,
+    url_layout_job,
 };
 use crate::ui::components::{fill_column, grid_cell, metadata_table, table_frame, url_bar};
 use crate::ui::focus::{request_new_row_focus, take_pending_focus};
@@ -467,32 +467,16 @@ pub(super) fn method_url_row(
         let method = method_str(&model.method);
         if editing {
             // Pick the HTTP method from a dropdown of all the choices.
-            egui::ComboBox::from_id_salt("method")
-                .width(90.0)
-                .selected_text(
-                    Text::new(&method)
-                        .tone(method_tone(&method))
-                        .strong()
-                        .rich(ui.ctx()),
-                )
-                .show_ui(ui, |ui| {
-                    for m in apic_core::json::method_all() {
-                        let name = method_str(&m);
-                        let selected = name == method;
-                        if ui
-                            .selectable_label(
-                                selected,
-                                Text::new(&name)
-                                    .tone(method_tone(&name))
-                                    .strong()
-                                    .rich(ui.ctx()),
-                            )
-                            .clicked()
-                        {
-                            model.method = m;
-                        }
+            let shown = Text::new(&method).tone(method_tone(&method)).strong();
+            Select::new("method", shown).width(90.0).show(ui, |ui| {
+                for m in apic_core::json::method_all() {
+                    let name = method_str(&m);
+                    let option = Text::new(&name).tone(method_tone(&name)).strong();
+                    if dropdown_option(ui, name == method, option) {
+                        model.method = m;
                     }
-                });
+                }
+            });
         } else {
             method_badge(ui, &method);
         }
@@ -806,20 +790,19 @@ fn body_kind_dropdown(
 ) -> Option<ContractsAction> {
     let label = |multipart: bool| if multipart { "Multipart" } else { "JSON" };
     let mut picked = None;
-    egui::ComboBox::from_id_salt(("body_kind", format!("{loc:?}")))
-        .width(90.0)
-        .selected_text(Text::new(label(is_multipart)).rich(ui.ctx()))
-        .show_ui(ui, |ui| {
-            for multipart in [false, true] {
-                if ui
-                    .selectable_label(multipart == is_multipart, label(multipart))
-                    .clicked()
-                    && multipart != is_multipart
-                {
-                    picked = Some(multipart);
-                }
+    Select::new(
+        ("body_kind", format!("{loc:?}")),
+        Text::new(label(is_multipart)),
+    )
+    .width(90.0)
+    .show(ui, |ui| {
+        for multipart in [false, true] {
+            let selected = multipart == is_multipart;
+            if dropdown_option(ui, selected, Text::new(label(multipart))) && !selected {
+                picked = Some(multipart);
             }
-        });
+        }
+    });
     picked.map(|multipart| ContractsAction::SwitchBody { loc, multipart })
 }
 
@@ -1091,41 +1074,26 @@ pub(super) fn response_picker(
                 .tone(status_tone(r.code.trim()))
                 .strong()
         })
-        .unwrap_or_else(|| Text::new("?").muted())
-        .rich(ui.ctx());
-    ui.scope(|ui| {
-        // No box around the closed dropdown, only the colored status text.
-        let widgets = &mut ui.visuals_mut().widgets;
-        for w in [
-            &mut widgets.inactive,
-            &mut widgets.hovered,
-            &mut widgets.active,
-            &mut widgets.open,
-        ] {
-            w.bg_fill = Color32::TRANSPARENT;
-            w.weak_bg_fill = Color32::TRANSPARENT;
-            w.bg_stroke = egui::Stroke::NONE;
-        }
-        egui::ComboBox::from_id_salt("resp_example")
-            .selected_text(selected_text)
-            .show_ui(ui, |ui| {
-                for (i, r) in model.responses.iter().enumerate() {
-                    let label = Text::new(status_tab_label(&r.code, &r.description))
-                        .tone(status_tone(r.code.trim()))
-                        .rich(ui.ctx());
-                    if ui.selectable_label(i == *resp_tab, label).clicked() {
-                        *resp_tab = i;
-                        focus_code = true;
-                    }
+        .unwrap_or_else(|| Text::new("?").muted());
+    // No box around the closed dropdown, only the coloured status text.
+    Select::new("resp_example", selected_text)
+        .frameless()
+        .show(ui, |ui| {
+            for (i, r) in model.responses.iter().enumerate() {
+                let label = Text::new(status_tab_label(&r.code, &r.description))
+                    .tone(status_tone(r.code.trim()));
+                if dropdown_option(ui, i == *resp_tab, label) {
+                    *resp_tab = i;
+                    focus_code = true;
                 }
-                if editing {
-                    ui.separator();
-                    if menu_item(ui, "+ New example") {
-                        action = Some(ContractsAction::OpenNewExample);
-                    }
+            }
+            if editing {
+                ui.separator();
+                if menu_item(ui, "+ New example") {
+                    action = Some(ContractsAction::OpenNewExample);
                 }
-            });
-    });
+            }
+        });
     if editing && focus_code {
         ui.ctx()
             .memory_mut(|m| m.request_focus(resp_code_edit_id()));

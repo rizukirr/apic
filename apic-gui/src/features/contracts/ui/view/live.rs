@@ -7,7 +7,7 @@ use egui_extras::Column;
 use super::editor::status_tone;
 use crate::features::contracts::ui::send::{LiveBody, LiveReply, SendState};
 use crate::features::contracts::ui::state::{ContractsAction, RespTab};
-use crate::ui::base::{Text, Tone, header_label, json_editor};
+use crate::ui::base::{Text, Tone, header_label, json_editor, toggle_button};
 use crate::ui::components::{empty_state, fill_column, grid_cell, metadata_table, table_frame};
 use crate::ui::theme::*;
 
@@ -23,10 +23,10 @@ use crate::ui::theme::*;
 /// [`ContractsAction::SetLive`] when the side not showing was clicked.
 pub(super) fn live_switch(ui: &mut egui::Ui, live: bool) -> Option<ContractsAction> {
     let mut action = None;
-    if ui.selectable_label(!live, "Examples").clicked() && live {
+    if toggle_button(ui, !live, Text::new("Examples")).clicked() && live {
         action = Some(ContractsAction::SetLive(false));
     }
-    if ui.selectable_label(live, "Live").clicked() && !live {
+    if toggle_button(ui, live, Text::new("Live")).clicked() && !live {
         action = Some(ContractsAction::SetLive(true));
     }
     action

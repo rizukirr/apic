@@ -5,7 +5,7 @@ use std::path::Path;
 use eframe::egui;
 
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState};
-use crate::ui::base::Text;
+use crate::ui::base::{Text, dropdown, dropdown_option};
 
 /// The environment dropdown: "No environment" and every environment in
 /// `.apic/env`, re-read each time the dropdown is clicked open, or a hint
@@ -30,36 +30,26 @@ pub(crate) fn env_menu(
     let current = state.send.env.clone();
     let envs = state.send.envs.clone();
     let title = format!(
-        "{} {} {}",
+        "{} {}",
         egui_phosphor::regular::GLOBE,
-        current.as_deref().unwrap_or("No environment"),
-        egui_phosphor::regular::CARET_DOWN
+        current.as_deref().unwrap_or("No environment")
     );
-    let response = ui
-        .menu_button(Text::new(title).rich(ui.ctx()), |ui| {
-            if ui
-                .selectable_label(current.is_none(), "No environment")
-                .clicked()
-            {
-                if current.is_some() {
-                    action = Some(ContractsAction::ChooseEnv(None));
-                }
-                ui.close();
+    let response = dropdown(ui, Text::new(title), |ui| {
+        let none = current.is_none();
+        if dropdown_option(ui, none, Text::new("No environment")) && !none {
+            action = Some(ContractsAction::ChooseEnv(None));
+        }
+        if envs.is_empty() {
+            Text::new("Add .apic/env/<name>.toml").muted().show(ui);
+        }
+        for name in &envs {
+            let selected = current.as_deref() == Some(name.as_str());
+            if dropdown_option(ui, selected, Text::new(name)) && !selected {
+                action = Some(ContractsAction::ChooseEnv(Some(name.clone())));
             }
-            if envs.is_empty() {
-                Text::new("Add .apic/env/<name>.toml").muted().show(ui);
-            }
-            for name in &envs {
-                let selected = current.as_deref() == Some(name.as_str());
-                if ui.selectable_label(selected, name).clicked() {
-                    if !selected {
-                        action = Some(ContractsAction::ChooseEnv(Some(name.clone())));
-                    }
-                    ui.close();
-                }
-            }
-        })
-        .response;
+        }
+    })
+    .response;
     if response.clicked() {
         state.send.refresh_envs(apic_dir);
     }

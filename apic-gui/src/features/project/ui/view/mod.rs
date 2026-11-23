@@ -5,7 +5,7 @@ use eframe::egui;
 
 use crate::features::project::data::ImportSource;
 use crate::features::project::ui::state::{ProjectAction, ProjectState};
-use crate::ui::base::{ButtonKind, Size, Text, button, menu_item};
+use crate::ui::base::{ButtonKind, Size, Text, button, dropdown, menu_item};
 use crate::ui::components::{DialogButton, dialog};
 use crate::ui::theme::*;
 
@@ -66,8 +66,7 @@ pub(crate) fn welcome(ui: &mut egui::Ui) -> Option<ProjectAction> {
                     if button(ui, "Open project", ButtonKind::Standard).clicked() {
                         action = Some(ProjectAction::Open);
                     }
-                    let import = format!("Import {}", egui_phosphor::regular::CARET_DOWN);
-                    ui.menu_button(Text::new(import).rich(ui.ctx()), |ui| {
+                    dropdown(ui, Text::new("Import"), |ui| {
                         if let Some(source) = format_items(ui) {
                             action = Some(ProjectAction::Import(source));
                         }

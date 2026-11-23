@@ -6,9 +6,10 @@ use eframe::egui;
 use crate::features::git::domain::status::{Branches, DiscardTarget, discard_target};
 use crate::features::git::ui::state::{BranchOpKind, GitAction, GitState};
 use crate::ui::base::{
-    ButtonKind, Text, Tone, bordered_input, icon_submenu, menu_choice, menu_item, menu_item_enabled,
+    ButtonKind, Text, Tone, bordered_input, dropdown, icon_submenu, menu_choice, menu_item,
+    menu_item_enabled, submenu,
 };
-use crate::ui::components::{DialogButton, detail_box, dialog, submenu};
+use crate::ui::components::{DialogButton, detail_box, dialog};
 use crate::ui::theme::*;
 
 /// Whether the menu may offer deleting `name`: not the current branch, which
@@ -38,17 +39,16 @@ pub(crate) fn branch_menu(ui: &mut egui::Ui, state: &mut GitState) -> Option<Git
     let branches = state.branches.clone();
     let mut open_new = false;
     let title = format!(
-        "{} {} {}",
+        "{} {}",
         egui_phosphor::regular::GIT_BRANCH,
-        current.as_deref().unwrap_or("(detached)"),
-        egui_phosphor::regular::CARET_DOWN
+        current.as_deref().unwrap_or("(detached)")
     );
     let tone = if current.is_some() {
         Tone::Default
     } else {
         Tone::Warning
     };
-    ui.menu_button(Text::new(title).tone(tone).rich(ui.ctx()), |ui| {
+    dropdown(ui, Text::new(title).tone(tone), |ui| {
         // Every name gets the widest name's width, so the ⋮ buttons that
         // follow line up in one column.
         let font = egui::TextStyle::Button.resolve(ui.style());

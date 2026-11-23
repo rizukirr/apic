@@ -62,6 +62,33 @@ pub(crate) fn menu_choice(
     )
 }
 
+/// A nested menu inside an open menu: `label` opens `contents` beside it on
+/// hover, and egui marks it with an arrow. When `enabled` is false the entry
+/// is greyed out and does not open.
+pub(crate) fn submenu(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    label: impl Into<egui::WidgetText>,
+    contents: impl FnOnce(&mut egui::Ui),
+) {
+    ui.add_enabled_ui(enabled, |ui| {
+        ui.menu_button(label, contents);
+    });
+}
+
+/// A bare icon that opens `contents` as a menu, with no caret and no box
+/// while inactive, such as the `⋮` at the end of a row. `glyph` carries the
+/// icon's tone, or is hidden to keep its space while not shown.
+pub(crate) fn icon_menu(ui: &mut egui::Ui, glyph: Text, contents: impl FnOnce(&mut egui::Ui)) {
+    let glyph = glyph.rich(ui.ctx());
+    ui.scope(|ui| {
+        let w = &mut ui.visuals_mut().widgets;
+        w.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+        w.inactive.bg_stroke = egui::Stroke::NONE;
+        ui.menu_button(glyph, contents);
+    });
+}
+
 /// An icon button inside an open menu that opens `contents` as a nested
 /// menu beside it, such as the `⋮` on a row of a menu.
 pub(crate) fn icon_submenu(ui: &mut egui::Ui, icon: &str, contents: impl FnOnce(&mut egui::Ui)) {

@@ -160,6 +160,12 @@ impl Text {
         self
     }
 
+    /// Adds `more` to the end of the text, such as a trailing icon.
+    pub(crate) fn append(mut self, more: &str) -> Self {
+        self.text.push_str(more);
+        self
+    }
+
     /// Draws the text in the monospace font.
     pub(crate) fn mono(mut self) -> Self {
         self.mono = true;
