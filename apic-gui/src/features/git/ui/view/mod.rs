@@ -27,7 +27,9 @@ use crate::features::git::domain::log::short;
 use crate::features::git::domain::status::{Status, split_conflicts};
 use crate::features::git::ui::state::GitAction;
 use crate::features::git::ui::state::GitState;
-use crate::ui::base::{ButtonKind, Text, Tone, text_button};
+use crate::ui::base::{
+    ButtonKind, Collapsible, Text, Tone, checkbox, divider, text_area, text_button,
+};
 use crate::ui::components::{DialogButton, detail_box, dialog, empty_state};
 use crate::ui::theme::*;
 
@@ -105,10 +107,9 @@ pub(crate) fn changes_body(
             }
 
             if !outside.is_empty() {
-                let title = format!("Outside this project  {}", outside.len());
-                let header = egui::CollapsingHeader::new(Text::new(title).muted().rich(ui.ctx()))
-                    .id_salt("git_outside")
-                    .open(Some(show_outside))
+                let clicked = Collapsible::new("git_outside", "Outside this project")
+                    .count(outside.len())
+                    .open(show_outside)
                     .show(ui, |ui| {
                         for (file, ticked) in &outside {
                             let mode = if file.conflicted {
@@ -121,7 +122,7 @@ pub(crate) fn changes_body(
                             }
                         }
                     });
-                if header.header_response.clicked() {
+                if clicked {
                     show_outside = !show_outside;
                 }
             }
@@ -139,14 +140,7 @@ fn change_group(
     count: usize,
     body: impl FnOnce(&mut egui::Ui),
 ) {
-    egui::CollapsingHeader::new(
-        Text::new(format!("{title}  {count}"))
-            .muted()
-            .rich(ui.ctx()),
-    )
-    .id_salt(id)
-    .default_open(true)
-    .show(ui, body);
+    Collapsible::new(id, title).count(count).show(ui, body);
 }
 
 /// The commit box for the Git section: the Amend toggle, the Commit button
@@ -166,7 +160,7 @@ pub(crate) fn commit_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Git
             }
             ui.horizontal(|ui| {
                 let mut amend = state.amend;
-                if ui.checkbox(&mut amend, "Amend").changed() {
+                if checkbox(ui, &mut amend, "Amend").changed() {
                     action = Some(GitAction::ToggleAmend);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -181,10 +175,7 @@ pub(crate) fn commit_body(ui: &mut egui::Ui, state: &mut GitState) -> Option<Git
             });
             ui.add_space(SPACE_EXTRA_SMALL);
         });
-    ui.add_sized(
-        ui.available_size(),
-        egui::TextEdit::multiline(&mut state.commit_message).hint_text("commit message"),
-    );
+    text_area(ui, &mut state.commit_message, "commit message");
     action
 }
 
@@ -343,7 +334,7 @@ fn diff_body(
         Text::new(side).muted().show(ui);
         ui.add_enabled_ui(field_changes.is_some(), |ui| {
             let mut show_fields = !*show_line_diff;
-            let response = ui.checkbox(&mut show_fields, "Show field changes");
+            let response = checkbox(ui, &mut show_fields, "Show field changes");
             if response.changed() {
                 *show_line_diff = !show_fields;
             }
@@ -352,7 +343,7 @@ fn diff_body(
         .response
         .on_disabled_hover_text("No field-level view for this change");
     });
-    ui.separator();
+    divider(ui);
     match field_changes.filter(|_| !*show_line_diff) {
         Some(changes) => semantic_diff_view(ui, &changes),
         None => inline_diff_view(ui, &data.rows),

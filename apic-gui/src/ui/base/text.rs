@@ -160,6 +160,12 @@ impl Text {
         self
     }
 
+    /// Adds `more` to the end of the text, such as a trailing icon.
+    pub(crate) fn append(mut self, more: &str) -> Self {
+        self.text.push_str(more);
+        self
+    }
+
     /// Draws the text in the monospace font.
     pub(crate) fn mono(mut self) -> Self {
         self.mono = true;
@@ -205,6 +211,52 @@ impl Text {
         let rich = self.rich(ui.ctx());
         ui.label(rich)
     }
+}
+
+/// A label that cuts off with an ellipsis when its space runs out, for
+/// `text` that is a [`Text::rich`] or a multi-part layout job.
+pub(crate) fn truncated_label(
+    ui: &mut egui::Ui,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    ui.add(egui::Label::new(text).truncate())
+}
+
+/// A truncating label that can be clicked or right-clicked, such as a
+/// folder name in a tree.
+pub(crate) fn row_label(ui: &mut egui::Ui, text: Text) -> egui::Response {
+    let rich = text.rich(ui.ctx());
+    ui.add(
+        egui::Label::new(rich)
+            .truncate()
+            .sense(egui::Sense::click()),
+    )
+}
+
+/// A label that never wraps, running past the right edge instead, such as
+/// a line of code in a diff.
+pub(crate) fn nowrap_label(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
+    ui.add(egui::Label::new(text).wrap_mode(egui::TextWrapMode::Extend))
+}
+
+/// A spinner with a muted `text` beside it, for something in progress.
+pub(crate) fn loading(ui: &mut egui::Ui, text: &str) {
+    ui.horizontal(|ui| {
+        ui.spinner();
+        Text::new(text).muted().show(ui);
+    });
+}
+
+/// A thin line between sections: across in a vertical layout, upright in a
+/// horizontal one.
+pub(crate) fn divider(ui: &mut egui::Ui) {
+    ui.separator();
+}
+
+/// A [`divider`] with no space above or below it, for a line that sits
+/// right against what it separates, such as under a dialog's title row.
+pub(crate) fn divider_flush(ui: &mut egui::Ui) {
+    ui.add(egui::Separator::default().spacing(0.0));
 }
 
 /// A muted caption-sized sub-heading with the standard trailing gap. Used

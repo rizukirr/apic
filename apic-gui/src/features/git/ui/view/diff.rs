@@ -3,7 +3,7 @@
 use eframe::egui;
 
 use crate::features::git::domain::diff::{self, DiffLine, DiffRow, FieldChange, LineKind};
-use crate::ui::base::{Text, Tone};
+use crate::ui::base::{Text, Tone, nowrap_label};
 use crate::ui::theme::*;
 
 /// Renders `diff::diff_models` as one block per change. A single-line change
@@ -128,7 +128,7 @@ fn diff_row_view(ui: &mut egui::Ui, row: &DiffRow, digits: usize, p: &Palette) {
         }
     };
     let bg = ui.painter().add(egui::Shape::Noop);
-    let response = ui.add(egui::Label::new(job).wrap_mode(egui::TextWrapMode::Extend));
+    let response = nowrap_label(ui, job);
     if let Some(color) = background {
         let rect = egui::Rect::from_min_max(
             response.rect.min,

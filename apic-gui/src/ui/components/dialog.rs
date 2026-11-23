@@ -3,7 +3,7 @@
 
 use eframe::egui;
 
-use crate::ui::base::{ButtonKind, Size, Text, button, icon_button};
+use crate::ui::base::{ButtonKind, Size, Text, button, divider_flush, icon_button};
 use crate::ui::theme::palette;
 
 /// Every dialog is this wide, so popups read as one family.
@@ -94,7 +94,7 @@ pub(crate) fn dialog(
                         },
                     );
                 });
-            ui.add(egui::Separator::default().spacing(0.0));
+            divider_flush(ui);
             egui::Frame::new().inner_margin(16).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = gap;
                 ui.set_width(ui.available_width());

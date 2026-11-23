@@ -28,8 +28,10 @@ use crate::features::project::data::{NewKind, project_root_of};
 use crate::features::project::ui::state::{ProjectAction, ProjectEvent, ProjectState};
 use crate::features::project::ui::view::{format_items, welcome};
 use crate::platform::settings::Settings;
-use crate::ui::base::{Size, Text, icon_button, menu_item, toggle_button};
-use crate::ui::components::{section_header, submenu};
+use crate::ui::base::{
+    Size, Text, dropdown, dropdown_option, icon_button, menu_item, submenu, toggle_button,
+};
+use crate::ui::components::section_header;
 use crate::ui::theme::*;
 
 /// What the app bar's theme toggle switches to from the theme now showing,
@@ -276,8 +278,7 @@ impl App {
                         style.spacing.button_padding = egui::vec2(8.0, 4.0);
                     })
                     .ui(ui, |ui| {
-                        let title = format!("{project} {}", egui_phosphor::regular::CARET_DOWN);
-                        ui.menu_button(Text::new(title).strong().rich(ui.ctx()), |ui| {
+                        dropdown(ui, Text::new(&project).strong(), |ui| {
                             if menu_item(ui, "New project") {
                                 action = Some(Action::Project(ProjectAction::New));
                             }
@@ -384,28 +385,24 @@ impl App {
                             view::tab_label("Changes", &self.git.status);
                         let changes_title =
                             format!("{} {changes_label}", egui_phosphor::regular::GIT_DIFF);
+                        let contracts_title =
+                            format!("{} Contracts", egui_phosphor::regular::FOLDER_SIMPLE);
                         let current = match self.shell.sidebar_view {
-                            SidebarView::Contracts => Text::new(format!(
-                                "{} Contracts {}",
-                                egui_phosphor::regular::FOLDER_SIMPLE,
-                                egui_phosphor::regular::CARET_DOWN
-                            )),
-                            SidebarView::Changes => Text::new(format!(
-                                "{changes_title} {}",
-                                egui_phosphor::regular::CARET_DOWN
-                            ))
-                            .tone(changes_tone),
+                            SidebarView::Contracts => Text::new(&contracts_title),
+                            SidebarView::Changes => Text::new(&changes_title).tone(changes_tone),
                         };
-                        ui.menu_button(current.rich(ui.ctx()), |ui| {
-                            let contracts =
-                                format!("{} Contracts", egui_phosphor::regular::FOLDER_SIMPLE);
-                            if menu_item(ui, Text::new(contracts).rich(ui.ctx())) {
+                        let view = self.shell.sidebar_view;
+                        dropdown(ui, current, |ui| {
+                            let contracts = Text::new(&contracts_title);
+                            let on_contracts = view == SidebarView::Contracts;
+                            if dropdown_option(ui, on_contracts, contracts) {
                                 action = Some(Action::Shell(ShellAction::SwitchView(
                                     SidebarView::Contracts,
                                 )));
                             }
-                            let changes = Text::new(changes_title).tone(changes_tone);
-                            if menu_item(ui, changes.rich(ui.ctx())) {
+                            let changes = Text::new(&changes_title).tone(changes_tone);
+                            let on_changes = view == SidebarView::Changes;
+                            if dropdown_option(ui, on_changes, changes) {
                                 action = Some(Action::Shell(ShellAction::SwitchView(
                                     SidebarView::Changes,
                                 )));

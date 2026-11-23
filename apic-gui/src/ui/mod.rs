@@ -32,8 +32,27 @@ mod layering {
 
     /// Raw egui calls that build text or buttons outside base, so their look
     /// is chosen at the call site instead of by a base component.
-    /// `.button(` also catches `ui` and `.button(` split across lines.
-    const RAW_WIDGETS: &[&str] = &["RichText::new", "egui::Button::", ".button("];
+    /// `.button(` also catches `ui` and `.button(` split across lines, and
+    /// `.menu_button(` does not match the `row_menu_button(` component.
+    const RAW_WIDGETS: &[&str] = &[
+        "RichText::new",
+        "egui::Button::",
+        ".button(",
+        ".menu_button(",
+        "ComboBox::",
+        "selectable_label(",
+        "selectable_value(",
+        "TextEdit::singleline",
+        "TextEdit::multiline",
+        ".checkbox(",
+        "Checkbox::",
+        "CollapsingHeader::",
+        "CollapsingState::",
+        "egui::Label::new",
+        ".separator()",
+        "Separator::",
+        ".spinner()",
+    ];
 
     fn src() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
@@ -154,6 +173,12 @@ mod layering {
         if literal_size {
             found.push(".size(<number>)".to_string());
         }
+        let literal_space = code
+            .match_indices("add_space(")
+            .any(|(at, m)| code[at + m.len()..].starts_with(|c: char| c.is_ascii_digit()));
+        if literal_space {
+            found.push("add_space(<number>)".to_string());
+        }
         found
     }
 
@@ -233,6 +258,15 @@ mod layering {
         let kept = strip_test_modules(text);
         assert!(kept.contains("fn app()"), "{kept}");
         assert_eq!(drawing_violations(&kept), ["RichText::new"]);
+    }
+
+    #[test]
+    fn the_drawing_check_catches_a_literal_space() {
+        assert_eq!(
+            drawing_violations("ui.add_space(16.0);"),
+            ["add_space(<number>)"]
+        );
+        assert!(drawing_violations("ui.add_space(SPACE_LARGE);").is_empty());
     }
 
     #[test]

@@ -6,15 +6,15 @@
 //! [`EditAction`]s.
 
 use eframe::egui;
-use egui::Color32;
 
 use apic_core::edit::{BodyLoc, EditAction, EditBody, EditModel, EditPart, Field, apply};
 use apic_core::json::method_str;
 
 use crate::features::contracts::ui::state::ContractsAction;
 use crate::ui::base::{
-    ChipTone, Text, Tone, badge, chip, delete_button, header_label, json_editor, menu_item,
-    required_chip, section_label, tcell_edit, tcell_edit_vars, text_button, url_layout_job,
+    ChipTone, InlineInput, Select, Text, Tone, badge, chip, delete_button, divider,
+    dropdown_option, header_label, json_editor, menu_item, required_chip, section_label,
+    tcell_edit, tcell_edit_vars, text_button, truncated_label, url_layout_job,
 };
 use crate::ui::components::{fill_column, grid_cell, metadata_table, table_frame, url_bar};
 use crate::ui::focus::{request_new_row_focus, take_pending_focus};
@@ -394,27 +394,17 @@ fn ghost_row(
 /// available width. In edit mode the name and description are two frameless
 /// single-line fields separated by a `:` label.
 pub(super) fn endpoint_title(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
-    let p = palette(ui.ctx());
     if editing {
-        let font = egui::TextStyle::Body.resolve(ui.style());
         ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut model.name)
-                    .frame(egui::Frame::NONE)
-                    .hint_text("endpoint name")
-                    .font(font)
-                    .text_color(p.on_surface)
-                    .desired_width(120.0)
-                    .clip_text(false),
-            );
+            InlineInput::new(&mut model.name)
+                .hint("endpoint name")
+                .width(120.0)
+                .grow()
+                .show(ui);
             Text::new(":").show(ui);
-            ui.add(
-                egui::TextEdit::singleline(&mut model.description)
-                    .frame(egui::Frame::NONE)
-                    .hint_text("description")
-                    .text_color(p.on_surface)
-                    .desired_width(f32::INFINITY),
-            );
+            InlineInput::new(&mut model.description)
+                .hint("description")
+                .show(ui);
         });
         return;
     }
@@ -436,7 +426,7 @@ pub(super) fn endpoint_title(ui: &mut egui::Ui, model: &mut EditModel, editing: 
                 egui::Align::Center,
             );
     }
-    ui.add(egui::Label::new(job).truncate());
+    truncated_label(ui, job);
 }
 
 /// The `[ METHOD ] [ url................ ] [ Send ]` top row. The button
@@ -467,32 +457,16 @@ pub(super) fn method_url_row(
         let method = method_str(&model.method);
         if editing {
             // Pick the HTTP method from a dropdown of all the choices.
-            egui::ComboBox::from_id_salt("method")
-                .width(90.0)
-                .selected_text(
-                    Text::new(&method)
-                        .tone(method_tone(&method))
-                        .strong()
-                        .rich(ui.ctx()),
-                )
-                .show_ui(ui, |ui| {
-                    for m in apic_core::json::method_all() {
-                        let name = method_str(&m);
-                        let selected = name == method;
-                        if ui
-                            .selectable_label(
-                                selected,
-                                Text::new(&name)
-                                    .tone(method_tone(&name))
-                                    .strong()
-                                    .rich(ui.ctx()),
-                            )
-                            .clicked()
-                        {
-                            model.method = m;
-                        }
+            let shown = Text::new(&method).tone(method_tone(&method)).strong();
+            Select::new("method", shown).width(90.0).show(ui, |ui| {
+                for m in apic_core::json::method_all() {
+                    let name = method_str(&m);
+                    let option = Text::new(&name).tone(method_tone(&name)).strong();
+                    if dropdown_option(ui, name == method, option) {
+                        model.method = m;
                     }
-                });
+                }
+            });
         } else {
             method_badge(ui, &method);
         }
@@ -514,24 +488,13 @@ pub(super) fn method_url_row(
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 let font = egui::TextStyle::Monospace.resolve(ui.style());
                 if editing {
-                    let mut layouter =
-                        |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-                            let mut job = url_layout_job(buf.as_str(), p, font.clone(), defined);
-                            job.wrap.max_width = wrap_width;
-                            ui.fonts_mut(|f| f.layout_job(job))
-                        };
-                    ui.add(
-                        egui::TextEdit::singleline(&mut model.url)
-                            .font(egui::TextStyle::Monospace)
-                            .frame(egui::Frame::NONE)
-                            .hint_text("https://host/path/{id}")
-                            .layouter(&mut layouter)
-                            .desired_width(f32::INFINITY),
-                    );
+                    InlineInput::new(&mut model.url)
+                        .hint("https://host/path/{id}")
+                        .mono()
+                        .vars(defined)
+                        .show(ui);
                 } else {
-                    ui.add(
-                        egui::Label::new(url_layout_job(&model.url, p, font, defined)).truncate(),
-                    );
+                    truncated_label(ui, url_layout_job(&model.url, p, font, defined));
                 }
             });
         });
@@ -806,20 +769,19 @@ fn body_kind_dropdown(
 ) -> Option<ContractsAction> {
     let label = |multipart: bool| if multipart { "Multipart" } else { "JSON" };
     let mut picked = None;
-    egui::ComboBox::from_id_salt(("body_kind", format!("{loc:?}")))
-        .width(90.0)
-        .selected_text(Text::new(label(is_multipart)).rich(ui.ctx()))
-        .show_ui(ui, |ui| {
-            for multipart in [false, true] {
-                if ui
-                    .selectable_label(multipart == is_multipart, label(multipart))
-                    .clicked()
-                    && multipart != is_multipart
-                {
-                    picked = Some(multipart);
-                }
+    Select::new(
+        ("body_kind", format!("{loc:?}")),
+        Text::new(label(is_multipart)),
+    )
+    .width(90.0)
+    .show(ui, |ui| {
+        for multipart in [false, true] {
+            let selected = multipart == is_multipart;
+            if dropdown_option(ui, selected, Text::new(label(multipart))) && !selected {
+                picked = Some(multipart);
             }
-        });
+        }
+    });
     picked.map(|multipart| ContractsAction::SwitchBody { loc, multipart })
 }
 
@@ -1091,41 +1053,26 @@ pub(super) fn response_picker(
                 .tone(status_tone(r.code.trim()))
                 .strong()
         })
-        .unwrap_or_else(|| Text::new("?").muted())
-        .rich(ui.ctx());
-    ui.scope(|ui| {
-        // No box around the closed dropdown, only the colored status text.
-        let widgets = &mut ui.visuals_mut().widgets;
-        for w in [
-            &mut widgets.inactive,
-            &mut widgets.hovered,
-            &mut widgets.active,
-            &mut widgets.open,
-        ] {
-            w.bg_fill = Color32::TRANSPARENT;
-            w.weak_bg_fill = Color32::TRANSPARENT;
-            w.bg_stroke = egui::Stroke::NONE;
-        }
-        egui::ComboBox::from_id_salt("resp_example")
-            .selected_text(selected_text)
-            .show_ui(ui, |ui| {
-                for (i, r) in model.responses.iter().enumerate() {
-                    let label = Text::new(status_tab_label(&r.code, &r.description))
-                        .tone(status_tone(r.code.trim()))
-                        .rich(ui.ctx());
-                    if ui.selectable_label(i == *resp_tab, label).clicked() {
-                        *resp_tab = i;
-                        focus_code = true;
-                    }
+        .unwrap_or_else(|| Text::new("?").muted());
+    // No box around the closed dropdown, only the coloured status text.
+    Select::new("resp_example", selected_text)
+        .frameless()
+        .show(ui, |ui| {
+            for (i, r) in model.responses.iter().enumerate() {
+                let label = Text::new(status_tab_label(&r.code, &r.description))
+                    .tone(status_tone(r.code.trim()));
+                if dropdown_option(ui, i == *resp_tab, label) {
+                    *resp_tab = i;
+                    focus_code = true;
                 }
-                if editing {
-                    ui.separator();
-                    if menu_item(ui, "+ New example") {
-                        action = Some(ContractsAction::OpenNewExample);
-                    }
+            }
+            if editing {
+                divider(ui);
+                if menu_item(ui, "+ New example") {
+                    action = Some(ContractsAction::OpenNewExample);
                 }
-            });
-    });
+            }
+        });
     if editing && focus_code {
         ui.ctx()
             .memory_mut(|m| m.request_focus(resp_code_edit_id()));
@@ -1137,7 +1084,6 @@ pub(super) fn response_picker(
 /// box as `[code] - [title] x`, where `x` deletes the response. Only drawn in
 /// edit mode. The code field keeps at most three digits.
 pub(super) fn response_fields(ui: &mut egui::Ui, model: &mut EditModel, resp_tab: usize) {
-    let p = palette(ui.ctx());
     let i = resp_tab;
     if i >= model.responses.len() {
         return;
@@ -1146,7 +1092,7 @@ pub(super) fn response_fields(ui: &mut egui::Ui, model: &mut EditModel, resp_tab
     ui.horizontal(|ui| {
         // Tight spacing so the fields read as one label.
         ui.spacing_mut().item_spacing.x = 4.0;
-        let color = status_tone(model.responses[i].code.trim()).color(p);
+        let tone = status_tone(model.responses[i].code.trim());
         // Size the code field to its text (min 3 digits) so the `-` hugs the
         // code instead of sitting past a fixed width.
         let code_w = {
@@ -1162,13 +1108,11 @@ pub(super) fn response_fields(ui: &mut egui::Ui, model: &mut EditModel, resp_tab
                 .size()
                 .x
         };
-        ui.add(
-            egui::TextEdit::singleline(&mut model.responses[i].code)
-                .id(resp_code_edit_id())
-                .frame(egui::Frame::NONE)
-                .desired_width(code_w + 10.0)
-                .text_color(color),
-        );
+        InlineInput::new(&mut model.responses[i].code)
+            .id(resp_code_edit_id())
+            .width(code_w + 10.0)
+            .tone(tone)
+            .show(ui);
         // A status code is exactly 3 digits: drop anything else and cap the
         // length as the user types.
         let code = &mut model.responses[i].code;
@@ -1195,13 +1139,11 @@ pub(super) fn response_fields(ui: &mut egui::Ui, model: &mut EditModel, resp_tab
                 .size()
                 .x
         };
-        ui.add(
-            egui::TextEdit::singleline(&mut model.responses[i].description)
-                .frame(egui::Frame::NONE)
-                .desired_width(title_w + 18.0)
-                .hint_text("title")
-                .text_color(p.on_surface_variant),
-        );
+        InlineInput::new(&mut model.responses[i].description)
+            .hint("title")
+            .width(title_w + 18.0)
+            .tone(Tone::Muted)
+            .show(ui);
         if delete_button(ui) {
             actions.push(EditAction::Delete {
                 field: Field::ResponseCode(i),

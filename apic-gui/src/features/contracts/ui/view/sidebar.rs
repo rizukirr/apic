@@ -7,7 +7,9 @@ use super::editor::method_tone;
 use crate::features::contracts::domain::entry::DeleteTarget;
 use crate::features::contracts::domain::tree::{TreeNode, build_tree};
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState};
-use crate::ui::base::{Size, Text, Tone, bordered_input, icon_button, menu_item, selectable_row};
+use crate::ui::base::{
+    Size, Text, Tone, bordered_input, icon_button, menu_item, row_label, selectable_row, tree_node,
+};
 use crate::ui::components::row_menu_button;
 use crate::ui::theme::*;
 
@@ -160,29 +162,23 @@ fn show_tree(
             format!("{prefix}/{name}")
         };
         let id = ui.make_persistent_id(("tree", &folder_path));
-        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-            .show_header(ui, |ui| {
-                let hovered = ui.rect_contains_pointer(ui.max_rect());
-                // The menu button is reserved first (right-to-left) so the
-                // folder name truncates to the remaining width rather than
-                // forcing the side panel wider than its dragged width.
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    row_menu_button(ui, hovered, |ui| {
+        tree_node(ui, id, |ui| {
+            let hovered = ui.rect_contains_pointer(ui.max_rect());
+            // The menu button is reserved first (right-to-left) so the
+            // folder name truncates to the remaining width rather than
+            // forcing the side panel wider than its dragged width.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                row_menu_button(ui, hovered, |ui| {
+                    menu_items_ui(ui, folder_menu_items(&folder_path), action)
+                });
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    row_label(ui, Text::new(name).muted()).context_menu(|ui| {
                         menu_items_ui(ui, folder_menu_items(&folder_path), action)
                     });
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.add(
-                            egui::Label::new(Text::new(name).muted().rich(ui.ctx()))
-                                .truncate()
-                                .sense(egui::Sense::click()),
-                        )
-                        .context_menu(|ui| {
-                            menu_items_ui(ui, folder_menu_items(&folder_path), action)
-                        });
-                    });
                 });
-            })
-            .body(|ui| show_tree(child, ui, &folder_path, selected, action));
+            });
+        })
+        .body(|ui| show_tree(child, ui, &folder_path, selected, action));
     }
     for (label, idx, method, invalid) in &node.files {
         let rel = if prefix.is_empty() {

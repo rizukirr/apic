@@ -11,8 +11,8 @@ use super::editor::{
 use super::live::{live_body, live_summary, live_switch};
 use crate::features::contracts::ui::send::SendState;
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState, RespTab};
-use crate::ui::base::{Size, Text, Tone, icon_button, text_button};
-use crate::ui::components::{Tab, empty_state, tab_strip};
+use crate::ui::base::{Size, Text, Tone, code_editor, divider, icon_button, text_button};
+use crate::ui::components::{Side, Tab, empty_state, pane, split_inset, tab_strip};
 use crate::ui::theme::*;
 
 /// The central body for the loaded contract: the viewer/editor, the repair
@@ -83,12 +83,7 @@ pub(crate) fn central_body(
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let resp = ui.add(
-                    egui::TextEdit::multiline(&mut rep.buffer)
-                        .code_editor()
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(24),
-                );
+                let resp = code_editor(ui, &mut rep.buffer, 24);
                 if resp.changed() || pretty {
                     rep.error = match apic_core::json::validate(&rep.buffer) {
                         Ok(()) => String::new(),
@@ -147,64 +142,52 @@ pub(crate) fn central_body(
     });
     ui.add_space(SPACE_SMALL);
 
-    egui::Frame::NONE
-        .inner_margin(egui::Margin::same(16))
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
-            // Request tabs in a resizable left pane, Response in the rest.
-            // The panel paints its divider with the parent's noninteractive
-            // stroke, so that stroke is swapped only around the panel.
-            let half = (ui.available_width() / 2.0).max(240.0);
-            let saved_stroke = ui.visuals().widgets.noninteractive.bg_stroke;
-            ui.visuals_mut().widgets.noninteractive.bg_stroke =
-                egui::Stroke::new(1.0, p.outline_variant);
-            egui::Panel::left("contract_request_pane")
-                .resizable(true)
-                .default_size(half)
-                .min_size(240.0)
-                .frame(egui::Frame::NONE.inner_margin(egui::Margin {
-                    right: 16,
-                    ..Default::default()
-                }))
-                .show(ui, |left| {
-                    left.visuals_mut().widgets.noninteractive.bg_stroke = saved_stroke;
-                    if let Some(a) = method_url_row(left, model, *editing, &defined, pending) {
-                        action = Some(a);
-                    }
-                    left.add_space(12.0);
-                    // One scroll per pane (distinct id) so the left
-                    // and right panes scroll independently.
-                    egui::ScrollArea::vertical()
-                        .id_salt("left_pane_scroll")
-                        .auto_shrink([false, false])
-                        .show(left, |ui| {
-                            section_heading(ui, "Headers");
-                            headers(ui, model, *editing, &defined);
-                            ui.add_space(16.0);
-                            section_heading(ui, "Query");
-                            query_section(ui, model, *editing, &defined);
-                            ui.add_space(16.0);
-                            section_heading(ui, "Request");
-                            if let Some(a) = request_body(ui, model, *editing, &defined) {
-                                action = Some(a);
-                            }
-                        });
-                });
-            ui.visuals_mut().widgets.noninteractive.bg_stroke = saved_stroke;
+    pane(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = SPACE_MEDIUM;
+        // Request tabs in a resizable left pane, Response in the rest.
+        // The panel paints its divider with the parent's noninteractive
+        // stroke, so that stroke is swapped only around the panel.
+        let half = (ui.available_width() / 2.0).max(240.0);
+        let saved_stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+        ui.visuals_mut().widgets.noninteractive.bg_stroke =
+            egui::Stroke::new(1.0, p.outline_variant);
+        egui::Panel::left("contract_request_pane")
+            .resizable(true)
+            .default_size(half)
+            .min_size(240.0)
+            .frame(split_inset(Side::Right))
+            .show(ui, |left| {
+                left.visuals_mut().widgets.noninteractive.bg_stroke = saved_stroke;
+                if let Some(a) = method_url_row(left, model, *editing, &defined, pending) {
+                    action = Some(a);
+                }
+                left.add_space(SPACE_MEDIUM);
+                // One scroll per pane (distinct id) so the left
+                // and right panes scroll independently.
+                egui::ScrollArea::vertical()
+                    .id_salt("left_pane_scroll")
+                    .auto_shrink([false, false])
+                    .show(left, |ui| {
+                        section_heading(ui, "Headers");
+                        headers(ui, model, *editing, &defined);
+                        ui.add_space(SPACE_LARGE);
+                        section_heading(ui, "Query");
+                        query_section(ui, model, *editing, &defined);
+                        ui.add_space(SPACE_LARGE);
+                        section_heading(ui, "Request");
+                        if let Some(a) = request_body(ui, model, *editing, &defined) {
+                            action = Some(a);
+                        }
+                    });
+            });
+        ui.visuals_mut().widgets.noninteractive.bg_stroke = saved_stroke;
 
-            egui::Frame::NONE
-                .inner_margin(egui::Margin {
-                    left: 16,
-                    ..Default::default()
-                })
-                .show(ui, |ui| {
-                    if let Some(a) =
-                        response_pane(ui, model, (resp_tab, resp_tab_view), send, *editing)
-                    {
-                        action = Some(a);
-                    }
-                });
+        split_inset(Side::Left).show(ui, |ui| {
+            if let Some(a) = response_pane(ui, model, (resp_tab, resp_tab_view), send, *editing) {
+                action = Some(a);
+            }
         });
+    });
     action
 }
 
@@ -245,7 +228,7 @@ fn response_pane(
     };
     ui.horizontal(|ui| {
         action = live_switch(ui, live);
-        ui.separator();
+        divider(ui);
         let mut idx = resp_tab_index(*resp_tab_view);
         tab_strip(
             ui,
@@ -274,7 +257,7 @@ fn response_pane(
     if editing && !live && !model.responses.is_empty() {
         response_fields(ui, model, *resp_tab);
     }
-    ui.add_space(8.0);
+    ui.add_space(SPACE_SMALL);
     egui::ScrollArea::vertical()
         .id_salt("right_pane_scroll")
         .auto_shrink([false, false])
@@ -303,7 +286,7 @@ fn response_pane(
 /// A left-pane section heading: `label` in bold, in `on_surface_variant`.
 fn section_heading(ui: &mut egui::Ui, label: &str) {
     Text::new(label).muted().strong().show(ui);
-    ui.add_space(6.0);
+    ui.add_space(SPACE_EXTRA_SMALL);
 }
 
 /// The [`tab_strip`] index of a response sub-tab.

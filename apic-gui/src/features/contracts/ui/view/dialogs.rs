@@ -5,7 +5,7 @@ use eframe::egui;
 
 use crate::features::contracts::domain::entry::DeleteTarget;
 use crate::features::contracts::ui::state::{ContractsAction, ContractsState};
-use crate::ui::base::{ButtonKind, Size, Text, Tone, bordered_input};
+use crate::ui::base::{ButtonKind, Select, Size, Text, Tone, bordered_input, dropdown_option};
 use crate::ui::components::{DialogButton, detail_box, dialog};
 use crate::ui::focus::take_pending_focus;
 use crate::ui::theme::*;
@@ -116,13 +116,18 @@ fn new_request_dialog(ctx: &egui::Context, state: &mut ContractsState) -> Option
                 ui.add_space(SPACE_MEDIUM);
                 ui.horizontal(|ui| {
                     Text::new("template").muted().show(ui);
-                    egui::ComboBox::from_id_salt("new_request_template")
-                        .selected_text(Text::new(current).tone(Tone::Primary).rich(ui.ctx()))
-                        .show_ui(ui, |ui| {
-                            for (i, name) in names.iter().enumerate() {
-                                ui.selectable_value(&mut state.new_request_seed, i, name);
+                    let seed = &mut state.new_request_seed;
+                    Select::new(
+                        "new_request_template",
+                        Text::new(current).tone(Tone::Primary),
+                    )
+                    .show(ui, |ui| {
+                        for (i, name) in names.iter().enumerate() {
+                            if dropdown_option(ui, *seed == i, Text::new(name)) {
+                                *seed = i;
                             }
-                        });
+                        }
+                    });
                 });
             }
         },
