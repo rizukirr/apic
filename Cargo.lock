@@ -251,7 +251,7 @@ dependencies = [
 
 [[package]]
 name = "apic-cli"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "apic-core",
  "assert_cmd",
@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "apic-core"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "apic-gui"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "apic-core",
  "dirs",

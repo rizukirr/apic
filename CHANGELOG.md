@@ -7,27 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-23
+
+An import and export release. apic now reads OpenAPI 3.0, OpenAPI 3.1 and Swagger 2.0 specs, and writes contracts back out as Postman collections and OpenAPI documents, from both the CLI and the desktop GUI. The GUI is now built from one shared set of components, so its text, buttons, menus and inputs look the same on every screen. The contract format is unchanged, so existing projects need no migration.
+
 ### Added
 
-- `apic convert --openapi <file>` imports an OpenAPI 3.0, OpenAPI 3.1 or Swagger 2.0 spec, in JSON or YAML, as one contract per operation, in a folder per first tag. Bodies come from the spec's examples, or are built from the schemas with local `$ref`s followed. COMMAND.md lists what is mapped and what warns.
-- The GUI Import menu has an OpenAPI spec entry next to Postman collection.
-- The GUI project menu has an Export submenu next to Import, writing the open project as a Postman collection or an OpenAPI spec, with variable values from the selected environment's shared file. Import and Export are now nested submenus.
+- `apic convert --openapi <file>` imports an OpenAPI 3.0, OpenAPI 3.1 or Swagger 2.0 spec, in JSON or YAML, as one contract per operation, in a folder per first tag and named from the `operationId`. Bodies come from the spec's examples, or are built from the schemas with local `$ref`s followed, including `$ref`s inside example values. Several named examples under one status become separate responses. The URL uses the operation, path or document server, with server variables filled from their defaults or kept as apic variables when the default is empty. An operation's security scheme adds an `Authorization: Bearer $token`, `Basic $basic_auth` or API key header. COMMAND.md lists what is mapped and what warns.
+- `apic export --postman <file>` writes contracts as a Postman Collection v2.1: folders become Postman folders, contracts become requests, and documented responses become saved examples. `$name` variables become `{{name}}` and `{id}` path params become `:id`. `-f` exports one contract or a folder, and `--env` fills the collection variables from that environment's shared file only, so local secrets are never exported.
+- `apic export --openapi <file>` writes contracts as an OpenAPI 3.0 document, or 3.1 with `--openapi-version 3.1`, in YAML or JSON by the file's extension. Each body is exported as its example plus a schema inferred from it. Leading URL variables become server variables, `Authorization` headers become security schemes, and a status documented more than once becomes named examples. Exporting GitHub's REST spec after importing it and importing it again gives back all 1281 contracts unchanged.
+- The GUI project menu has Import and Export submenus, each with Postman collection and OpenAPI spec. Export writes the open project to a file you choose, with variable values from the selected environment's shared file.
 
 ### Changed
 
-- Every GUI dropdown now shares one look: menu dropdowns all end in a `⌄` caret, including the git log's Branch, User, Date and Paths filters, which had none, and the Contracts/Changes switcher highlights the view you are on.
-- The git log's text and path filter boxes use the same bordered input as the dialogs, instead of egui's default box.
 - The git diff opens a changed contract on its field changes. "Show field changes" is now checked by default, and unchecking it shows the line diff.
 - The GUI Templates section moved from the bottom of the sidebar to the top, under the Contracts and Changes switcher, and its list scrolls once it holds more than about six templates.
+- Every GUI dropdown now shares one look: menu dropdowns all end in a `⌄` caret, including the git log's Branch, User, Date and Paths filters, which had none, and the Contracts/Changes switcher highlights the view you are on. The git log's text and path filter boxes use the same bordered input as the dialogs.
 - The agent skill now covers importing with `apic convert --openapi` and `--postman` and exporting with `apic export --postman` and `--openapi`, including when to pass `--force`, which variables an import leaves for the user to fill, and that exported OpenAPI schemas are inferred. Run `apic skill --install` again to update an installed copy.
-- `apic export --postman <file>` writes contracts as a Postman Collection v2.1: folders become Postman folders, contracts become requests, and documented responses become saved examples. `$name` variables become `{{name}}` and `{id}` path params become `:id`. `-f` exports one contract or a folder, and `--env` fills the collection variables from that environment's shared file only, so local secrets are never exported.
-- `apic export --openapi <file>` writes contracts as an OpenAPI 3.0 document, or 3.1 with `--openapi-version 3.1`, in YAML or JSON by the file's extension. Each body is exported as its example plus a schema inferred from it. Leading URL variables become server variables, `Authorization` headers become security schemes, and a status documented more than once becomes named examples. Exporting GitHub's REST spec after importing it and importing it again gives back all 1281 contracts unchanged.
-- `apic convert --openapi` turns several named examples under one status into separate responses, uses operation and path level `servers`, keeps a server variable with an empty default as an apic variable, and adds an `Authorization: Bearer $token`, `Basic $basic_auth` or API key header for the operation's security scheme.
 
 ### Fixed
 
 - `apic convert --postman` now keeps request descriptions stored on the request, as Postman's own exports write them, query param descriptions, and response headers.
-- `apic convert --openapi` follows `$ref`s inside example values, as GitHub's spec uses them. They were imported as literal `{"$ref": ...}` objects, which apic then read as a `$ref` variable.
 
 ## [1.1.0] - 2026-11-15
 
@@ -497,7 +497,8 @@ Initial beta release.
 - CI (fmt, clippy, build, test) and unit + end-to-end test suites.
 - MIT license.
 
-[Unreleased]: https://github.com/rizukirr/apic/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/rizukirr/apic/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/rizukirr/apic/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/rizukirr/apic/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/rizukirr/apic/compare/v0.5.1...v1.0.0
 [0.5.1]: https://github.com/rizukirr/apic/compare/v0.5.0...v0.5.1
