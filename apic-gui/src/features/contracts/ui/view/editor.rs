@@ -12,9 +12,9 @@ use apic_core::json::method_str;
 
 use crate::features::contracts::ui::state::ContractsAction;
 use crate::ui::base::{
-    ChipTone, Select, Text, Tone, badge, chip, delete_button, dropdown_option, header_label,
-    json_editor, menu_item, required_chip, section_label, tcell_edit, tcell_edit_vars, text_button,
-    url_layout_job,
+    ChipTone, InlineInput, Select, Text, Tone, badge, chip, delete_button, divider,
+    dropdown_option, header_label, json_editor, menu_item, required_chip, section_label,
+    tcell_edit, tcell_edit_vars, text_button, truncated_label, url_layout_job,
 };
 use crate::ui::components::{fill_column, grid_cell, metadata_table, table_frame, url_bar};
 use crate::ui::focus::{request_new_row_focus, take_pending_focus};
@@ -394,27 +394,17 @@ fn ghost_row(
 /// available width. In edit mode the name and description are two frameless
 /// single-line fields separated by a `:` label.
 pub(super) fn endpoint_title(ui: &mut egui::Ui, model: &mut EditModel, editing: bool) {
-    let p = palette(ui.ctx());
     if editing {
-        let font = egui::TextStyle::Body.resolve(ui.style());
         ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut model.name)
-                    .frame(egui::Frame::NONE)
-                    .hint_text("endpoint name")
-                    .font(font)
-                    .text_color(p.on_surface)
-                    .desired_width(120.0)
-                    .clip_text(false),
-            );
+            InlineInput::new(&mut model.name)
+                .hint("endpoint name")
+                .width(120.0)
+                .grow()
+                .show(ui);
             Text::new(":").show(ui);
-            ui.add(
-                egui::TextEdit::singleline(&mut model.description)
-                    .frame(egui::Frame::NONE)
-                    .hint_text("description")
-                    .text_color(p.on_surface)
-                    .desired_width(f32::INFINITY),
-            );
+            InlineInput::new(&mut model.description)
+                .hint("description")
+                .show(ui);
         });
         return;
     }
@@ -436,7 +426,7 @@ pub(super) fn endpoint_title(ui: &mut egui::Ui, model: &mut EditModel, editing: 
                 egui::Align::Center,
             );
     }
-    ui.add(egui::Label::new(job).truncate());
+    truncated_label(ui, job);
 }
 
 /// The `[ METHOD ] [ url................ ] [ Send ]` top row. The button
@@ -498,24 +488,13 @@ pub(super) fn method_url_row(
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 let font = egui::TextStyle::Monospace.resolve(ui.style());
                 if editing {
-                    let mut layouter =
-                        |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-                            let mut job = url_layout_job(buf.as_str(), p, font.clone(), defined);
-                            job.wrap.max_width = wrap_width;
-                            ui.fonts_mut(|f| f.layout_job(job))
-                        };
-                    ui.add(
-                        egui::TextEdit::singleline(&mut model.url)
-                            .font(egui::TextStyle::Monospace)
-                            .frame(egui::Frame::NONE)
-                            .hint_text("https://host/path/{id}")
-                            .layouter(&mut layouter)
-                            .desired_width(f32::INFINITY),
-                    );
+                    InlineInput::new(&mut model.url)
+                        .hint("https://host/path/{id}")
+                        .mono()
+                        .vars(defined)
+                        .show(ui);
                 } else {
-                    ui.add(
-                        egui::Label::new(url_layout_job(&model.url, p, font, defined)).truncate(),
-                    );
+                    truncated_label(ui, url_layout_job(&model.url, p, font, defined));
                 }
             });
         });
@@ -1088,7 +1067,7 @@ pub(super) fn response_picker(
                 }
             }
             if editing {
-                ui.separator();
+                divider(ui);
                 if menu_item(ui, "+ New example") {
                     action = Some(ContractsAction::OpenNewExample);
                 }
@@ -1105,7 +1084,6 @@ pub(super) fn response_picker(
 /// box as `[code] - [title] x`, where `x` deletes the response. Only drawn in
 /// edit mode. The code field keeps at most three digits.
 pub(super) fn response_fields(ui: &mut egui::Ui, model: &mut EditModel, resp_tab: usize) {
-    let p = palette(ui.ctx());
     let i = resp_tab;
     if i >= model.responses.len() {
         return;
@@ -1114,7 +1092,7 @@ pub(super) fn response_fields(ui: &mut egui::Ui, model: &mut EditModel, resp_tab
     ui.horizontal(|ui| {
         // Tight spacing so the fields read as one label.
         ui.spacing_mut().item_spacing.x = 4.0;
-        let color = status_tone(model.responses[i].code.trim()).color(p);
+        let tone = status_tone(model.responses[i].code.trim());
         // Size the code field to its text (min 3 digits) so the `-` hugs the
         // code instead of sitting past a fixed width.
         let code_w = {
@@ -1130,13 +1108,11 @@ pub(super) fn response_fields(ui: &mut egui::Ui, model: &mut EditModel, resp_tab
                 .size()
                 .x
         };
-        ui.add(
-            egui::TextEdit::singleline(&mut model.responses[i].code)
-                .id(resp_code_edit_id())
-                .frame(egui::Frame::NONE)
-                .desired_width(code_w + 10.0)
-                .text_color(color),
-        );
+        InlineInput::new(&mut model.responses[i].code)
+            .id(resp_code_edit_id())
+            .width(code_w + 10.0)
+            .tone(tone)
+            .show(ui);
         // A status code is exactly 3 digits: drop anything else and cap the
         // length as the user types.
         let code = &mut model.responses[i].code;
@@ -1163,13 +1139,11 @@ pub(super) fn response_fields(ui: &mut egui::Ui, model: &mut EditModel, resp_tab
                 .size()
                 .x
         };
-        ui.add(
-            egui::TextEdit::singleline(&mut model.responses[i].description)
-                .frame(egui::Frame::NONE)
-                .desired_width(title_w + 18.0)
-                .hint_text("title")
-                .text_color(p.on_surface_variant),
-        );
+        InlineInput::new(&mut model.responses[i].description)
+            .hint("title")
+            .width(title_w + 18.0)
+            .tone(Tone::Muted)
+            .show(ui);
         if delete_button(ui) {
             actions.push(EditAction::Delete {
                 field: Field::ResponseCode(i),

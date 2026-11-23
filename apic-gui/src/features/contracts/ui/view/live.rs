@@ -7,7 +7,7 @@ use egui_extras::Column;
 use super::editor::status_tone;
 use crate::features::contracts::ui::send::{LiveBody, LiveReply, SendState};
 use crate::features::contracts::ui::state::{ContractsAction, RespTab};
-use crate::ui::base::{Text, Tone, header_label, json_editor, toggle_button};
+use crate::ui::base::{Text, Tone, code_view, header_label, json_editor, loading, toggle_button};
 use crate::ui::components::{empty_state, fill_column, grid_cell, metadata_table, table_frame};
 use crate::ui::theme::*;
 
@@ -57,10 +57,7 @@ pub(super) fn live_summary(ui: &mut egui::Ui, send: &SendState) {
 /// headers by `tab`.
 pub(super) fn live_body(ui: &mut egui::Ui, send: &mut SendState, tab: RespTab) {
     if send.is_pending() {
-        ui.horizontal(|ui| {
-            ui.spinner();
-            Text::new("Sending").muted().show(ui);
-        });
+        loading(ui, "Sending");
         return;
     }
     match &mut send.live {
@@ -84,13 +81,7 @@ fn reply_body(ui: &mut egui::Ui, reply: &mut LiveReply) {
         }
         LiveBody::Json(text) => json_editor(ui, text, false),
         LiveBody::Text(text) => {
-            let mut shown: &str = text;
-            ui.add(
-                egui::TextEdit::multiline(&mut shown)
-                    .code_editor()
-                    .frame(egui::Frame::NONE)
-                    .desired_width(f32::INFINITY),
-            );
+            code_view(ui, text);
         }
         LiveBody::Binary(len) => {
             Text::new(format!("Binary body, {len} bytes"))

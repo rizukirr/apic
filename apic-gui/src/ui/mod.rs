@@ -42,6 +42,16 @@ mod layering {
         "ComboBox::",
         "selectable_label(",
         "selectable_value(",
+        "TextEdit::singleline",
+        "TextEdit::multiline",
+        ".checkbox(",
+        "Checkbox::",
+        "CollapsingHeader::",
+        "CollapsingState::",
+        "egui::Label::new",
+        ".separator()",
+        "Separator::",
+        ".spinner()",
     ];
 
     fn src() -> PathBuf {
@@ -163,6 +173,12 @@ mod layering {
         if literal_size {
             found.push(".size(<number>)".to_string());
         }
+        let literal_space = code
+            .match_indices("add_space(")
+            .any(|(at, m)| code[at + m.len()..].starts_with(|c: char| c.is_ascii_digit()));
+        if literal_space {
+            found.push("add_space(<number>)".to_string());
+        }
         found
     }
 
@@ -242,6 +258,15 @@ mod layering {
         let kept = strip_test_modules(text);
         assert!(kept.contains("fn app()"), "{kept}");
         assert_eq!(drawing_violations(&kept), ["RichText::new"]);
+    }
+
+    #[test]
+    fn the_drawing_check_catches_a_literal_space() {
+        assert_eq!(
+            drawing_violations("ui.add_space(16.0);"),
+            ["add_space(<number>)"]
+        );
+        assert!(drawing_violations("ui.add_space(SPACE_LARGE);").is_empty());
     }
 
     #[test]

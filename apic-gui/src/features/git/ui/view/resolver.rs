@@ -8,7 +8,7 @@ use super::diff::inline_diff_view;
 use crate::features::git::domain::conflict::{self, Choice, Segment};
 use crate::features::git::domain::diff::parse_unified;
 use crate::features::git::ui::state::{GitAction, GitState, ResolveState};
-use crate::ui::base::{Size, Text, Tone, link, text_button};
+use crate::ui::base::{Size, Text, Tone, divider, link, text_button, truncated_label};
 use crate::ui::theme::*;
 
 /// Ensures `state.resolve` holds the parsed conflict for `path`, parsing
@@ -34,7 +34,7 @@ pub(super) fn conflict_resolver(
             let side = if staged { "staged" } else { "unstaged" };
             Text::new(side).muted().show(ui);
         });
-        ui.separator();
+        divider(ui);
         inline_diff_view(ui, &parse_unified(raw));
         ui.add_space(SPACE_SMALL);
         Text::new("This file's conflict markers could not be read. Resolve it in your editor.")
@@ -121,16 +121,14 @@ fn resolve_view(
                 |ui| {
                     ui.scope(|ui| {
                         ui.set_max_width(path_max_width);
-                        ui.add(
-                            egui::Label::new(Text::new(path).strong().rich(ui.ctx())).truncate(),
-                        );
+                        truncated_label(ui, Text::new(path).strong().rich(ui.ctx()));
                     });
                     Text::new(side).muted().show(ui);
                 },
             );
         });
     });
-    ui.separator();
+    divider(ui);
 
     let json = path.ends_with(".json");
     if json && all_chosen && apic_core::json::validate(&rendered).is_err() {

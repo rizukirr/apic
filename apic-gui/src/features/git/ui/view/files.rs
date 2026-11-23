@@ -10,7 +10,9 @@ use eframe::egui;
 
 use crate::features::git::domain::status::{Change, FileStatus};
 use crate::features::git::ui::state::GitAction;
-use crate::ui::base::{Size, Text, Tone, menu_item, selectable_row};
+use crate::ui::base::{
+    Size, Text, Tone, checkbox, checkbox_mixed, menu_item, row_label, selectable_row, tree_node,
+};
 use crate::ui::components::row_menu_button;
 
 /// Which of the sidebar's groups a row belongs to, deciding the controls it
@@ -157,7 +159,7 @@ pub(super) fn file_row(
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 if mode == RowMode::Changed {
                     let mut t = ticked;
-                    if ui.checkbox(&mut t, "").changed() {
+                    if checkbox(ui, &mut t, "").changed() {
                         action = Some(GitAction::SetTicked {
                             paths: vec![file.path.clone()],
                             ticked: t,
@@ -291,13 +293,12 @@ impl<'a> FileTree<'a> {
                 format!("{prefix}/{name}")
             };
             let id = ui.make_persistent_id(("git_tree", mode, &folder_path));
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-                .show_header(ui, |ui| {
-                    if let Some(a) = folder_row(ui, &folder_path, name, mode, child) {
-                        *action = Some(a);
-                    }
-                })
-                .body(|ui| child.show(ui, &folder_path, mode, selected, action));
+            tree_node(ui, id, |ui| {
+                if let Some(a) = folder_row(ui, &folder_path, name, mode, child) {
+                    *action = Some(a);
+                }
+            })
+            .body(|ui| child.show(ui, &folder_path, mode, selected, action));
         }
         for (file, ticked) in &self.files {
             if let Some(a) = file_row(ui, file, mode, *ticked, selected) {
@@ -339,19 +340,15 @@ pub(super) fn folder_row(
             if mode == RowMode::Changed {
                 let (ticked, total) = node.tick_counts();
                 let mut all = ticked == total;
-                let checkbox =
-                    egui::Checkbox::new(&mut all, "").indeterminate(ticked > 0 && ticked < total);
-                if ui.add(checkbox).changed() {
+                let mixed = ticked > 0 && ticked < total;
+                if checkbox_mixed(ui, &mut all, mixed).changed() {
                     tick_action = Some(GitAction::SetTicked {
                         paths: node.paths(),
                         ticked: ticked < total,
                     });
                 }
             }
-            let label = egui::Label::new(Text::new(name).muted().rich(ui.ctx()))
-                .truncate()
-                .sense(egui::Sense::click());
-            let response = ui.add(label);
+            let response = row_label(ui, Text::new(name).muted());
             if has_menu {
                 response.context_menu(|ui| {
                     menu_items_ui(

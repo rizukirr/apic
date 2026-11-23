@@ -7,6 +7,7 @@
 
 pub(crate) mod button;
 pub(crate) mod chip;
+pub(crate) mod collapsible;
 pub(crate) mod dropdown;
 pub(crate) mod input;
 pub(crate) mod menu;
@@ -14,6 +15,7 @@ pub(crate) mod text;
 
 pub(crate) use button::*;
 pub(crate) use chip::*;
+pub(crate) use collapsible::*;
 pub(crate) use dropdown::*;
 pub(crate) use input::*;
 pub(crate) use menu::*;

@@ -8,8 +8,8 @@ use crate::features::git::domain::log::{Commit, LogFilter, PathFilter, Row, Sinc
 use crate::features::git::domain::status::FileStatus;
 use crate::features::git::ui::state::{GitAction, GitState};
 use crate::ui::base::{
-    ButtonKind, Text, Tone, dropdown, dropdown_option, icon_button, menu_item, menu_item_enabled,
-    text_button, toggle_button, wide_button,
+    ButtonKind, Text, Tone, bordered_input, dropdown, dropdown_option, icon_button, menu_item,
+    menu_item_enabled, text_button, toggle_button, wide_button,
 };
 use crate::ui::components::{DialogButton, detail_box, dialog, empty_state};
 use crate::ui::theme::*;
@@ -86,11 +86,7 @@ fn toolbar(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
     let filter = state.log.filter.clone();
     ui.add_space(SPACE_EXTRA_SMALL);
     ui.horizontal(|ui| {
-        let edit = ui.add(
-            egui::TextEdit::singleline(&mut state.log.draft)
-                .hint_text("Text or hash")
-                .desired_width(180.0),
-        );
+        let edit = bordered_input(ui, &mut state.log.draft, 180.0, "Text or hash");
         let now = ui.input(|i| i.time);
         if edit.changed() {
             state.log.edited_at = now;
@@ -183,11 +179,7 @@ fn toolbar(ui: &mut egui::Ui, state: &mut GitState) -> Option<GitAction> {
                 action = Some(set(&filter, |f| f.path = PathFilter::Contracts));
             }
             ui.horizontal(|ui| {
-                let typed = ui.add(
-                    egui::TextEdit::singleline(&mut state.log.typed_path)
-                        .hint_text("path")
-                        .desired_width(160.0),
-                );
+                let typed = bordered_input(ui, &mut state.log.typed_path, 160.0, "path");
                 let enter = typed.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let path = state.log.typed_path.trim().to_string();
                 if (text_button(ui, "Use", Tone::Default) || enter) && !path.is_empty() {

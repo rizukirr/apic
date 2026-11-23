@@ -6,8 +6,8 @@ use eframe::egui;
 use crate::features::git::domain::status::{Branches, DiscardTarget, discard_target};
 use crate::features::git::ui::state::{BranchOpKind, GitAction, GitState};
 use crate::ui::base::{
-    ButtonKind, Text, Tone, bordered_input, dropdown, icon_submenu, menu_choice, menu_item,
-    menu_item_enabled, submenu,
+    ButtonKind, Text, Tone, bordered_input, divider, dropdown, icon_submenu, menu_choice,
+    menu_item, menu_item_enabled, submenu,
 };
 use crate::ui::components::{DialogButton, detail_box, dialog};
 use crate::ui::theme::*;
@@ -99,7 +99,7 @@ pub(crate) fn branch_menu(ui: &mut egui::Ui, state: &mut GitState) -> Option<Git
                 });
             });
         }
-        ui.separator();
+        divider(ui);
         if menu_item(ui, format!("{} New branch", egui_phosphor::regular::PLUS)) {
             open_new = true;
         }
