@@ -4149,6 +4149,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/ryu/ryu-1.0.23.crate",
+        "sha256": "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f",
+        "dest": "cargo/vendor/ryu-1.0.23"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f\", \"files\": {}}",
+        "dest": "cargo/vendor/ryu-1.0.23",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/same-file/same-file-1.0.6.crate",
         "sha256": "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502",
         "dest": "cargo/vendor/same-file-1.0.6"
@@ -4274,6 +4287,19 @@
         "type": "inline",
         "contents": "{\"package\": \"c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14\", \"files\": {}}",
         "dest": "cargo/vendor/serde_json-1.0.151",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/serde_norway/serde_norway-0.9.42.crate",
+        "sha256": "e408f29489b5fd500fab51ff1484fc859bb655f32c671f307dcd733b72e8168c",
+        "dest": "cargo/vendor/serde_norway-0.9.42"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"e408f29489b5fd500fab51ff1484fc859bb655f32c671f307dcd733b72e8168c\", \"files\": {}}",
+        "dest": "cargo/vendor/serde_norway-0.9.42",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -4976,6 +5002,19 @@
         "type": "inline",
         "contents": "{\"package\": \"b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254\", \"files\": {}}",
         "dest": "cargo/vendor/unicode-width-0.2.2",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/unsafe-libyaml-norway/unsafe-libyaml-norway-0.2.15.crate",
+        "sha256": "b39abd59bf32521c7f2301b52d05a6a2c975b6003521cbd0c6dc1582f0a22104",
+        "dest": "cargo/vendor/unsafe-libyaml-norway-0.2.15"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"b39abd59bf32521c7f2301b52d05a6a2c975b6003521cbd0c6dc1582f0a22104\", \"files\": {}}",
+        "dest": "cargo/vendor/unsafe-libyaml-norway-0.2.15",
         "dest-filename": ".cargo-checksum.json"
     },
     {

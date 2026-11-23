@@ -1,5 +1,5 @@
 Name:           apic-cli
-Version:        1.1.0
+Version:        1.2.0
 Release:        1%{?dist}
 Summary:        Git-friendly API contracts, CLI (prebuilt)
 License:        GPL-3.0-only
@@ -67,6 +67,12 @@ cp -p %{SOURCE4} %{_builddir}/LICENSE
 %{_datadir}/icons/hicolor/256x256/apps/apic-gui.png
 
 %changelog
+* Mon Nov 23 2026 Rizki Rakasiwi <rizkirr.xyz@gmail.com> - 1.2.0-1
+- Import and export release: apic convert --openapi reads OpenAPI 3.0, 3.1
+  and Swagger 2.0 specs, and apic export writes contracts as a Postman
+  collection or an OpenAPI document. The GUI gains Import and Export
+  submenus. The contract format is unchanged.
+
 * Sun Nov 15 2026 Rizki Rakasiwi <rizkirr.xyz@gmail.com> - 1.1.0-1
 - CLI release for scripts, CI and AI coding agents: --json on every command,
   exit codes that tell failures apart, apic check against a live server,

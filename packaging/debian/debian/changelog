@@ -1,3 +1,9 @@
+apic (1.2.0-1~resolute1) resolute; urgency=medium
+
+  * New upstream release 1.2.0.
+
+ -- Rizki Rakasiwi <rizkirr.xyz@gmail.com>  Mon, 23 Nov 2026 16:00:00 +0700
+
 apic (1.1.0-1~resolute1) resolute; urgency=medium
 
   * New upstream release 1.1.0.

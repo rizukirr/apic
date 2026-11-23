@@ -29,6 +29,6 @@ modules:
     sources:
       - type: git
         url: https://github.com/rizukirr/apic.git
-        tag: v1.1.0
-        commit: 5d9b88a3c7e1502f694667247eb034c525410a01
+        tag: v1.2.0
+        commit: 1807885f0e65dd8aa5222cdb6112f08efc07a84f
       - cargo-sources.json
